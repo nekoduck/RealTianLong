@@ -1,13 +1,14 @@
 """
 [INPUT]: 依赖 torch，learning/model 的 DynamicsModel，learning/samples 的 agent_queries / shared_graph_batch，
-         learning/schema 的 check_schema / DYN_BOOL，agents/predictors 的 Prediction / branch_value / entropy，
+         learning/schema 的 check_schema / DYN_BOOL，agents/predictors 的 Prediction / BranchValuer / entropy，
          cognition 的 BeliefStore / Candidate，core 的 Fact / Proposition / Rel，core/profiles 的 Profile
 [OUTPUT]: 对外提供 GNNPredictor（OutcomePredictor 协议的 GNN 实现）、GAIN_SCALE
 [POS]: learning 与 agents 的接缝：训练好的角色视角动态模型以“预测器”身份接入 LangGraph 决策流程，
        替换 HeuristicPredictor 而不改策略与图。输入只有角色认知；输出保留概率——预测不是事实。
        加载时同时核对规格指纹与视角：全知（env）模型不能冒充角色的主观预测；成败头按校准世界拟合的温度缩放。
        预期获知来自“有效新观察数”头（扣除行动本身的直接效果），不是位置变化概率之和；
-       目标进展与风险：把模型预测的下一刻认知（最可能的容纳者与身体状态）当作假想分支，用同一套目标语义求势能之差，
+       目标进展与风险：把模型预测的下一刻认知（最可能的容纳者与身体状态）当作假想分支，用同一套目标语义求势能之差
+       （与启发式共用 BranchValuer：碰不到目标读集的预测事实不假想、相同的只算一次，与逐候选 branch_value 逐位相同），
        再加上“自己下一刻受伤/中毒/被制”的预测概率作为风险。这是孤立行动效果模型：旁人同时行动不在预测之内。
        一次决策的所有候选共用同一张认知图：构图与关系编码各只做一次，只有行动条件化之后的部分逐候选计算
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -20,7 +21,7 @@ from pathlib import Path
 
 import torch
 
-from tianlong.agents.predictors import Prediction, branch_value, entropy
+from tianlong.agents.predictors import BranchValuer, Prediction, entropy
 from tianlong.cognition import BeliefStore, Candidate
 from tianlong.core import Fact, Proposition, Rel
 from tianlong.core.profiles import Profile
@@ -62,10 +63,11 @@ class GNNPredictor:
         gain = (out.obs_gain / GAIN_SCALE).clamp(0, 1)
         facts = _predicted_facts(out, samples)
         harm = _self_harm(out, batch, samples, store.owner)
+        branches = BranchValuer(store, now, profile)
         preds = []
         for i in range(len(cands)):
             p = float(success[i])
-            delta = branch_value(store, now, profile, facts[i])
+            delta = branches(facts[i])
             preds.append(Prediction(p, float(gain[i]), "gnn", min(1.0, max(0.0, delta)),
                                     min(1.0, max(harm[i], -delta)), entropy(p)))
         return preds

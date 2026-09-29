@@ -283,6 +283,7 @@ def test_profile_reports_every_stage_and_the_device():
     from tianlong.learning.profile import profile
     rep = profile(worlds=1, steps=2, device="cpu")
     assert rep["device"] == "cpu"
-    assert {"scenario", "candidates", "predict_heuristic", "kernel_step", "belief_revise",
-            "belief_view+featurize", "build_observation", "predict_gnn_cpu", "policy_forward_cpu"} <= set(rep["stages"])
+    assert {"scenario", "candidates", "predict_heuristic", "branch_value_definition", "branch_value_shared", "kernel_step",
+            "belief_revise", "belief_view+featurize", "build_observation", "predict_gnn_cpu",
+            "policy_forward_cpu"} <= set(rep["stages"])
     assert all(v["calls"] > 0 and v["mean_ms"] >= 0 for v in rep["stages"].values())

@@ -15,10 +15,10 @@ model.py: RelationalEncoder（残差 TransformerConv 栈）、ActionEncoder（�
 train.py: 训练与验收 CLI（python -m tianlong.learning.train --view env|agent，任务字段展平为参数，--resume true 按轮断点续训且与不中断逐位相同、换配置的断点被拒绝，不进 run_id），按世界切分；每轮在校准世界上算损失、取最低的一轮（测试世界从不参与选择），报告 model_selection 与逐轮历史；split 同时报世界数与样本数；指标按 TARGETS 逐项：位置召回只叫 holder_*（不冒充“全部事实”）、布尔属性逐属性、数值属性 MAE 对照“不变”、成败按操作的 Brier 对照**训练集**常数（测试集常数只作诊断）、发现与有效新观察数；世界三分 训练/校准/测试，温度只在校准世界拟合、测试世界报原始与校准后两种 Brier；coverage 报告每类机制在数据里出现几次；报告与检查点带 manifest、schema 指纹、视角与温度；--workers 并行生成数据（0 = 全部核）；device=auto 有 GPU 即用
 provenance.py: 溯源 manifest：提交号、工作区是否干净与未提交改动的哈希（拿不到就写 None）、compat_signature()（全部语义版本的唯一定义：特征规格、属性、目标、奖励、候选规则、规则内核、观测布局——部署包比对的也是它）、任务指纹、完整配置、种子、依赖版本；run_id 由提交 + 工作区状态 + 配置 + 种子派生；EXACT_RESOURCE_KEYS（workers：只改执行方式、不改结果）不进 run_id、不挡续训
 results.py: 结果出口 CLI（python -m tianlong.learning.results 报告... [--pair A B]... [--out]）：从机器可读报告生成带 run_id/提交号/任务指纹/种子的 Markdown 表；跨种子汇总只合并同一提交（含改动哈希）且除种子外配置相同的运行、同种子只取最新；--pair 用报告里的逐世界记录把两次运行（如训练期有/无预测、有/无记忆）在同一批留出世界上配对比较（rl/stats，不需要 torch）；README 的数字只从这里来
-predictor.py: GNNPredictor 以 OutcomePredictor 协议接入 LangGraph 决策图（成败头按检查点里校准世界拟合的温度缩放；进展与风险取模型预测的下一刻认知为假想分支、加上自己下一刻受伤中毒被制的概率；孤立行动效果模型）；加载时核对规格与视角（只收 agent 模型）；成功率来自成败头，预期获知来自有效新观察数头（确定地走到已知处不算获知）；一次决策只构图、只编码一次（与逐候选路径逐项相同，环境步长 170→60 ms）
+predictor.py: GNNPredictor 以 OutcomePredictor 协议接入 LangGraph 决策图（成败头按检查点里校准世界拟合的温度缩放；进展与风险取模型预测的下一刻认知为假想分支——与启发式共用 agents 的 BranchValuer，只省功不改值——加上自己下一刻受伤中毒被制的概率；孤立行动效果模型）；加载时核对规格与视角（只收 agent 模型）；成功率来自成败头，预期获知来自有效新观察数头（确定地走到已知处不算获知）；一次决策只构图、只编码一次（与逐候选路径逐项相同，环境步长 170→60 ms）
 bundle.py: 部署边界（python -m tianlong.learning.bundle 目录 --predictor --policy --reports）：bundle.json 记下**训练时**的全部语义版本（取自检查点 manifest；打包时预测器与策略须同版本且与当前代码一致）、相对路径与 sha256；load_bundle() 逐项核对（格式、语义版本、哈希、策略声明的配套预测器是否在包里），任何不一致列出并拒绝（StaleModel，不做隐式迁移）；策略用哪个预测器训练（启发式或某个 GNN 文件的哈希），上线就用哪个
 parallel.py: 并行原语 ordered_map()（spawn 进程池、按输入顺序拼回）、resolve_workers()（0 = 全部核）与 single_thread()（torch 的 CPU 运算随线程数差几个 ulp：子进程与顺序路径一律单线程）；世界与回合彼此独立，并行与顺序逐项相同——并行度是资源旋钮不是实验配置
-profile.py: 剖析 CLI（python -m tianlong.learning.profile --worlds --steps --device --out）：世界生成、候选、启发式/GNN 预测、认知视图与编码、观测构造、策略前向、内核结算、认知修正逐段计时并写明设备——先量再放大
+profile.py: 剖析 CLI（python -m tianlong.learning.profile --worlds --steps --device --out）：世界生成、候选、启发式/GNN 预测、认知视图与编码、观测构造、策略前向、内核结算、认知修正逐段计时并写明设备——先量再放大；假想分支微基准在同一批直接效果上并列 branch_value_definition（逐候选完整假想）与 branch_value_shared（BranchValuer）
 rl/: 强化学习（见 rl/CLAUDE.md）
 __init__.py: 包入口（torch / torch_geometric / ray 为可选依赖）
 

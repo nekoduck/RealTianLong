@@ -1,9 +1,12 @@
 """
-[INPUT]: 依赖 time，learning/task 的 TaskConfig，kernel 的 Kernel，cognition 的 BeliefStore / candidates / belief_view，
-         agents 的 HeuristicPredictor，learning 的 featurize / rl.observation（torch 可用时另测 GNN 预测与策略前向）
+[INPUT]: 依赖 time，learning/task 的 TaskConfig，kernel 的 Kernel，cognition 的 BeliefStore / candidates / belief_view，core 的 Fact / Profile，
+         agents 的 HeuristicPredictor / BranchValuer / branch_value / direct_effects，
+         learning 的 featurize / rl.observation（torch 可用时另测 GNN 预测与策略前向）
 [OUTPUT]: 对外提供 profile()（逐阶段平均耗时，毫秒）、main()（python -m tianlong.learning.profile --worlds N --device auto）
 [POS]: learning 的剖析工具：先量再改。GPU 只帮得上学习器与网络前向；世界生成、内核结算、认知折叠、图构造、候选生成与编码
-       都在 Python/CPU 上——放大训练之前先看清时间花在哪一段，而不是假设“上了 GPU 就快了”。报告写明设备
+       都在 Python/CPU 上——放大训练之前先看清时间花在哪一段，而不是假设“上了 GPU 就快了”。报告写明设备。
+       假想分支的微基准：同一批候选的直接效果，逐候选走定义（branch_value_definition，每个候选完整假想一次）与
+       一次决策共用的快路径（branch_value_shared，BranchValuer）各计一次时——两者逐位相同由 tests/test_predictors 保证
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -14,9 +17,10 @@ import json
 import time
 from collections import defaultdict
 
-from tianlong.agents.predictors import HeuristicPredictor
+from tianlong.agents.predictors import BranchValuer, HeuristicPredictor, branch_value, direct_effects
 from tianlong.cognition import BeliefStore, belief_view, candidates
-from tianlong.core import make_id
+from tianlong.core import Fact, make_id
+from tianlong.core.profiles import Profile
 from tianlong.kernel import Kernel
 from tianlong.learning.task import TaskConfig
 
@@ -36,6 +40,15 @@ class _Timer:
     def report(self) -> dict[str, dict]:
         return {k: {"mean_ms": round(1000 * v / self.count[k], 3), "calls": self.count[k], "total_s": round(v, 3)}
                 for k, v in sorted(self.total.items(), key=lambda kv: -kv[1])}
+
+
+def _per_candidate(store: BeliefStore, now: int, prof: Profile, effects: list[list[Fact]]) -> list[float]:
+    return [branch_value(store, now, prof, f) for f in effects]
+
+
+def _shared(store: BeliefStore, now: int, prof: Profile, effects: list[list[Fact]]) -> list[float]:
+    value = BranchValuer(store, now, prof)
+    return [value(f) for f in effects]
 
 
 def profile(worlds: int = 20, steps: int = 12, device: str = "auto", task: TaskConfig | None = None) -> dict:
@@ -68,6 +81,9 @@ def profile(worlds: int = 20, steps: int = 12, device: str = "auto", task: TaskC
                 cands = t.time("candidates", candidates, stores[a], prof.interests(), 48)
                 preds = t.time("predict_heuristic", heur.predict, stores[a], state.clock, cands, prof.interests(),
                                profile=prof)
+                effects = [direct_effects(stores[a], c) for c in cands]
+                t.time("branch_value_definition", _per_candidate, stores[a], state.clock, prof, effects)
+                t.time("branch_value_shared", _shared, stores[a], state.clock, prof, effects)
                 if featurize is not None:
                     t.time("belief_view+featurize", lambda s=stores[a], c=state.clock: featurize(belief_view(s, c)))
                     ob = t.time("build_observation", build_observation, stores[a], state.clock, prof, cands, preds,
