@@ -601,6 +601,7 @@ def _driven_world() -> Scenario:
 
 
 def test_words_ride_any_op_and_are_perceived():
+    pytest.importorskip("langgraph")                # 会话要 LangGraph：核心零依赖环境跳过
     from tianlong.runtime.session import GameSession
     s = GameSession(_driven_world())
     s.intro()
@@ -624,6 +625,7 @@ def test_words_ride_any_op_and_are_perceived():
 
 
 def _play(sc: Scenario, split: int | None = None):
+    pytest.importorskip("langgraph")                # 会话要 LangGraph：核心零依赖环境跳过
     from tianlong.runtime.session import GameSession
     store = InMemoryWorldStore()
     s = GameSession(sc, store=store)

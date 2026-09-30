@@ -118,8 +118,8 @@ def _sim():
 
 
 def _session(sc: Scenario | None = None):
+    _sim()                                          # 会话要 LangGraph：核心零依赖环境先跳过，再导入
     from tianlong.runtime.session import GameSession
-    _sim()
     return GameSession(sc or build_wuliang_commoner(7), pipeline=False)
 
 
