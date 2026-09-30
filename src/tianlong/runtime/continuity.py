@@ -117,6 +117,9 @@ def continuity(env: TurnEnvelope, me: BeliefStore, before: BeliefStore | None, f
     surprising: set[str] = set()
     if before is not None:
         notes += [_HEALED[a] for a in _ails(before, player) if a not in now]       # 措辞不带状态词：不必另开许可
+        moved = any(p.modality == Modality.SELF and p.event is not None and p.event.actor == player
+                    and p.event.kind == Op.MOVE.value and p.event.outcome == Outcome.SUCCESS for p in env.percepts)
+        left = believed_place(before, player)            # 玩家本回合从哪里走来：从那里跟过来的人不算“意外”
         for p in _seen(env, player, here):
             name = _name(me, p)
             if name is None or here is None or not before.knows(p) or believed_place(me, p) != here:
@@ -124,6 +127,8 @@ def continuity(env: TurnEnvelope, me: BeliefStore, before: BeliefStore | None, f
             was_held = before.holds(Proposition.attr(p, "subdued", True)) and not me.holds(Proposition.attr(p, "subdued", True))
             was_at = believed_place(before, p)
             elsewhere = was_at is not None and was_at != here and _name(before, was_at) is not None
+            if moved and was_at == left and not was_held:
+                continue                         # 一路跟着你过来的同伴：清单里“钟灵经石缝来到石洞”就够了，不必每回都惊讶
             by = _subduer(before, p, memories) if was_held else None
             if was_held:
                 statuses.add("subdued")               # 提醒里说到“被制住”：叙述者据此写出觉察，不算状态升级
@@ -133,8 +138,6 @@ def continuity(env: TurnEnvelope, me: BeliefStore, before: BeliefStore | None, f
                 surprising.add(p)
             elif was_held:
                 notes.append(f"你原以为{name}{'被' + by + '制住、' if by else ''}动弹不得——此刻却已能动了")
-        moved = any(p.modality == Modality.SELF and p.event is not None and p.event.actor == player
-                    and p.event.kind == Op.MOVE.value and p.event.outcome == Outcome.SUCCESS for p in env.percepts)
         if moved:
             for f in sorted(set(friends)):
                 if f in before.company and believed_place(me, f) != here and _name(me, f) \

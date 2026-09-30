@@ -36,6 +36,7 @@ class VoiceLine:
     answering: str | None = None    # 对方刚才对他说的话（回话的由头）
     lately: str = ""                # 说话者近来亲历的事（出人意料地出现时才给：好让他自己说出怎么来的）
     about: str = ""                 # 玩家问到的人，说话者所知的公开来历（“龚光杰：东宗左子穆门下……”）：答“他是什么来头”的依据
+    act: str = ""                   # 不是说话、是动手时顺口喝的一声（“向钟灵出手”）：可说可不说，只说这一下的事；漏写不补、没有模板
 
 
 @dataclass(frozen=True, slots=True)

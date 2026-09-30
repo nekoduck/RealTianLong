@@ -28,7 +28,8 @@
        无事发生时有模型就写眼前的光景；到了结局收在余韵上；玩家的话没人接就照实写出没人接（不替他编答案）；
        回话先接住玩家的话头，谈资只给没说过的（会话记账），被问到的人附上说话者所知的来历；此地叫得出名字的东西（nearby）可以点名；
        四下看看而什么也没翻出来不是必讲之事（写出眼前的光景就是交代了）；等待还在同一个时辰里说过了多久（_when）；
-       没有原话、没有说法、也不是回应玩家的闲话漏写了不补；近旁东西的别称同样可点名；结尾不替玩家列选项
+       没有原话、没有说法、也不是回应玩家的闲话漏写了不补；近旁东西的别称同样可点名；结尾不替玩家列选项；
+       玩家的姿态不是必讲之事；动手时顺口喝的一声（VoiceLine.act）可写可不写、没有模板；台词那句被丢，紧跟着的“她说完……”一并略过
        先声之后，别的必讲之事讲到没有只看模型自己交付的正文；有台词时引语里的名字与状态词交给台词闸门按说话者查。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -225,6 +226,8 @@ def _with_lines(plan: RenderPlan, brief: SceneBrief, forms: Mapping[str, Sequenc
 
 
 _TALK = (Op.TELL.value, Op.ASK.value)
+# 紧跟在一句台词后面、指着它说的话（“她说完拍着手直笑”“话音未落”）：台词被丢了，这句就没了着落
+_AFTER_LINE = re.compile(r"^[^，。！？“”]{0,6}(?:说完|说罢|言罢|话音|话未说完|说着|一边说)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +248,7 @@ def _must(p: Percept, viewer: str, line: str = "") -> bool:
     if p.modality == Modality.SELF:
         if ev.kind == Op.INSPECT.value and ev.target == ev.place and "——" not in line:
             return False                    # 四下看看、什么也没翻出来：写出眼前的光景就是交代了，不必补“你仔细查看某处”
-        return ev.kind != Op.WAIT.value or bool(ev.utterance)     # 干等不必交代
+        return ev.kind != Op.WAIT.value         # 干等与姿态不必交代：玩家自己做的姿态他自己知道，漏写了不在钩子后面补一句
     return p.modality == Modality.SPEECH or (p.modality == Modality.SIGHT and ev.target == viewer)
 
 
@@ -265,7 +268,8 @@ def _scene_lines(plan: RenderPlan, viewer: str, percepts: Sequence[Percept], nam
     只看见在耳语、没听见内容的那一行照旧留着。返回 (模板的各行, 被台词取代的清单行)。"""
     pending: dict[str, list[int]] = {}
     for k, vl in enumerate(brief.lines):
-        pending.setdefault(vl.speaker, []).append(k)
+        if not vl.act:
+            pending.setdefault(vl.speaker, []).append(k)
     spoken: dict[str, tuple[str, str | None]] = {}
     facts: dict[str, Percept] = {}
     for p in percepts:
@@ -294,7 +298,7 @@ def _scene_lines(plan: RenderPlan, viewer: str, percepts: Sequence[Percept], nam
         else:
             rows.append(_Row(text))
     left = {k for ks in pending.values() for k in ks}
-    rows += [_Row(render_voice(vl, salt), voice=vl) for k, vl in enumerate(brief.lines) if k in left]
+    rows += [_Row(render_voice(vl, salt), voice=vl) for k, vl in enumerate(brief.lines) if k in left and not vl.act]
     return rows, frozenset(covered)
 
 
@@ -329,7 +333,7 @@ def _missing(rows: Sequence[_Row], text: str, plan: RenderPlan, brief: SceneBrie
     for r in rows:
         if r.voice is not None:
             vl = r.voice                    # 没有原话、没有说法、也不是回应玩家的闲话：漏写了就算了，不补一句空洞的“某某打趣你”
-            ok = _spoken(r, text, said) or not (vl.template or vl.claim or vl.answering)
+            ok = _spoken(r, text, said) or vl.act or not (vl.template or vl.claim or vl.answering)
         elif r.must or (strict and r.keys):
             ok = (_named(text, r.keys) if r.keys else dropped == 0) or _echoes(r.said, text)
         else:
@@ -433,6 +437,7 @@ class _Gate:
         self._lead_grams: frozenset[str] = frozenset()
         self._echo: Callable[[str], bool] = lambda _: False
         self._judged = 0                        # 先声之后模型交来的句数
+        self._dropped_line = False              # 上一句是带台词被丢的：紧跟着的“她说完……”没了着落，一并略过
 
     def admit(self, lead: str, echo: Callable[[str], bool], sep: str = "") -> bool:
         """先声：内核结果写成的确定句子，照样过一遍闸门（不计丢句）；通过即交付（sep 接在后面：迟到的先声自成一段）。
@@ -484,8 +489,14 @@ class _Gate:
         if found:
             self.dropped += 1
             self.violations += found
+            self._dropped_line = "“" in body
             log.info("叙述句未通过闸门，丢弃: %s %s", body, found)
             return
+        if self._dropped_line and _AFTER_LINE.match(body):
+            self._dropped_line = False
+            log.info("上一句台词被丢，接着它的这句也略过: %s", body)
+            return
+        self._dropped_line = False
         self.out.emit(piece)
 
     def _found(self, piece: str, text: str, before: str) -> list[Violation]:
@@ -696,6 +707,11 @@ class Narrator:
 
 def _describe(i: int, vl: VoiceLine, fits: Callable[[str], bool]) -> str:
     """一句要说出口的话交给模型的样子：谁对谁、什么言语行为、说法还是闲话、腔调、谈资、回应什么、可点名什么。"""
+    names = sorted(n for n in vl.may_name if n != vl.speaker_name and fits(n))
+    if vl.act:                          # 动手时顺口喝的一声：给人物一副嗓子，不给事实
+        return "\n".join([f"{i}. {vl.speaker_name}{vl.act}时，可以顺口喝一声（一两句，只说这一下的事，不说也行）",
+                          *([f"   腔调：{vl.voice}"] if vl.voice else []),
+                          "   台词里可点名：" + ("、".join(names) if names else "（除对手与玩家外，谁也不提）")])
     ask = vl.op == Op.ASK.value
     act = (SOCIAL_LABELS.get(vl.social) if vl.social else None) or ("问话" if ask else "说话")
     body = (f"说法“{vl.claim}”——须如实转达，不多不少" if vl.claim
@@ -718,6 +734,5 @@ def _describe(i: int, vl: VoiceLine, fits: Callable[[str], bool]) -> str:
         rows.append(f"   回应的是：“{vl.answering}”")
     else:
         rows.append("   （不是在回应玩家的某句话：不要写成是在接玩家的话头）")
-    names = sorted(n for n in vl.may_name if n != vl.speaker_name and fits(n))
     rows.append("   台词里可点名：" + ("、".join(names) if names else "（除说话对象与玩家外，谁也不提）"))
     return "\n".join(rows)

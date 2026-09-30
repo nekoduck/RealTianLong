@@ -316,10 +316,14 @@ def test_a_companion_at_your_side_follows_within_the_turn():
     sc = scenario()
     sc = replace(sc, profiles={**sc.profiles, HERO: replace(sc.profiles[HERO], allies=("ling",))})
     s = GameSession(sc, policies={**{a: Script() for a in sc.npcs}, "ling": Script(plan={T0 + 1: (Op.MOVE, "yard")})})
+    before = s.beliefs(HERO)
     s.turn("去后院", request_id="walk")
     env = s.store.request(s.ref, "walk")
     assert env.reaction and env.planned_ticks == 2
     assert s.authority.head().target("ling", Rel.AT) == "yard"
+    ctx = continuity(env, s.beliefs(HERO), before, friends=("ling",))
+    assert "ling" in {p.event.actor for p in env.percepts if p.event is not None}, "钟灵当场跟了过来，玩家看见了"
+    assert not any("钟灵" in n for n in ctx.notes), "一路跟着过来的同伴不算意外，也不是“没有跟来”"
 
 
 def test_looking_around_shows_the_way_out_and_a_status_said_otherwise_is_still_sourced():
@@ -338,3 +342,13 @@ def test_looking_around_shows_the_way_out_and_a_status_said_otherwise_is_still_s
     assert not [v for v in check("她明明被点了穴道，怎地到了这里？", held) if v.kind == "status"], "出处说过“被制”，换个说法也算"
     assert [v for v in check("钟灵受了伤。", held) if v.kind == "status"], "出处没说过的状态照旧拦"
     assert not check("卷上画着人身上的穴道脉络。", plan()), "穴道脉络是图，不是被制"
+
+
+def test_someone_who_strikes_without_a_word_may_bark_once():
+    """龚光杰当面一掌拍向钟灵、却没开口：给他一声可说可不说的喝叱（只说这一下的事、不带谈资）；
+    模型没写就算了，没有模型时的模板里也没有这一句——他本来就没说话。"""
+    s = session({"gong": Script(plan={T0: (Op.ATTACK, "ling")})})
+    r = s.turn("等一会")
+    barks = [vl for vl in r.brief.lines if vl.act] if r.brief else []
+    assert barks and barks[0].speaker == "gong" and barks[0].act == "向钟灵出手" and not barks[0].knows
+    assert "龚光杰" not in r.narration.split("看见龚光杰")[0] and "说了几句" not in r.narration, "模板里没有他没说的话"

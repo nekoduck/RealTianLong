@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from dataclasses import replace
 
 from tianlong.cognition import BeliefStore
 from tianlong.cognition.navigation import believed_place
@@ -52,11 +53,13 @@ from tianlong.language.render import sentence_ends
 from tianlong.language.scene import SceneBrief, VoiceLine
 from tianlong.language.templates import SOCIAL_VERBS, render_event, render_experience, render_fact
 from tianlong.persistence import TurnEnvelope
-from tianlong.runtime.continuity import continuity, lately
+from tianlong.runtime.continuity import AILMENTS, continuity, lately
 from tianlong.runtime.talk import fresh
 from tianlong.scenarios import Scenario
 
 TALK = frozenset({Op.TELL.value, Op.ASK.value})
+MAX_BARKS = 2        # 一回合至多给这么多个动手的人顺口喝一声：一场混战里人人都喊，读来吵
+_EXERT = frozenset({Op.MOVE, Op.ATTACK, Op.TAKE, Op.GIVE, Op.PUT, Op.USE, Op.UNLOCK, Op.LOCK})   # 吃力的一步：伤会牵扯到
 # 叫阵、讥讽、辱骂、威胁、喝令、回绝时不交谈资：龚光杰当面挑衅时背一段“东西二宗五年一比剑”，读来是在念设定
 _NO_SMALLTALK = frozenset({Social.CHALLENGE, Social.TAUNT, Social.INSULT, Social.THREATEN, Social.COMMAND, Social.REFUSE})
 META_HELP = "可用的指令：/hint 提示、/recap 前情回顾、/beliefs 你所知道的；场外提问请以“GM：”开头。"
@@ -193,6 +196,18 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
             lines.append(_voice(ev, me, scenario, mind, answer,
                                 lately(mind, ev.actor, p.tick, recall(ev.actor)) if ev.actor in ctx.newcomers else "",
                                 (told or {}).get(ev.actor, ())))
+    # 动手时顺口喝的一声：本回合当面动了手、却没开口的 NPC（左子穆一掌拍向钟灵），给他一副嗓子——可说可不说，只说这一下的事
+    talking = {vl.speaker for vl in lines}
+    for p in env.percepts:
+        ev = p.event
+        if (len([vl for vl in lines if vl.act]) < MAX_BARKS and ev is not None and p.modality == Modality.SIGHT
+                and ev.kind == Op.ATTACK.value and ev.actor in scenario.profiles and ev.actor != player
+                and ev.actor not in talking and ev.target):
+            talking.add(ev.actor)
+            base = _voice(replace(ev, kind=Op.TELL.value, social=None, utterance=None, topic=None), me, scenario,
+                          beliefs_of(ev.actor), None)
+            target = "你" if ev.target == player else (me.sketch(ev.target).name if me.sketch(ev.target) else "对手")
+            lines.append(replace(base, knows="", act=f"向{target}出手"))
     asked = (acted.event.target if acted is not None and acted.event.kind in TALK
              and acted.event.outcome == Outcome.SUCCESS else None)          # 话没说成（人不在）就谈不上没人接
     unanswered = None
@@ -200,13 +215,22 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
             vl.speaker == asked and vl.answering for vl in lines):
         sk = me.sketch(asked)
         unanswered = sk.name if sk is not None else None
+    # 伤只在要紧时交给叙述者：这一步吃力（走动、出手、拿放）或伤势刚变；身边人的伤只给本回合有动静的人——
+    # 每回合都给，模型就每回合都写“胸口发闷”“按着肩头”（评审挑出的重复）。说到它们照旧不算升级（statuses 不变）
+    exerted = any(it.op in _EXERT for it in plan)
+    changed = before is None or any(before.holds(Proposition.attr(player, a, True)) != me.holds(Proposition.attr(player, a, True))
+                                    for a in AILMENTS)
+    active = {me.sketch(p.event.actor).name for p in env.percepts if p.event is not None and p.event.actor
+              and p.event.actor != player and me.sketch(p.event.actor)}
+    condition = ctx.condition if exerted or changed else None
+    hurt = tuple(h for h in ctx.hurt if any(h.startswith(n) for n in active))
     notes = ctx.notes
     if env.done and env.intent.op == Op.WAIT and not env.followups and not env.reaction \
             and len(env.ticks) < env.planned_ticks:
         notes = (*notes, "你本想再等下去，却被眼前的事打断了")
     return SceneBrief(tuple(lines), tuple(recent), mine.utterance if mine is not None else None,
-                      condition=ctx.condition, notes=notes, present=ctx.present, statuses=ctx.statuses,
-                      afflicted=ctx.afflicted, closing=closing, nearby=ctx.nearby, unanswered=unanswered, hurt=ctx.hurt,
+                      condition=condition, notes=notes, present=ctx.present, statuses=ctx.statuses,
+                      afflicted=ctx.afflicted, closing=closing, nearby=ctx.nearby, unanswered=unanswered, hurt=hurt,
                       hooks=tuple(hooks) if env.intent.op == Op.WAIT and not lines and not closing else ())
 
 

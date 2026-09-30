@@ -653,7 +653,7 @@ def test_what_was_found_counts_as_told_even_without_the_place_name():
 
 
 def test_the_players_own_pose_written_out_is_not_omitted_after_a_dropped_sentence():
-    """玩家叹气自语：模型照着写了出来，哪怕另有一句被丢，也不再补一遍“你叹了口气……”。"""
+    """玩家叹气自语：模型照着写了出来，哪怕另有一句被丢，也不再补一遍“你叹了口气……”；漏写了也不补。"""
     pose = "叹了口气，自言自语道：“这禁地可不能久留”"
     names = _sketches(("duanyu", Kind.PERSON, "段誉"), ("jianhu", Kind.PLACE, "剑湖宫大殿"))
     sigh = Percept(10, Modality.SELF, PerceivedEvent(Op.WAIT.value, "jianhu", "duanyu", utterance=pose,
@@ -665,7 +665,7 @@ def test_the_players_own_pose_written_out_is_not_omitted_after_a_dropped_sentenc
     assert r.dropped == 1 and r.text == body and "omitted" not in {v.kind for v in r.violations}
     r = _quiet(_script(B_ENTITY + "殿中一片寂静。")).narrate_scene("duanyu", [sigh], names, brief=SceneBrief(), known=KNOWN,
                                                                  command=said)
-    assert r.text.endswith("\n你" + pose), "没写到的照样补上"
+    assert r.text == "殿中一片寂静。", "姿态是玩家自己做的，漏写了也不在钩子后面补一句“你叹了口气……”"
 
 
 def test_the_fallback_tail_only_adds_what_the_passage_left_out():
@@ -765,3 +765,13 @@ def test_idle_chatter_left_out_is_not_patched_in_and_endings_are_not_a_menu():
     r, _ = _run(view, _script(calm), SceneBrief(lines=(joke,), present=("剑湖宫大殿",)))
     assert r.text == calm and r.status == RenderStatus.LLM
     assert "你是……还是……？" in _narrator()._system() and "不要替玩家列选项" in _narrator()._system()
+
+
+def test_a_follow_up_to_a_dropped_line_goes_with_it():
+    """台词那句被闸门丢了，紧跟着的“她说完拍着手直笑”就没了着落：一并略过，不留半截。"""
+    view = _settle(("duanyu", Op.WAIT, None, None, Manner.NORMAL))
+    bad = "钟灵笑道：“琅嬛福地里好玩得很！”"
+    after = "她说完拍着手咯咯直笑。"
+    calm = "殿中一时静了下来。"
+    r, _ = _run(view, _script(bad + after + calm), SceneBrief(present=("剑湖宫大殿",)))
+    assert r.text == calm and r.dropped == 1, r.text

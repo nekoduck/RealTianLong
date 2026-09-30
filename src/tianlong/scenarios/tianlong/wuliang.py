@@ -84,7 +84,7 @@ def _entities() -> list[Entity]:
         Entity.make("statue", S, "玉像"),
         Entity.make("putuan", S, "蒲团"),
         # ---- 物件 ----
-        Entity.make("mink", It, "闪电貂", small=True, weapon=True, venom=True, edge=0.45),
+        Entity.make("mink", It, "闪电貂", small=True, weapon=True, venom=True, edge=0.35),   # 貂咬得中龚光杰，挡不住掌门的一掌
         Entity.make("antidote", It, "解药", small=True, cures="poisoned"),
         Entity.make("sword", It, "长剑", weapon=True, edge=0.2),
         Entity.make("yijing", It, "易经", small=True),
