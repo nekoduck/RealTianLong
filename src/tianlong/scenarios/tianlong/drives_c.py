@@ -9,7 +9,9 @@
        另有 no_leap 在崖顶否决一切去路、改回大殿）；逃跑看眼前态度 ≤ −2、没中毒没被制的人（Menaced），刚挨了一下先愣一 tick；
        石缝要先 Go(shidong) 再 Go(langhuan)。VETO 的时间窗一律以驱力自己的标记计（Fired）。
        关卡：栅门上锁、钥匙在帮众身上——夜饭换班前先开锁（unbar），收了碎银的放行（bribed_open）并不再对他动手（wink），
-       换班回来再锁上（relock）。一次性台词写在 line 上；姿态本身就是看得见的字（带引语的姿态把话写在字里）
+       换班回来再锁上（relock）。一次性台词写在 line 上；姿态本身就是看得见的字（带引语的姿态把话写在字里）。
+       马五德差阿顺去后院用 EXPLAIN 不用 COMMAND（§8 第 1 条：喝令会让阿顺对好心的东家 −1）；段誉回头等人要阿顺刚才还在身边（Near）；
+       龚光杰堵住段誉时不出手（给跳崖留窗口），闲着就举火把逼近（loom），不与旁人寒暄
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -44,6 +46,7 @@ from tianlong.core.drives import (
     Lock,
     Lost,
     Menaced,
+    Near,
     Not,
     Pose,
     Pursue,
@@ -88,9 +91,9 @@ DUANYU = (
           gloss="段公子受了伤还被人逼着，宁可逃也不动手"),
     Drive("pacifist_more", VETO, (), Say(TARGET, Social.PLEAD), veto=Op.ATTACK, gloss="段公子再挨打也只是讲理"),
     Drive("wait_fond", URGENT, (AnyOf((Fired("flee", within=2), Fired("bolt", within=2), Fired("pacifist_flee", within=2))),
-                                Not(Here(PLAYER)),
+                                Not(Here(PLAYER)), Near(PLAYER, within=3),
                                 Fond(PLAYER, 1), Not(Menaced(-2)), Not(Fired("wait_fond", within=5))),
-          Pose("回头张望了一眼，像是在等人"), gloss="段公子逃开之后会回头等等你"),
+          Pose("回头张望了一眼，像是在等人"), gloss="段公子逃开时你若还在他身边，他会回头等等你"),
     Drive("leap", URGENT, (At("yading"), AnyOf((Here(_GG), Saw(actor=_GG, within=2), Heard(_GG, within=2)))),
           Cross("d_cliff"), line="与其落在你手里，不如赌一赌这藤萝！", once=True,
           gloss="段公子被追到崖顶，会攀着藤萝跳下断崖"),
@@ -120,7 +123,7 @@ DUANYU = (
           gloss="磕完了头，段公子会翻看蒲团"),
     Drive("take", IDLE, Knows("scroll_lb"), (Take("scroll_lb"), Take("scroll_bm")), gloss="段公子会取出蒲团里的帛卷"),
     Drive("plead_scroll", IDLE, (HeldBy("scroll_lb", PLAYER), Here(PLAYER), Fond(PLAYER, 1)), Say(PLAYER, Social.PLEAD),
-          line="阿顺兄，那帛卷可否借在下一观？", cooldown=10, gloss="帛卷若在你手里，段公子会恳求借阅"),
+          line="阿顺兄，那帛卷可否借在下一观？", once=True, gloss="帛卷若在你手里，段公子会开口恳求借阅（只求这一回）"),
     Drive("study", IDLE, (Holds("scroll_lb"), Not(Status(SELF, "evasion"))), Study("scroll_lb"),
           gloss="段公子会捧着凌波微步的帛卷一遍遍地读"),
     Drive("leave", IDLE, (Fired("exult"), Knows("d_tunnel"), Not(At("lancang"))), Go("lancang", avoid_oneway=False),
@@ -216,6 +219,8 @@ GONGGUANGJIE = (
     Drive("corner_again", URGENT, (*_HUNTING, Here(_DY), Not(At("hall")), Not(Fired("corner", within=10)),
                                    Not(Fired("corner_again", within=10))),
           Say(_DY, Social.TAUNT), gloss="再撞见段公子，龚光杰又骂一回"),
+    Drive("loom", IDLE, (*_HUNTING, Here(_DY), Not(At("hall"))), Pose("举着火把逼上一步，冷笑着堵住去路"),
+          gloss="龚光杰堵住段公子时只举着火把逼近，不与旁人寒暄"),
     Drive("hunt", URGENT, (*_HUNTING, Not(Status(SELF, "poisoned")), Not(Here(_DY))), (Ask(_DY), Pursue(_DY)),
           gloss="龚光杰搜人时会向遇见的人打听段公子的下落"),
 )
@@ -229,7 +234,7 @@ MAWUDE = (
                                               Saw(Op.ATTACK, actor=_GG, target=PLAYER, within=1)))),
           Say(_GG, Social.PLEAD), line="龚老弟，和气生财，和气生财……", cooldown=5,
           gloss="龚光杰对段公子或你动手，马五爷会打圆场"),
-    Drive("errand", IDLE, (Heard(_ZZ, frozenset({Social.AGREE}), within=15), Here(PLAYER)), Say(PLAYER, Social.COMMAND),
+    Drive("errand", IDLE, (Heard(_ZZ, frozenset({Social.AGREE}), within=15), Here(PLAYER)), Say(PLAYER, Social.EXPLAIN),
           line="阿顺，茶担先挑去后院厨下歇着，莫在这里碍眼。", once=True,
           gloss="风波平了，马五爷会差你把茶担挑去后院厨下"),
 )

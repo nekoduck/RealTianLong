@@ -57,6 +57,7 @@ from tianlong.core.drives import (
     Lock,
     Lost,
     Menaced,
+    Near,
     Not,
     Pose,
     Pursue,
@@ -129,6 +130,14 @@ def _between(c: Between, sit: Situation, marks: Marks, target: str | None = None
 @holds.register(Here)
 def _present(c: Here, sit: Situation, marks: Marks, target: str | None = None) -> bool:
     return _who(c.who, sit, target) in _KIT._persons_here(sit.beliefs)
+
+
+@holds.register(Near)
+def _near(c: Near, sit: Situation, marks: Marks, target: str | None = None) -> bool:
+    """亲眼所见的下落（环顾、看见他的举动）不出 within 个 tick：他刚才还在身边，或刚从眼前走开；听人说的不算。"""
+    who = _who(c.who, sit, target)
+    seen = sit.beliefs.best(who, Rel.AT.value) if who is not None else None
+    return seen is not None and not seen.hearsay and sit.now - seen.learned_at <= c.within
 
 
 @holds.register(Status)

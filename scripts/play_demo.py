@@ -3,6 +3,7 @@
          tianlong.kernel.perception 的 sketches_for
 [OUTPUT]: 命令行脚本：按固定指令序列游玩一局，写出 Markdown 记录（玩家所见 / 世界真相 / NPC 理由 / 结局时玩家认知与真相对照）
 [POS]: scripts 的演示工具；不属于引擎本体。用它展示“同一时刻，玩家被告知了什么，而世界里实际发生了什么”；
+       指令序列是段誉的原著路线，默认录旧版（wuliang-duanyu → docs/demo/wuliang.md），普通人版写到 wuliang_c.md、不覆盖旧录像；
        叙述经 CachedLLM 落盘，重跑同一局不再花费模型调用
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -63,9 +64,13 @@ def _belief_snapshot(session: GameSession) -> dict[str, tuple[str, str]]:
     return out
 
 
+# 指令序列是段誉的原著路线：默认录旧版，沿用入库的 docs/demo/wuliang.md；普通人版另写一个文件，不覆盖旧录像
+_FILES = {"wuliang-duanyu": "wuliang", "wuliang": "wuliang_c"}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="录制一局游戏：玩家所见 vs 世界真相")
-    ap.add_argument("--world", default="wuliang", choices=sorted(SCENARIOS))
+    ap.add_argument("--world", default="wuliang-duanyu", choices=sorted(SCENARIOS))
     ap.add_argument("--llm", choices=["auto", "none"], default="auto")
     ap.add_argument("--out", default="docs/demo")
     args = ap.parse_args(argv)
@@ -93,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     md += [f"| {k} | {v[0]} | {v[1]} |" for k, v in _belief_snapshot(session).items()]
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"{args.world}.md").write_text("\n".join(md) + "\n", "utf-8")
+    (out / f"{_FILES.get(args.world, args.world)}.md").write_text("\n".join(md) + "\n", "utf-8")
     return 0
 
 

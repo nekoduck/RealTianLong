@@ -42,7 +42,7 @@ uv pip install -e ".[all,dev]"
 # 离线游玩（默认天龙八部·无量山普通人版——你是挑茶的伙计阿顺；--world wuliang-duanyu 是段誉作主角的旧版，--world warehouse 为设计验收用例）
 python -m tianlong --llm none --debug
 
-# 录制一局“玩家所见 vs 世界真相”到 docs/demo/
+# 录制一局“玩家所见 vs 世界真相”到 docs/demo/（段誉旧版的原著路线；--world wuliang 写到 wuliang_c.md）
 python scripts/play_demo.py
 
 # 在浏览器里玩（主持人之声逐句浮现；有 GEMINI_API_KEY 即用 Gemini 叙述，否则模板叙述）

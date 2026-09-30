@@ -2,7 +2,7 @@
 [INPUT]: 依赖 language/waits 的 wait_length，runtime/session 的 GameSession（模板模式），scenarios 的 build_wuliang_commoner / build_wuliang，
          scenarios/tianlong/drives_c 的 MOONRISE，core 的 at，tests/test_commoner 的 stage（把人挪到某处、把时钟拨到某刻重新建档）
 [OUTPUT]: 等待验收：“等到月亮出来/月上”认作月出、“等到天亮/天明/等下去”认作天亮、“天黑/月亮”照旧入夜；
-          19:30 在剑湖畔“等到月亮出来”恰停在 MOONRISE 且认得出月下玉璧的看点；“等下去”在玩家感知到看点的那个 tick 停下，
+          19:30 在剑湖畔“等到月亮出来”恰停在 MOONRISE 且认得出月下玉璧的看点、正文交付的正是月下那段描写（runtime/staging.lore_at）；“等下去”在玩家感知到看点的那个 tick 停下，
           一次性的看点只让等待停一回；场景没有月出这个时刻（旧版）时，月亮照旧按入夜算
 [POS]: tests 的等待层：时刻是场景的时钟事实（Scenario.moments），等待只读玩家自己的感知决定何时停
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -42,6 +42,16 @@ def test_waiting_for_the_moon_stops_at_moonrise():
     r = s.turn("等到月亮出来")
     assert s.authority.head().clock == MOONRISE, "月出是场景的时钟事实：停在 19:40"
     assert r.parsed.until == "moon" and "moon" in r.beats
+
+
+def test_moonrise_shows_the_moonlit_wall():
+    """月出那一回合交付的正是月下玉璧（舞剑人影）的描写，不是入夜时“看不出什么异样”的那段：看点与正文不相矛盾。"""
+    from tianlong.scenarios.tianlong.lore_commoner import LORE_C
+    s = _at_lake(at(1, 19, 30))
+    assert LORE_C["yubi@night"] in s.intro(), "月出之前：夜色里黑沉沉的玉璧"
+    r = s.turn("等到月亮出来")
+    assert "moon" in r.beats and LORE_C["yubi@moon"] in r.narration and LORE_C["yubi@night"] not in r.narration
+    assert LORE_C["yubi@moon"] not in s.turn("等待").narration, "月下玉璧也只在初见时描写"
 
 
 def test_long_wait_stops_at_a_perceived_beat_only_once():

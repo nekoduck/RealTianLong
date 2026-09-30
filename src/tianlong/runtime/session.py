@@ -2,7 +2,7 @@
 [INPUT]: 依赖 runtime/authority 的 WorldAuthority / Settlement，runtime/versions 的 current_versions / check_save，runtime/talk 的谈资账本，
          runtime/gm 的主持层纯函数（gm_command / companions / salient / build_brief），runtime/aside 的 AsideMixin / ENDED（不推进的回合），
          runtime/endings 的 EndingMixin（落幕与终章），runtime/cast 的 policy_for / wakes / advance_marks（驱力），
-         runtime/staging 的 recognize / stops_wait（看点：只读玩家自己的感知），runtime/suggest 的 suggestions，
+         runtime/staging 的 recognize / stops_wait / lore_at（看点：只读玩家自己的感知；月出后的外观描写），runtime/suggest 的 suggestions，
          agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
          memory 的 QdrantMemoryIndex / Recall / MemoryIndexer / MemoryScope，language 的 IntentParser / MoveKind / Parsed / Narrator /
          TemplateSpeaker / LLMClient，language/scene 的 SceneBrief / TextSink，
@@ -326,7 +326,9 @@ class GameSession(AsideMixin, EndingMixin):
 
     def _opening_keys(self) -> list[str]:
         """开场讲的初始认知里应当描写外观的实体：新游戏的 intro() 描写它们，建档后尚无提交就读档时据此补回“已描写”。"""
-        return lore_keys(self.player, self.scenario.priors.get(self.player, ()), self.scenario.lore)
+        sc = self.scenario
+        return staging.lore_at(lore_keys(self.player, sc.priors.get(self.player, ()), sc.lore), sc.state.clock, sc.lore,
+                               sc.moments)
 
     def _known(self, me: BeliefStore) -> frozenset[str]:
         return self._universe | {sk.name for sk in me.entities.values()}
@@ -596,7 +598,9 @@ class GameSession(AsideMixin, EndingMixin):
 
         def annotate(s: Settlement) -> tuple[TurnEnvelope | None, dict]:
             mine = tuple(o.percept for o in s.observations_of(self.player))
-            fresh = tuple(k for k in lore_keys(self.player, mine, self.narrator.lore) if k not in self._described)
+            keys = staging.lore_at(lore_keys(self.player, mine, self.narrator.lore), s.state.clock, self.narrator.lore,
+                                   self.scenario.moments)
+            fresh = tuple(k for k in keys if k not in self._described)
             n = len(env.versions) + 1
             plan = env
             failed = any(e.intent.id == player_intent.id and e.outcome != Outcome.SUCCESS for e in s.events)

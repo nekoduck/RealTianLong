@@ -4,13 +4,13 @@
          core 的 Op / Outcome / SetAttr / clock_label
 [OUTPUT]: 命令行 python scripts/sim_beats.py [--seeds 1-20] [--players passive,follower,...] [--json FILE] [--check] [--jobs N]，
           打印 Markdown 结果表（并行与否逐项相同）；
-          也是可导入的库：PLAYERS（五种脚本化玩家）、play(seed, player) -> Run、summarize(runs) -> dict、table(runs) -> str、GATES
+          也是可导入的库：PLAYERS（五种脚本化玩家）、play(seed, player) -> Run、summarize(runs) -> dict、pooled_e1(runs)、table(runs) -> str、GATES
 [POS]: scripts 的普通人版调参台（plan §7 M2）：种子 × 脚本化玩家逐回合跑真实会话，报告
        B1（玩家目击的看点数，按场景的识别器、只算玩家自己的感知）、段誉到达琅嬛福地 / 澜沧江畔的种子数、到达的结局、钟灵是否被制、
        讨价还价是否成立、各驱力的兑现次数、E1（空转的推进回合所占比例：这一回合玩家没感知到任何 NPC 的动作或言语、没有新认识的东西、
        没有看点）。脚本化玩家只凭玩家自己的认知与时钟行事（和真人一样看不到真相）；真相只用于统计。
-       --check 按 GATES 判定出口条件（跟随型 ≥16/20 个种子目击 ≥8/11 个看点、跟随型 E1 ≤ 10%、被动玩家下段誉 ≥12/20 到琅嬛且 ≥8/20 到澜沧江、
-       讨价还价 ≥16/20），不达标以非零码退出
+       --check 按 GATES 判定出口条件（跟随型 ≥16/20 个种子目击 ≥8/11 个看点、跟随型与全体合计的 E1 各 ≤ 10%（逐脚本不设门槛）、
+       被动玩家下段誉 ≥12/20 到琅嬛且 ≥8/20 到澜沧江、讨价还价 ≥16/20），不达标以非零码退出
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -33,7 +33,9 @@ from tianlong.scenarios.tianlong.stagecraft import BEAT_KEYS
 
 PLAYER, DUANYU = "ashun", "duanyu"
 MAX_TURNS = 400
-GATES = {"follower_b1": (16, 8), "follower_e1": 0.10, "langhuan": 12, "lancang": 8, "bargain": 16}
+# E1 的口径：跟随型与全体推进回合合计各须 ≤ 10%（plan 的出口条件 E1 不限脚本）；逐脚本不设门槛——
+# liar 在后院、slipper 在大殿掐着换班的时辰干等，是脚本故意在没事的地方耗时间，报告里照列
+GATES = {"follower_b1": (16, 8), "follower_e1": 0.10, "e1": 0.10, "langhuan": 12, "lancang": 8, "bargain": 16}
 
 # ============================================================
 #  脚本化玩家：只读玩家自己的认知（以为段公子在哪、有没有人问他话）与时钟
@@ -212,6 +214,12 @@ def summarize(runs: list[Run]) -> dict:
     return out
 
 
+def pooled_e1(runs: list[Run]) -> float:
+    """全体推进回合合计的 E1（不分脚本）。"""
+    turns = sum(r.turns for r in runs)
+    return round(sum(r.idle for r in runs) / turns, 3) if turns else 0.0
+
+
 def table(runs: list[Run]) -> str:
     summary = summarize(runs)
     rows = ["| 玩家 | 种子 | B1 均值 | B1≥8 | 到琅嬛 | 到澜沧江 | 讨价还价 | 钟灵被制 | E1 | 结局 |",
@@ -220,6 +228,7 @@ def table(runs: list[Run]) -> str:
         ends = "、".join(f"{k} {v}" for k, v in sorted(x["endings"].items()))
         rows.append(f"| {player} | {x['seeds']} | {x['b1_mean']} | {x['b1_ge8']} | {x['langhuan']} | {x['lancang']} | "
                     f"{x['bargain']} | {x['zl_subdued']} | {x['e1']:.1%} | {ends} |")
+    rows.append(f"| 全体合计 | {len(runs)} | | | | | | | {pooled_e1(runs):.1%} | |")
     rows += ["", "| 看点 | " + " | ".join(summary) + " |", "|---|" + "---|" * len(summary)]
     for k in BEAT_KEYS:
         rows.append(f"| {k} | " + " | ".join(str(x["beats"].get(k, 0)) for x in summary.values()) + " |")
@@ -239,6 +248,8 @@ def check(runs: list[Run]) -> list[str]:
         bad.append(f"跟随型 B1≥{at_least} 的种子数 {x['follower']['b1_ge8']} < {need}")
     if "follower" in x and x["follower"]["e1"] > GATES["follower_e1"]:
         bad.append(f"跟随型 E1 {x['follower']['e1']:.1%} > {GATES['follower_e1']:.0%}")
+    if pooled_e1(runs) > GATES["e1"]:
+        bad.append(f"全体合计 E1 {pooled_e1(runs):.1%} > {GATES['e1']:.0%}")
     if "passive" in x:
         for key in ("langhuan", "lancang", "bargain"):
             if x["passive"][key] < GATES[key]:

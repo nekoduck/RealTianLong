@@ -10,7 +10,9 @@
           （被动玩家下段誉 ≥12/20 到琅嬛、≥8/20 到澜沧江；纪事只写真相里发生过的事）、follower_beats（跟随型 ≥16/20 目击 ≥8/11 看点）、
           divergence 1–5（撒谎引开龚光杰、抢先拿走帛卷则段誉只能恳求、带段誉去山道就不跳崖、落单撞见私奔被打而求饶有人求情、
           两人同在则不灭口）、one_way_restraint（龚光杰从不经断崖、并说出作罢的话）、guard_supper（20:30 下山成功落幕“第一幕终 · 下山”，
-          18:00 挨一下过不去，塞了碎银放行）；统计版标 slow，各留一个单种子冒烟版；stage() 供别的测试把人挪到某处、把时钟拨到某刻重新建档
+          18:00 挨一下过不去，塞了碎银放行）；统计版标 slow，各留一个单种子冒烟版；stage() 供别的测试把人挪到某处、把时钟拨到某刻重新建档；
+          审查回归：带字姿态只写成看得见的那一行（不做成“对众人道”、不套引号），马五德的差遣是 EXPLAIN（阿顺对东家不降、
+          没有“向马五德赔罪”），茶饼碎银不劝人研读
 [POS]: tests 的普通人版内容层：剧情不是写死的脚本，这里断言的是“会发生”的分布，与改变它的分歧
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -149,6 +151,40 @@ def test_opening():
             e.op == Op.ATTACK or (e.op == Op.TELL and e.intent.social == Social.CHALLENGE)) for e in early)
         assert any(e.actor == "zhongling" and e.op == Op.ATTACK and e.intent.target == "gongguangjie" for e in early)
         assert not [e for e in events if e.actor == "duanyu" and e.op == Op.ATTACK], "段誉从不动手"
+
+
+def test_poses_are_seen_not_voiced():
+    """驱力的带字姿态只写成看得见的那一行：不做成“X对众人道：“<姿态>””，也不给姿态里的引语再套一层引号。"""
+    from tianlong.core import Pose
+    poses = {a.text for ds in DRIVES_C.values() for d in ds for a in d.do if isinstance(a, Pose)}
+    s = _session()
+    body = []
+    for _ in range(8):                                      # 17:41–17:48：中毒的龚光杰、护着书呆子的钟灵都摆了姿态
+        r = s.turn("等待")
+        assert not [vl for vl in r.brief.lines if vl.op == Op.WAIT.value], "姿态不是台词"
+        body.append(r.narration)
+    text = "\n".join(body)
+    assert "看见龚光杰捂着伤处" in text, "姿态照样看得见"
+    assert not [p for p in poses if f"“{p}" in text], "姿态原文不出现在引语里"
+    assert not re.search(r"“[^”]*“", text), "没有套引号"
+
+
+def test_the_errand_is_kind_and_the_opening_suggests_no_studying_tea():
+    """马五德差阿顺去后院是叮嘱（EXPLAIN）不是喝令：阿顺不因此对东家生分、建议里没有“向马五德赔罪”；
+    茶饼、碎银、火折子不劝人去研读。"""
+    from tianlong.runtime.suggest import suggestions
+    s = _session()
+    assert not [t for t in suggestions(s.beliefs("ashun"), friends={"duanyu"}) if t.startswith("研读")]
+    while not _events(s, "mawude", Op.TELL) or _events(s, "mawude", Op.TELL)[-1].intent.target != "ashun":
+        assert s.authority.head().clock < at(1, 18, 0), "讲和之后马五德会差阿顺去后院"
+        s.turn("等待")
+    errand = _events(s, "mawude", Op.TELL)[-1]
+    assert errand.intent.social == Social.EXPLAIN and errand.intent.utterance.startswith("阿顺")
+    s.turn("等待")
+    me = s.beliefs("ashun")
+    assert me.attitude("mawude") >= 0
+    assert "向马五德赔罪" not in suggestions(me, friends={"duanyu"})
+    assert not [t for t in suggestions(me, friends={"duanyu"}) if t.startswith("研读")]
 
 
 def test_bargain():

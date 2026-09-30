@@ -1,10 +1,12 @@
 """
 [INPUT]: 依赖 core 的 Percept / Modality / Outcome / Rel，scenarios 的 Beat
-[OUTPUT]: 对外提供 recognize()（玩家本回合感知到了哪些看点）、stops_wait()（等待该不该在这个 tick 停下）、witnessed()（B1：看点编号集合）
+[OUTPUT]: 对外提供 recognize()（玩家本回合感知到了哪些看点）、stops_wait()（等待该不该在这个 tick 停下）、witnessed()（B1：看点编号集合）、
+          lore_at()（外观描写按场景的时刻换成那一刻的样子：月出之后取 "id@moon"）
 [POS]: runtime 的看点识别：真相只用于呈现——这里只读玩家自己的感知（已结算的事件、环顾所见），从不读世界真相，
        也从不进入任何 NPC 的 Situation（只由会话与评测脚本调用）。识别器由场景给出（Scenario.beats）：
        事件看点按行动/施动者/对象/物件/门/地点/言语行为/原因匹配（缺省只认成功的）；景观看点（lore）只看环顾：
        玩家在该处、时钟已到、看得见那件陈设。once 的看点一局只让等待停一次（已停过的记在会话运行态 staged 里）。
+       景观看点认得出的那一刻，会话经 lore_at() 交付的正是那段描写（月下玉璧的舞剑人影），看点与正文不相矛盾。
        天色 sky() 与写法卡、细节卡组留给 M3
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -67,6 +69,20 @@ def stops_wait(beats: Iterable[Beat], percepts: Iterable[Percept], player: str,
                moments: Mapping[str, int] | None = None, staged: Collection[str] = ()) -> bool:
     """等待在玩家感知到看点的那个 tick 停下；once 的看点停过一次（staged 里有它）就不再为它停。"""
     return any(not (b.once and b.key in staged) for b in recognize(beats, percepts, player, moments=moments))
+
+
+def lore_at(keys: Iterable[str], clock: int, lore: Mapping[str, str], moments: Mapping[str, int]) -> list[str]:
+    """外观描写按场景的时刻换成那一刻的样子（plan §4.5）：时钟过了月出，"id@night" 或 "id" 有 "id@moon" 的取月下那段；
+    穿过通道的经过（"门@pass"）与没有月出时刻的场景（旧版）原样不动。"""
+    moon = moments.get("moon")
+    out: list[str] = []
+    for k in keys:
+        base, _, variant = k.partition("@")
+        if moon is not None and clock >= moon and variant in ("", "night") and f"{base}@moon" in lore:
+            k = f"{base}@moon"
+        if k not in out:
+            out.append(k)
+    return out
 
 
 def witnessed(beats: Iterable[Beat], percepts: Iterable[Percept], player: str,

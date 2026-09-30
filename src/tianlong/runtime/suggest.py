@@ -1,9 +1,10 @@
 """
-[INPUT]: 依赖 cognition/beliefs 的 BeliefStore，cognition/candidates 的 candidates()，core 的 Kind / Op / Manner / HOSTILE_SOCIAL
+[INPUT]: 依赖 cognition/beliefs 的 BeliefStore，cognition/candidates 的 candidates()，core 的 Kind / Op / Manner / HOSTILE_SOCIAL / SKILLS
 [OUTPUT]: 对外提供 suggestions(me, limit=3, friends=()) -> tuple[str, ...]：此刻“可以这样做”的几句输入
 [POS]: runtime 的行动建议：玩家面对空白输入框不知从何下手时，给两三句现成的话，点一下就能照做。
        只从玩家自己的认知与候选集生成（他以为在场的人、以为在这的东西、以为相邻的地方），从不参考真相，所以不剧透；
        措辞刻意落在解释器快路径的句式上（去 P、查看 S、拿起 S 上的 I、研读 I、环顾四周），点了不必等模型；
+       研读只劝手里自己摸得出载着武功（teaches）的东西，茶饼、碎银、火折子不劝；
        行礼与赔罪交给解释器（规则认得，有模型时一次快模型调用）。每族至多一条，按“同伴挨了打（向动手的人替他求情、拉着他逃）或刚走开（跟上他）
        > 有人冲我来（狠话或动手：赔罪、脱身）> 没看清的 > 没试过的 > 没去过的”排序，研读过的不再提，
        同一局面给同样的建议（确定性）。被 web.py 在开场与每回合收尾时附上
@@ -16,7 +17,7 @@ from collections.abc import Collection
 
 from tianlong.cognition.beliefs import BeliefStore
 from tianlong.cognition.candidates import candidates
-from tianlong.core import HOSTILE_SOCIAL, Kind, Manner, Op
+from tianlong.core import HOSTILE_SOCIAL, SKILLS, Kind, Manner, Op
 
 RECENT = 3        # 多少个 tick 内冲我来的话算“眼前的事”（与会话的反应 tick 同量级）
 
@@ -64,9 +65,10 @@ def suggestions(me: BeliefStore, limit: int = 3, friends: Collection[str] = ()) 
                 and c.target not in me.searched:
             pool.append((3, "look", f"查看{name(c.target)}"))
 
-    # ---- 手里的秘籍可以研读；以为在这的东西可以拿起 ----
+    # ---- 手里的秘籍（自己摸得出载着武功的）可以研读——茶饼、碎银不劝人去读；以为在这的东西可以拿起 ----
     for c in cands:
-        if c.op == Op.STUDY and name(c.target) and (Op.STUDY.value, c.target) not in tried:
+        if c.op == Op.STUDY and name(c.target) and (Op.STUDY.value, c.target) not in tried \
+                and any(b.prop.value in SKILLS for b in me.positives(c.target, "teaches")):
             pool.append((2, "study", f"研读{name(c.target)}"))
         elif c.op == Op.TAKE and name(c.target):
             loc = me.location_of(c.target)

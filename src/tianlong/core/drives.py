@@ -1,6 +1,6 @@
 """
 [INPUT]: 依赖 core/schema 的 Op / Social，core/events 的 Outcome
-[OUTPUT]: 对外提供 Level（URGENT / IDLE / VETO）、驱力条件（At / Between / Here / Status / Saw / Heard / Holds / HeldBy / Knows /
+[OUTPUT]: 对外提供 Level（URGENT / IDLE / VETO）、驱力条件（At / Between / Here / Near / Status / Saw / Heard / Holds / HeldBy / Knows /
           Fond / Menaced / Alone / Arrived / Searched / Fired / Lost / Not / AnyOf，合称 Cond）、驱力行动（Go / Flee / Follow /
           Pursue / Ask / Cross / Inspect / Take / Study / Use / Give / Unlock / Lock / Pose / Say / Hold，合称 Act）、Drive、SELF / PLAYER / TARGET
 [POS]: core 的驱力词表：角色性情的类型化写法（与 Goal 同属角色设定），纯数据、冻结、可哈希，不带语义——
@@ -8,6 +8,7 @@
        who 取 "self"（自己）| "player"（主角）| "target"（只在 VETO 里：被否决那一步的对象）| 实体 ID。
        技能也是状态：Status("self", "evasion") 即“自己已会凌波微步”。
        VETO 的时间窗一律以驱力自己的标记计（Fired），不看会被挤掉的线索与经历；Saw(here=True) 只认发生在自己此刻所在之处的事；
+       Near 是“他刚才还在身边”：近几个 tick 亲眼见过他（环顾里同在一处也算，不必他有所动作），传闻不算；
        Unlock / Lock 只在以为锁着 / 没锁时才转钥匙（关卡的放行与换班）
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -48,6 +49,12 @@ class Between:
 @dataclass(frozen=True, slots=True)
 class Here:
     who: str                         # 以为此人就在眼前
+
+
+@dataclass(frozen=True, slots=True)
+class Near:
+    who: str                         # 近 within 个 tick 内亲眼见过此人（环顾时同在一处也算）：“他刚才还在身边”
+    within: int = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +156,7 @@ class AnyOf:
     conds: tuple[Cond, ...]
 
 
-Cond = (At | Between | Here | Status | Saw | Heard | Holds | HeldBy | Knows | Fond | Menaced | Alone | Arrived
+Cond = (At | Between | Here | Near | Status | Saw | Heard | Holds | HeldBy | Knows | Fond | Menaced | Alone | Arrived
         | Searched | Fired | Lost | Not | AnyOf)
 
 
