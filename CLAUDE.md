@@ -11,10 +11,10 @@ src/tianlong/memory/ - 可回忆经历：记忆写入策略、嵌入、向量索
 src/tianlong/language/ - 开放语义：模板文本、LLM 接入、对白、玩家输入解析与叙述
 src/tianlong/agents/ - 智能体：LangGraph 单角色决策图、多角色扇出编排、脚本策略、后果预测、调度
 src/tianlong/learning/ - 学习：PyG 关系动态模型（环境/角色两入口）、RLlib 模仿学习 + PPO 角色策略（1 子目录: rl）
-src/tianlong/scenarios/ - 内容：初始世界 + 角色设定 + 以感知形式给出的初始认知（1 子目录: tianlong 天龙八部，第一幕无量山）
+src/tianlong/scenarios/ - 内容：初始世界 + 角色设定 + 以感知形式给出的初始认知（1 子目录: tianlong 天龙八部，第一幕无量山：普通人版与段誉旧版）
 src/tianlong/runtime/ - 装配：权威写入器、游戏会话（主持层回合循环）、命令行与网页前端
 tests/ - 验收即规格：每条设计边界对应可证伪断言（1 子目录: data 金标准指纹、录制的代理答案与闸门语料）
-scripts/ - 本地基础设施与演示脚本（无 Docker 环境下的 Neo4j、录制一局“玩家所见 vs 世界真相”、Colab 笔记本生成器、主持层评测“本引擎 vs 纯模型主持人”、在线代理评测与闸门误杀重放）
+scripts/ - 本地基础设施与演示脚本（无 Docker 环境下的 Neo4j、录制一局“玩家所见 vs 世界真相”、Colab 笔记本生成器、主持层评测“本引擎 vs 纯模型主持人”、在线代理评测与闸门误杀重放、普通人版看点调参台）
 docs/ - 入库的产出物与设计（3 子目录: demo 演示录像, results 训练报告与结果表, design 手写施工图）
 notebooks/ - Colab GPU 训练笔记本（生成物：只调用同一套训练 CLI，固定提交、失败即停、产物写进 Drive）
 .github/ - CI（1 子目录: workflows——核心零依赖套件 + 学习层与 Neo4j 全量套件）

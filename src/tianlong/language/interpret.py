@@ -1,13 +1,15 @@
 """
 [INPUT]: 依赖 cognition 的 BeliefStore / Candidate / believed_place，core 的 Op / Kind / Manner / Social / Fact / Proposition / Rel /
          RELATIONS / OP_SIGNATURES / SKILLS，language/command 的 SpeechMode / ParsedCommand / action_hits / analyze / clarify，
-         language/parser 的 MoveKind / Parsed / IntentParser / rule_parse / normalize 与规则机件（mentions / held_items / exits /
+         cognition/navigation 的 route_to，language/parser 的 MoveKind / Parsed / IntentParser / rule_parse / normalize 与规则机件（mentions / held_items / exits /
          invalid / leave_here / leaving / manner_of / speech_manner / wait_length / speech_line / unwrap_line / unsaid /
          wield_problem），language/pose 的 pose_of / witness / own_words / MIN_NAME，language/llm 的 LLMClient / LLMUnavailable /
          parse_json
-[OUTPUT]: 对外提供 Interpreter（interpret(text, me, recent) → Parsed：GM 前缀与元指令 → 场外问题 → 高精度规则快路径（0 次模型调用）
+[OUTPUT]: 对外提供 Interpreter（interpret(text, me, recent) → Parsed：GM 前缀与元指令 → 场外问题 → “跟上/跟着 + 认识的人”
+          （走到玩家以为他在的地方，刚看见他从哪道门走的就走那道门）→ 高精度规则快路径（0 次模型调用）
           → 快模型一次 JSON（act / say / gesture / ask_gm / unclear，并声明语态与主体）→ 逐项校验；没有模型时退回 IntentParser，
-          模型失败或回复不成形只退回规则解析、绝不再调一次模型；prompt() 给评测与测试看模型收到的原文）、
+          模型失败或回复不成形只退回规则解析、绝不再调一次模型；场景的 kowtow_ticks > 1 时，对着可拜的陈设叩首（解析成伏地细看）
+          展开为“叩首 × (k-1) + 细看”的多 tick 计划，每步都是带字的姿态，旧版 kowtow_ticks=1 原样；prompt() 给评测与测试看模型收到的原文）、
           MAX_TABLE / RECENT_CHARS / MAX_TOKENS
 [POS]: language 的主持层解释器（设计 §4.1）：听懂玩家的任何话，但模型的输出只是意图——引用的每个实体都必须是玩家认识的、
        种类要对、MOVE 按玩家的地图补全路线（多步计划从上一步的终点算起；目的地是脚下时，只有说了“离开/溜出”才替人挑出路）、
@@ -32,7 +34,7 @@ from types import MappingProxyType
 from typing import Any, TypeVar
 
 from tianlong.cognition import BeliefStore, Candidate
-from tianlong.cognition.navigation import believed_place
+from tianlong.cognition.navigation import believed_place, route_to
 from tianlong.core import OP_SIGNATURES, RELATIONS, SKILLS, Fact, Kind, Manner, Op, Proposition, Rel, Social
 from tianlong.language.command import (
     ACTION_WORDS,
@@ -151,6 +153,11 @@ _FAST: tuple[tuple[Op, re.Pattern[str]], ...] = tuple(
         (Op.TELL, "告诉H[IHMS](?:不|没)?在[PSH](?:上|里)?"),
     )
 )
+# 跟上认识的人：走到玩家以为他在的地方（刚看见他从哪道门走的就走那道门）
+_FOLLOW = re.compile(r"(?:M(?:要|就|这就|赶紧|快|先)?)?(?:跟上|跟着|跟紧|紧跟|追上|跟随|随)H(?:去|走|过去|一起走)?")
+# 拉着认识的人走：玩家自己走（被拉着的人跟不跟，由他自己决定）
+_TOW = re.compile(r"(?:M(?:要|就|赶紧|快)?)?(?:拉着|拽着|带着|扶着|领着)H(?:快|赶紧)?(?:逃去|逃到|躲去|躲到|跑去|溜去|去|到)P")
+_BOWS = ("磕头", "叩首", "跪拜", "拜了几拜")
 _NOISE = re.compile(r"[\s，,。．.；;！!？?、…~～]+")
 _ASKING = ("？", "?")            # 问号结尾的整句命令（“攻击龚光杰？”）是犹豫还是下令，交给模型判语态
 
@@ -304,11 +311,13 @@ class Interpreter:
     universe：场景全部实体的名字（可选，会话交来），只用于拒绝——模型写的追问点了其中玩家不认识的，就不回显。"""
 
     def __init__(self, llm: LLMClient | None, aliases: Mapping[str, Sequence[str]] = _NO_ALIASES,
-                 fallback: IntentParser | None = None, universe: Iterable[str] = ()) -> None:
+                 fallback: IntentParser | None = None, universe: Iterable[str] = (), kowtow_ticks: int = 1) -> None:
+        """kowtow_ticks：对着可拜的陈设叩首占几个 tick（场景给出；1 = 旧版，一拜即伏地细看）。"""
         self.llm = llm
         self.aliases: dict[str, tuple[str, ...]] = {k: tuple(v) for k, v in aliases.items()}
         self.fallback = fallback or IntentParser(None, aliases=self.aliases)
         self.universe = frozenset(universe)
+        self.kowtow_ticks = max(1, kowtow_ticks)
 
     def interpret(self, text: str, me: BeliefStore, recent: Sequence[str] = ()) -> Parsed:
         """recent：最近几段叙述正文（旧 → 新），只用来消解“她/那人”。"""
@@ -323,11 +332,11 @@ class Interpreter:
             return Parsed(None, kind=MoveKind.ASK_GM, question=raw[gm.end():].strip() or raw)
         if _ooc(raw):
             return Parsed(None, kind=MoveKind.ASK_GM, question=raw)
-        fast = self._fast(raw, me)
+        fast = self._follow(raw, me) or self._fast(raw, me)
         if fast is not None:
-            return fast
+            return self._kowtow(fast, raw, me)
         if self.llm is None:
-            return self.fallback.parse(raw, me)
+            return self._kowtow(self.fallback.parse(raw, me), raw, me)
         ms = mentions(raw.lower(), me, self.aliases)
         command = analyze(raw, ms, me.owner)
         prompt, ids = self.prompt(raw, me, recent, ms)
@@ -339,8 +348,8 @@ class Interpreter:
             data = None
         if not isinstance(data, dict):
             # 只退回规则：会话交来的 fallback 可能带着同一个模型，再问一次就多等一轮超时，还绕过这里的校验
-            return rule_parse(raw, me, self.aliases)
-        return self._decide(data, raw, me, command)
+            return self._kowtow(rule_parse(raw, me, self.aliases), raw, me)
+        return self._kowtow(self._decide(data, raw, me, command), raw, me)
 
     # ------------------------------------------------------------
     #  快路径
@@ -361,6 +370,50 @@ class Interpreter:
             return None
         problem = self._problem(parsed.candidate, me, set(held_items(me)))
         return _unclear(problem, parsed.command) if problem else parsed
+
+    def _follow(self, text: str, me: BeliefStore) -> Parsed | None:
+        """“跟上/跟着 + 认识的人”：走到玩家以为他在的地方——刚看见他从这里哪道门走的就走那道门，否则沿自己的地图走一步；
+        “拉着某人逃去某地”：玩家自己去那里（被拉的人跟不跟由他自己）。"""
+        t = text.lower()
+        ms = mentions(t, me, self.aliases)
+        skeleton = _skeleton(t, ms, me.owner)
+        command = ParsedCommand(text, SpeechMode.IMMEDIATE, None)    # 整句只有“跟上某人”：没有否定、条件与转述的余地
+        if _TOW.fullmatch(skeleton):
+            place = next(m.eid for m in ms if m.kind == Kind.PLACE)
+            cand = normalize(Candidate(Op.MOVE, place, None, manner_of(t)), me)
+            why = self._problem(cand, me, set(held_items(me)), place)
+            return _unclear(why, command) if why else Parsed(cand, source="rules", command=command)
+        if not _FOLLOW.fullmatch(skeleton):
+            return None
+        who = next((m.eid for m in ms if m.kind == Kind.PERSON and m.eid != me.owner), None)
+        if who is None:
+            return None
+        name, here, where = self._namer(me)(who), me.location_of(me.owner), believed_place(me, who)
+        if where is None:
+            return _unclear(f"你不知道{name}去了哪里。", command)
+        if where == here:
+            return _unclear(f"{name}就在你身边。", command)
+        left = next((ep.event for ep in reversed(me.episodes) if ep.event.kind == Op.MOVE.value
+                     and ep.event.actor == who and ep.event.place == here and ep.event.obj and ep.event.target), None)
+        hop = (left.target, left.obj) if left is not None else route_to(me, where)
+        cand = Candidate(Op.MOVE, hop[0], hop[1], manner_of(t)) if hop else None
+        if cand is None or invalid(cand, me):
+            return _unclear(f"你不知道该怎么跟上{name}。", command)
+        return Parsed(cand, source="rules", command=command)
+
+    def _kowtow(self, parsed: Parsed, text: str, me: BeliefStore) -> Parsed:
+        """场景的叩首占几个 tick（kowtow_ticks > 1）且此地有可拜的陈设（解析成了伏地细看）：展开为叩首 × (k-1) 再细看，
+        每一步都是带字的姿态；旧版 kowtow_ticks=1 原样返回。"""
+        c = parsed.candidate
+        if self.kowtow_ticks <= 1 or c is None or parsed.followups or c.op != Op.INSPECT:
+            return parsed
+        bowing = c.social == Social.SUBMIT or (c.target == me.location_of(me.owner) and any(w in text for w in _BOWS))
+        if not bowing:
+            return parsed
+        bow = Candidate(Op.WAIT, social=Social.SUBMIT)
+        pose = pose_of(text, self._names(me.owner, me)) or "磕头"
+        return Parsed(bow, pose, source=parsed.source, command=parsed.command, kind=MoveKind.ACT,
+                      followups=(*(bow,) * (self.kowtow_ticks - 2), c))
 
     # ------------------------------------------------------------
     #  提示词：身份、以为在哪、出路、玩家认识的实体表、最近两段正文、原话

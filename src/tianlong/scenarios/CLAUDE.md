@@ -4,10 +4,10 @@
 内容层。场景 = 初始世界 + 角色设定 + 初始认知；初始认知以"过去的感知"给出，于是信念从第一刻起只有一个来源——感知，没有直接注入信念的后门。
 
 成员清单
-base.py: Scenario 容器（世界 + 设定 + 初始认知 + 世界前提/文风/外观描写/别称/指令示例 + 逐级提示 guide（guide_at：身在某地时提示至少从第几条说起，走过的路不再提）+ 结局 endings + 秘密词表 secrets，只交给叙述闸门 + common_words：别称里同时是普通名词的，只供解析、闸门不据此拒绝；gate_aliases 给出交给叙述闸门的别称），Ending（抵达某地即落幕的结局：编号、名字、终章基调），player/npcs 便捷属性
-tianlong/: 天龙八部世界，按剧情区域逐幕构建；第一幕无量山含角色腔调与谈资、段誉的目标、逐级提示与澜沧江畔结局（见 tianlong/CLAUDE.md）
+base.py: Scenario 容器（世界 + 设定 + 初始认知 + 世界前提/文风/外观描写/别称/指令示例 + 逐级提示 guide（guide_at：身在某地时提示至少从第几条说起，走过的路不再提）+ 结局 endings + 秘密词表 secrets，只交给叙述闸门 + common_words：别称里同时是普通名词的，只供解析、闸门不据此拒绝；gate_aliases 给出交给叙述闸门的别称 + drives：角色 → 驱力表 + epithets 外貌称呼 / introduced 开场相识 / moments 时钟事实（月出、天亮）/ beats 看点识别器 / chronicle 纪事角色 / details 细节卡组 / kowtow_ticks 叩首几个 tick，全部默认空（kowtow_ticks=1），仓库、程序化世界与旧版逐字节不变），Ending（抵达某地、或时钟到 at_clock 即落幕：编号、名字、终章基调、variants 变体），Variant（skill/with/holds/at 任一成立即给标题加后缀），Beat（看点识别器：只匹配已结算、玩家已感知到的事件或景观——op/actors/target/obj/door/place/clock_from/social/reason/success/lore，外加 gloss/stage/allowed/once），player/npcs 便捷属性
+tianlong/: 天龙八部世界，按剧情区域逐幕构建；第一幕无量山有两种主角——旧版（段誉）与普通人版（挑茶伙计阿顺，驱力、看点、三种结局与纪事）（见 tianlong/CLAUDE.md）
 procedural.py: random_scenario() 按种子生成随机小世界（链式布局 + 捷径、随机锁门与匹配钥匙、台面、藏匿、角色条件化冲突目标、熟悉布局与所在处的初始认知），供 GNN 数据与 RL 环境取样；jianghu 概率叠加江湖层（身手、半数淬毒的兵刃、解药、秘籍、单向通道、寻仇与护人），用独立随机流，jianghu=0 与旧版逐字节相同；scroll_rate/scroll_held 是修习机制的覆盖旋钮（后者用第三条随机流只挪秘籍位置），默认值逐字节不变；roles 以第五条随机流在江湖世界里加入“守地 + 约时潜逃（not_before）”角色，七类目标与时间闸门都进入分布；goal_kinds 只保留启用的目标族（事后删去不扰动抽样）；目标所指的人与物在初始认知里“闻其名”；hide_goal_items 以第四条随机流把获取/递送目标的物品（钥匙除外、只在地点或台面上）藏起来，造出“先探查、再决策”的任务
 warehouse.py: 设计验收用例"仓库钥匙"：港口—仓库入口—仓库—内仓，钥匙属船长、在桌上、匹配锁着的仓库门；警觉守卫隔一道门必然听见正常拿取
-__init__.py: 包入口与 SCENARIOS 注册表（warehouse / wuliang）
+__init__.py: 包入口与 SCENARIOS 注册表（warehouse / wuliang = 普通人版 / wuliang-duanyu = 旧版）
 
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

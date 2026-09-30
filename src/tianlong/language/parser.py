@@ -1,11 +1,11 @@
 """
-[INPUT]: 依赖 cognition 的 BeliefStore / Candidate / routes_between，core 的 Op / Manner / Kind / Rel / Fact / Proposition / Social /
+[INPUT]: 依赖 language/waits 的 wait_length（再导出），cognition 的 BeliefStore / Candidate / routes_between，core 的 Op / Manner / Kind / Rel / Fact / Proposition / Social /
          OP_SIGNATURES / signature_error，language/command 的 ACTION_WORDS / SOCIAL_WORDS / GESTURE_WORDS / action_hits / analyze / clarify /
          ParsedCommand / Mention，language/pose 的 pose_of / witness，language/llm 的 LLMClient / LLMUnavailable / parse_json
 [OUTPUT]: 对外提供 MoveKind、Parsed（含语态结构、等待时长、这句话的类别、多步行动与问主持人的原话）、
           IntentParser（语态闸门 → 规则解析 → 受约束的 LLM 语义解析）、rule_parse()、normalize()，
           以及解释器复用的规则机件 mentions() / held_items() / exits() / leave_here() / leaving() / invalid() / manner_of() /
-          speech_manner() / wait_length() / speech_line() / unwrap_line() / unsaid() / pose_of() / wield_problem()
+          speech_manner() / wait_length()（再导出自 language/waits）/ speech_line() / unwrap_line() / unsaid() / pose_of() / wield_problem()
 [POS]: language 的输入解析；把玩家自由文本变成结构化候选行动。先由 command.analyze() 判定语态：只有单一、肯定、即时的指令
        才走规则解析；否定、条件、转述、复合、疑问交给 LLM（它也必须声明语态与主体），仍不确定就追问、不推进时间。
        LLM 失败或回复不成形时绝不回退到未经语义确认的候选。可引用的实体只来自玩家自己的认知图；解析结果仍要回到 kernel 结算。
@@ -43,6 +43,7 @@ from tianlong.language.command import (
 )
 from tianlong.language.llm import LLMClient, LLMUnavailable, parse_json
 from tianlong.language.pose import pose_of, witness
+from tianlong.language.waits import wait_length
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ class Parsed:
     clarification: str | None = None   # 解析不了时给玩家的追问
     source: str = "rules"
     repeat: int = 1                    # 等待的分钟数（“等一炷香”= 30）
-    until: str | None = None           # 等到某个时刻（"night"）：会话层按时钟换算
+    until: str | None = None           # 等到某个时刻（"night" / "moon" / "dawn"）：会话层按场景的时刻换算
     command: ParsedCommand | None = None   # 语态结构：否定/条件/转述等非即时语态不会产生候选
     kind: MoveKind = MoveKind.ACT
     followups: tuple[Candidate, ...] = ()  # 多步行动的后续步骤（第一步是 candidate），逐 tick 执行、失败即止
@@ -75,14 +76,9 @@ class Parsed:
 
 
 # ============================================================
-#  词表：时长、方式、追问与判别用的小词
+#  词表：方式、追问与判别用的小词（等待时长见 language/waits）
 # ============================================================
 
-# 等待时长（分钟）；“等到天黑”交给会话层按时钟换算
-_DURATIONS: tuple[tuple[str, int], ...] = (
-    ("一个时辰", 120), ("半个时辰", 60), ("一炷香", 30), ("一盏茶", 15), ("一会", 10), ("片刻", 5),
-)
-_UNTIL_NIGHT = ("天黑", "入夜", "晚上", "夜里", "月亮")
 _CAREFUL = ("悄悄", "小心", "轻轻", "偷偷", "藏", "低声", "小声", "耳语", "附耳")
 _ROUGH = ("用力", "粗暴", "猛", "狠狠")
 _WHISPER = ("悄悄", "偷偷", "低声", "小声", "轻声", "耳语", "附耳")   # 言语的“小心”只有耳语一种：“说小心点”不是耳语
@@ -211,16 +207,6 @@ def speech_manner(t: str) -> Manner:
 def leaving(t: str) -> bool:
     """这句话说了要离开此地（“溜出大殿”“冲出去”）：只有这时才替人挑一条出路。"""
     return any(w in t for w in _LEAVING)
-
-
-def wait_length(t: str) -> tuple[int, str | None]:
-    if any(w in t for w in _UNTIL_NIGHT):
-        return 1, "night"
-    # 只认紧挨“分”的十进制数字（\d 即 Unicode 十进制数字，int() 都认得）；“²”“①”不是，退回按说法估
-    hit = re.search(r"(\d+)\s*分", t)
-    if hit is not None:
-        return max(1, int(hit.group(1))), None
-    return next((m for word, m in _DURATIONS if word in t), 1), None
 
 
 def _residue(t: str, ms: Sequence[Mention], hits: Sequence[tuple[int, int, Op]]) -> str:

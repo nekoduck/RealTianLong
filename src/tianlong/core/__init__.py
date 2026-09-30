@@ -1,6 +1,6 @@
 """
 [INPUT]: 汇总 core 各模块
-[OUTPUT]: 对外再导出 core 的全部公共类型（含只读快照映射 FrozenMap），供上层 `from tianlong.core import ...`
+[OUTPUT]: 对外再导出 core 的全部公共类型（含只读快照映射 FrozenMap、驱力词表 Drive / Level / 条件 / 行动），供上层 `from tianlong.core import ...`
 [POS]: core 包入口；core 只依赖标准库，是整座依赖图的最底层
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -24,6 +24,50 @@ from tianlong.core.attributes import (
 )
 from tianlong.core.changes import AddRelation, Change, RemoveRelation, SetAttr, change_sort_key, relocate
 from tianlong.core.clock import TICK_MINUTES, at, clock_label, is_night, minutes_until_night
+from tianlong.core.drives import (
+    PLAYER,
+    SELF,
+    TARGET,
+    Act,
+    Alone,
+    AnyOf,
+    Arrived,
+    Ask,
+    At,
+    Between,
+    Cond,
+    Cross,
+    Drive,
+    Fired,
+    Flee,
+    Follow,
+    Fond,
+    Give,
+    Go,
+    Heard,
+    HeldBy,
+    Here,
+    Hold,
+    Holds,
+    Inspect,
+    Knows,
+    Level,
+    Lock,
+    Lost,
+    Menaced,
+    Near,
+    Not,
+    Pose,
+    Pursue,
+    Saw,
+    Say,
+    Searched,
+    Status,
+    Study,
+    Take,
+    Unlock,
+    Use,
+)
 from tianlong.core.entities import Entity, Relation, Scalar
 from tianlong.core.events import (
     ADMISSION_REASONS,
@@ -64,6 +108,10 @@ __all__ = [
     "TACTILE_ATTRS", "Access", "AttrSpec", "AttrType", "applies", "is_private_attr",
     "AddRelation", "Change", "RemoveRelation", "SetAttr", "change_sort_key", "relocate",
     "TICK_MINUTES", "at", "clock_label", "is_night", "minutes_until_night",
+    "PLAYER", "SELF", "TARGET", "Act", "Cond", "Drive", "Level",
+    "Alone", "AnyOf", "Arrived", "At", "Between", "Fired", "Fond", "Heard", "HeldBy", "Here", "Holds", "Knows", "Lost",
+    "Menaced", "Near", "Not", "Saw", "Searched", "Status",
+    "Ask", "Cross", "Flee", "Follow", "Give", "Go", "Hold", "Inspect", "Pose", "Pursue", "Say", "Study", "Take", "Use", "Unlock", "Lock",
     "Entity", "Relation", "Scalar",
     "EntitySketch", "Event", "Intent", "Modality", "Observation", "Outcome", "Percept", "PerceivedEvent",
     "ADMISSION_REASONS", "REASONS", "RULE_REASONS", "reason_key",

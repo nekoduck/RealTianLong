@@ -4,6 +4,8 @@
 [OUTPUT]: 对外提供 NpcState、NpcContext（可带主角 player，转交 Situation；recall 开关：只有读 Situation.memories 的策略才需要向量回忆）、
           build_npc_graph()、checkpoint_serde()
 [POS]: agents 的单角色决策流程：观察 → 回忆 → 形成候选 → 预测后果 → 选择 → 表达 → 提交意图。
+       选择带出驱力的原话（Choice.line，在 chosen() 之后挂上）与出处（Choice.drive）：表达时有原话就用它作任何行动的 utterance，
+       没有才走措辞器（只给带命题的 TELL/ASK 措辞）。
        依赖通过 LangGraph runtime context 注入（不进检查点）；检查点只保存本次决策的轨迹，不是世界状态。
        观察与回忆只为 Situation.memories 服务：现有策略（脚本、学得的）都不读它，默认跳过（省下每人每 tick 一次向量检索）
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -39,6 +41,8 @@ class NpcState(TypedDict, total=False):
     chosen: Candidate          # 交给内核的行动（候选或候选之外的言语，附言语行为）
     rationale: str
     tag: str                   # 策略的结构化标签（Choice.tag）：编排据 CHATTER 给闲谈裁决话头
+    line: str | None           # 驱力给的原话（Choice.line）：有就是这一步的 utterance，不论什么行动
+    drive: str | None          # 这一步出自哪条驱力（Choice.drive）
     utterance: str | None
     intent: Intent
 
@@ -127,12 +131,15 @@ def decide(state: NpcState, runtime: Runtime[NpcContext]) -> NpcState:
     )
     choice = ctx.policy.choose(sit)
     chosen = choice.chosen(state["candidates"], sit.beliefs)    # 越界或不合规的 free（含说的不是自己相信的事）在这里抛错
-    return {"choice": choice.index, "chosen": chosen, "rationale": choice.rationale, "tag": choice.tag}
+    return {"choice": choice.index, "chosen": chosen, "rationale": choice.rationale, "tag": choice.tag,
+            "line": choice.line, "drive": choice.drive}
 
 
 def express(state: NpcState, runtime: Runtime[NpcContext]) -> NpcState:
     ctx = runtime.context
     cand = state["chosen"]
+    if state.get("line"):
+        return {"utterance": state["line"]}   # 驱力的原话：任何行动都带得上（走、打、用、等、说），在场的人照原样听见看见
     if cand.op not in (Op.TELL, Op.ASK) or cand.topic is None:
         return {"utterance": None}       # 闲话没有命题可说：措辞留给主持人之声（叙述时按说话者的认知与腔调写出）；带命题的答话照常措辞
     return {"utterance": ctx.speaker.utter(ctx.port.profile, cand, _names(ctx))}

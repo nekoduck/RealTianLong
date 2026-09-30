@@ -1,5 +1,5 @@
 """
-[INPUT]: 依赖 runtime/authority 的 WorldAuthority，persistence 的 InMemoryWorldStore，agents 的 ScriptedPolicy / HeuristicPredictor / PRED_FIELDS /
+[INPUT]: 依赖 runtime/authority 的 WorldAuthority，persistence 的 InMemoryWorldStore，agents 的 ScriptedPolicy / Policy / HeuristicPredictor / PRED_FIELDS /
          Situation / hush_chatter，cognition 的 candidates，memory/view 的 MemoryView，core 的 WorldState.fingerprint() / digest / make_id，
          scenarios 的 build_warehouse / build_wuliang，learning/task 的 TaskConfig（程序化世界），runtime/session 的 GameSession（模板模式），
          tests/data/playthrough_duanyu.json（旧版评测整局游玩的输入）与 tests/data/goldens.json（钉住的指纹）
@@ -8,7 +8,7 @@
           (b) 程序化世界种子 0–9（jianghu=1）在脚本策略下各走 200 tick；(c) 旧版无量山 build_wuliang(7)、段誉作玩家、
           评测整局游玩的前 30 回合（模板模式，不接模型）——每一项逐字节等于 goldens.json：世界指纹（WorldState.fingerprint）、
           事件日志、全部感知（Observation）、每个角色结束时的整份认知（BeliefStore）与经历记录；(a)(a')(b) 另钉住每一次 NPC 决策
-          （候选集、预测、Choice.index 与 tag）。写入：从仓库根目录 PYTHONPATH=src python -m tests.test_goldens --write
+          （候选集、预测、Choice.index 与 tag）。_tick/_simulate 可换策略（缺省脚本策略：test_drives::identity 借同一条路比对套了驱力的策略）。写入：从仓库根目录 PYTHONPATH=src python -m tests.test_goldens --write
 [POS]: tests 的守护层（设计 §6）：之后的里程碑不许改动内核、认知、ScriptedPolicy、候选规则、启发式预测与程序化世界的行为。
        (a)(a')(b) 不经会话：NPC 一侧照会话决策图的口径（候选 → 启发式预测 → 脚本策略，Situation 带上由权威经历记录汇总的
        MemoryView，与会话 _memory_view 同一口径 → 每处每 tick 至多一句闲谈），但不经 LangGraph / Orchestrator、不调措辞器、
@@ -32,7 +32,7 @@ from typing import Any
 
 import pytest
 
-from tianlong.agents.policies import CHATTER, ScriptedPolicy, Situation, hush_chatter
+from tianlong.agents.policies import CHATTER, Policy, ScriptedPolicy, Situation, hush_chatter
 from tianlong.agents.predictors import PRED_FIELDS, HeuristicPredictor
 from tianlong.cognition import Candidate, candidates
 from tianlong.core import Event, Fact, Intent, Op, Outcome, Proposition, Rel, digest, make_id
@@ -102,10 +102,12 @@ def _summary(auth: WorldAuthority, agents: Collection[str], decisions: Iterable[
 # ============================================================
 
 
-def _tick(auth: WorldAuthority, sc: Scenario, fixed: Mapping[str, Candidate]) -> list[Decision]:
-    """结算一个 tick，交回本 tick 每个 NPC 的决策：(角色, 时刻, 候选集, 预测, Choice.index, Choice.tag)。"""
+def _tick(auth: WorldAuthority, sc: Scenario, fixed: Mapping[str, Candidate],
+          policy: Policy | None = None) -> list[Decision]:
+    """结算一个 tick，交回本 tick 每个 NPC 的决策：(角色, 时刻, 候选集, 预测, Choice.index, Choice.tag)。
+    policy 缺省是脚本策略（金标准）；test_drives 拿同一条路比对套了驱力的策略。"""
     head, ref = auth.head(), auth.ref
-    policy, predictor = ScriptedPolicy(), HeuristicPredictor()
+    policy, predictor = policy or ScriptedPolicy(), HeuristicPredictor()
     chosen: dict[str, tuple[str | None, str, Candidate]] = {}
     decisions: list[Decision] = []
     for a in sorted(sc.profiles):
@@ -133,10 +135,11 @@ def _tick(auth: WorldAuthority, sc: Scenario, fixed: Mapping[str, Candidate]) ->
     return decisions
 
 
-def _simulate(sc: Scenario, ticks: int, script: tuple[Candidate, ...] = ()) -> tuple[WorldAuthority, list[Decision]]:
+def _simulate(sc: Scenario, ticks: int, script: tuple[Candidate, ...] = (),
+              policy: Policy | None = None) -> tuple[WorldAuthority, list[Decision]]:
     auth, decisions = WorldAuthority.found(InMemoryWorldStore(), sc), []
     for t in range(ticks):
-        decisions += _tick(auth, sc, {sc.player: script[t]} if sc.player and t < len(script) else {})
+        decisions += _tick(auth, sc, {sc.player: script[t]} if sc.player and t < len(script) else {}, policy)
     return auth, decisions
 
 

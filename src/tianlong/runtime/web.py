@@ -9,7 +9,7 @@
        页面就多一句；推送的只有玩家该看的文字（叙述、场外问答、落幕后的真相揭晓）与只凭玩家认知给出的行动建议，
        真相与 NPC 理由从不出这个进程。
        零依赖（标准库 ThreadingHTTPServer），单机单局：同一时刻只结算一个回合（锁），开场在后台先写好，
-       开场与终章各只写一次，刷新页面接着玩同一局
+       开场与终章各只写一次，刷新页面接着玩同一局；--world 默认无量山普通人版（标题“天龙八部 · 无量山·普通人”），wuliang-duanyu 是旧版
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -205,7 +205,8 @@ def main(argv: list[str] | None = None) -> int:
         scenario = SCENARIOS[args.world](args.seed)
         return GameSession(scenario, llm=voice, fast_llm=fast, interpreter=interpreter_for(fast or voice, scenario))
 
-    title = {"wuliang": "天龙八部 · 无量山", "warehouse": "仓库钥匙"}.get(args.world, args.world)
+    title = {"wuliang": "天龙八部 · 无量山·普通人", "wuliang-duanyu": "天龙八部 · 无量山", "warehouse": "仓库钥匙"}.get(
+        args.world, args.world)
     server = make_server(WebGame(factory, title), args.host, args.port)
     print(f"在浏览器打开 http://{args.host}:{args.port}/ 开始游戏（{'Gemini 叙述' if voice else '模板叙述'}；Ctrl+C 退出）")
     try:

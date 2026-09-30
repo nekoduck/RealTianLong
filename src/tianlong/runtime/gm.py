@@ -168,7 +168,7 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
                 told: Mapping[str, Collection[int]] | None = None,
                 memories_of: Callable[[str], Sequence[MemoryRecord]] | None = None,
                 hooks: Sequence[str] = (), said: Mapping[str, Sequence[str]] | None = None) -> SceneBrief:
-    """要替 NPC 说出口的话（本回合玩家听见的每一句 NPC 言语、看见的每一个 NPC 姿态）、最近几段正文、玩家原话，
+    """要替 NPC 说出口的话（本回合玩家听见的每一句 NPC 言语；NPC 的带字姿态不算台词——看得见的那一行已带着它的字）、最近几段正文、玩家原话，
     以及前后照应（continuity：玩家自己的身体状况、本回合的意外与变化、身在何处身边有谁；出人意料地出现的人带上他近来的经历）。
     耳语（只看见在交谈、没听见内容）不算：玩家没听见的话，叙述者也不该替它编出来。
     answering：NPC 冲着玩家、且在玩家开口（或冲他摆了姿态、赔了罪道了谢）之后说的话，带上玩家这一步作回话的由头。
@@ -191,14 +191,20 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
                                                                              and p.event.utterance))), None)
     cue = _cue(acted.event, me) if acted is not None else None
     lines = []
+    posed: set[str] = set()          # 冲着玩家、在他这一步之后摆了带字姿态的 NPC：也算接了话
     for p in env.percepts:
         ev = p.event
         if ev is None or ev.actor in (None, player) or ev.actor not in scenario.profiles:
             continue
-        talk = ev.kind in TALK and p.modality == Modality.SPEECH
-        pose = ev.kind == Op.WAIT.value and p.modality == Modality.SIGHT and bool(ev.utterance)
-        if talk or pose:
-            answer = cue if ev.target == player and acted is not None and p.tick > acted.tick else None
+        after = ev.target == player and acted is not None and p.tick > acted.tick
+        if ev.kind == Op.WAIT.value and p.modality == Modality.SIGHT and ev.utterance:
+            # 姿态不是台词：看得见的那一行（“看见段誉对着玉像跪倒……”）已带着它的字与引语，
+            # 再做成 VoiceLine 就成了“段誉对众人道：“对着玉像跪倒……””——套引号、同一句说两遍
+            if after:
+                posed.add(ev.actor)
+            continue
+        if ev.kind in TALK and p.modality == Modality.SPEECH:
+            answer = cue if after else None
             mind = beliefs_of(ev.actor)
             lines.append(_voice(ev, me, scenario, mind, answer,
                                 lately(mind, ev.actor, p.tick, recall(ev.actor)) if ev.actor in ctx.newcomers else "",
@@ -218,7 +224,7 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
     asked = (acted.event.target if acted is not None and acted.event.kind in TALK
              and acted.event.outcome == Outcome.SUCCESS else None)          # 话没说成（人不在）就谈不上没人接
     unanswered = None
-    if asked and asked != player and asked in scenario.profiles and not any(
+    if asked and asked != player and asked in scenario.profiles and asked not in posed and not any(
             vl.speaker == asked and vl.answering for vl in lines):
         sk = me.sketch(asked)
         unanswered = sk.name if sk is not None else None

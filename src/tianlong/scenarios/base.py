@@ -1,8 +1,11 @@
 """
-[INPUT]: 依赖 core 的 WorldState / Percept / Profile
+[INPUT]: 依赖 core 的 WorldState / Percept / Profile / Drive / Op / Social
 [OUTPUT]: 对外提供 Scenario（初始世界 + 角色设定 + 初始认知 + 文风/外观描写/别称（common_words 只供解析）+ 逐级提示 guide（guide_at 按所在处定起点）
-          + 结局 endings + 秘密词表 secrets）、Ending
-[POS]: scenarios 的容器类型；初始认知以“过去的感知”给出，于是信念从第一刻起就只有一个来源——感知，没有“直接注入信念”的后门
+          + 结局 endings + 秘密词表 secrets + 各角色的驱力 drives + 外貌称呼 epithets / 开场相识 introduced / 时钟事实 moments /
+          看点识别器 beats / 纪事角色 chronicle / 细节卡组 details / 叩首几个 tick kowtow_ticks）、Ending（抵达某地或时钟到点即落幕，带变体）、
+          Variant、Beat
+[POS]: scenarios 的容器类型；初始认知以“过去的感知”给出，于是信念从第一刻起就只有一个来源——感知，没有“直接注入信念”的后门。
+       新字段一律默认空（kowtow_ticks=1）：仓库、程序化世界与旧版无量山逐字节不变
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -11,19 +14,57 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from tianlong.core import Percept, WorldState
+from tianlong.core import Drive, Op, Percept, Social, WorldState
 from tianlong.core.profiles import Profile
 
 
 @dataclass(frozen=True, slots=True)
+class Variant:
+    """结局的变体：requires 里任一条（据世界真相）成立就在标题后缀上 label。
+    requires 取 "skill:技能"（玩家已会）| "with:人"（此人与玩家同在一处）| "holds:物"（在玩家身上）| "at:地点"（玩家身在此处）。"""
+
+    label: str
+    requires: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Ending:
-    """本幕结局：玩家（据世界真相）身处 place 即落幕。key 是稳定的结局编号，title 是给玩家看的名字，
-    epilogue 是终章的前提与基调（交给叙述者，真相揭晓部分由事件日志生成）。"""
+    """本幕结局：玩家（据世界真相）身处 place，或时钟已到 at_clock，即落幕。key 是稳定的结局编号，title 是给玩家看的名字，
+    epilogue 是终章的前提与基调（交给叙述者，真相揭晓或纪事由事件日志生成），variants 按落幕那一刻的真相给标题加后缀。"""
 
     key: str
     title: str
-    place: str
+    place: str | None = None
     epilogue: str = ""
+    at_clock: int | None = None
+    variants: tuple[Variant, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Beat:
+    """看点识别器（不是触发器）：只匹配已结算、且玩家已感知到的事件或景观。字段为空即不限。
+    op/actors/target/obj/social/reason 对感知到的事件；door：经这道门的 MOVE，或感知的事实揭示了这道门；
+    place：事件发生处（景观：玩家所在处）；clock_from：时钟下限（整数，或 moments 的键）；
+    lore：景观——玩家在 place 看见 lore 键所指的实体（"yubi@moon" 指 yubi），没有事件；
+    gloss 是玩家口吻的一句看点，stage 是写法卡（只有修辞），allowed 是额外许可词；once：一局只算一次（等待只为它停一次）。
+    同一个 key 可以有几条识别器（“叫阵或动手”）。"""
+
+    key: str
+    op: Op | None = None
+    actors: tuple[str, ...] = ()
+    target: tuple[str, ...] = ()
+    obj: str | None = None
+    door: str | None = None
+    place: tuple[str, ...] = ()
+    clock_from: int | str | None = None
+    social: Social | None = None
+    reason: str | None = None
+    success: bool = True
+    gloss: str = ""
+    stage: str = ""
+    allowed: tuple[str, ...] = ()
+    lore: str = ""
+    once: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,10 +79,19 @@ class Scenario:
     hints: str = ""                                                     # 给玩家的指令示例
     style: str = ""                                                     # 文风要求：只交给 LLM 叙述者
     guide: tuple[str, ...] = ()        # 逐级提示（/hint、“我该做什么”）：由浅入深，只点方向不给步骤；玩家目标见其 Profile.goals
-    endings: tuple[Ending, ...] = ()   # 本幕的结局：玩家抵达某地即落幕，终章据事件日志收束并揭晓真相
+    endings: tuple[Ending, ...] = ()   # 本幕的结局：玩家抵达某地（或时钟到点）即落幕，终章据事件日志收束
     secrets: tuple[str, ...] = ()      # 剧情秘密的说法（正则片段，如“私奔”）：只交给叙述闸门，玩家没听说过就不许写进正文
     guide_at: Mapping[str, int] = field(default_factory=dict)   # 玩家身在某地时提示至少从第几条说起（走过的路不再提）
     common_words: frozenset[str] = frozenset()  # 别称里同时是普通名词的（“石壁”）：只供解析，闸门不据此拒绝
+    drives: Mapping[str, tuple[Drive, ...]] = field(default_factory=dict)   # 角色 → 驱力（性情，按表序）：会话把它套在策略外面；
+                                                                            # 没有驱力的角色（及仓库、程序化世界、旧版）一切照旧
+    epithets: Mapping[str, str] = field(default_factory=dict)   # 外貌称呼：没人道出姓名之前怎样叫此人（“梁上的青衫少女”）
+    introduced: Mapping[str, frozenset[str]] = field(default_factory=dict)   # 开场谁已认得谁（知其名）
+    moments: Mapping[str, int] = field(default_factory=dict)    # 场景的时钟事实（"moon" 月出、"dawn" 天亮）：等待与看点据此换算
+    beats: tuple[Beat, ...] = ()                                # 看点识别器（B1 与等待的停点）
+    chronicle: tuple[str, ...] = ()                             # 终章纪事取材的角色；非空时纪事代替旧的真相揭晓
+    details: Mapping[str, tuple[str, ...]] = field(default_factory=dict)   # 地点或陈设的细节卡组（M3 接入叙述）
+    kowtow_ticks: int = 1                                       # 对着可拜的陈设叩首占几个 tick（>1 时展开为多 tick 叩首再细看）
 
     @property
     def gate_aliases(self) -> dict[str, tuple[str, ...]]:

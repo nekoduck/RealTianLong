@@ -2,7 +2,9 @@
 [INPUT]: 依赖 core 的实体/关系/时间/命题/感知类型，core/profiles 的 Goal / GoalKind / Profile，kernel/perception 的 make_percept / scene_percept，
          scenarios/base 的 Scenario / Ending，scenarios/tianlong/lore 的 SETTING / STYLE / LORE / ALIASES / COMMON_WORDS / HINTS / GUIDE / GUIDE_AT / EPILOGUE_RIVER
 [OUTPUT]: 对外提供 build_wuliang()：天龙八部·无量山小范围世界（含每个角色的腔调/谈资/话多/脾气、段誉的目标、逐级提示与结局），
-          EAST / WEST / SHENNONG / LOVERS 名册（东宗、西宗、神农帮、私奔的一对）、ENDINGS 与 SECRETS（秘密的说法，只交给叙述闸门）
+          EAST / WEST / SHENNONG / LOVERS 名册（东宗、西宗、神农帮、私奔的一对）、ENDINGS 与 SECRETS（秘密的说法，只交给叙述闸门），
+          以及普通人版复用的积木：entities(*extra) / relations(doors, placement, owns, extra) / layout(*doors, table) / profiles() /
+          allies()、DOORS / PLACEMENT / OWNS 与时刻 START / NIGHTFALL / ELOPE（参数缺省即本幕原样：build_wuliang 逐字节不变）
 [POS]: scenarios/tianlong 的第一幕。以金庸《天龙八部》世纪新修版开篇为蓝本，但不写剧本——只摆好世界、角色目标与各自所知，
        剧情由规则内核与角色认知自然涌现：比剑之后龚光杰寻衅、钟灵放貂护人、左子穆护短（西宗掌门袖手旁观）、
        入夜后干葛私奔投奔神农帮、途中撞见外人便灭口、崖底玉璧月夜显影、琅嬛福地里的两卷帛书、山腹隧道通往澜沧江畔（第一幕终）。
@@ -53,7 +55,8 @@ LOVERS = ("ganguanghao", "geguangpei")              # 东西两宗私下相好�
 SECRETS = ("私奔", "私订终身", "暗通款曲", "通了声气", r"投[奔靠]?.{0,2}神农帮")
 
 
-def _entities() -> list[Entity]:
+def entities(*extra: Entity) -> list[Entity]:
+    """本幕的实体；extra 追加在末尾（普通人版的阿顺、山脚、茶饼……）。"""
     P, S, It, D, H = Kind.PLACE, Kind.SURFACE, Kind.ITEM, Kind.DOOR, Kind.PERSON
     return [
         # ---- 地点 ----
@@ -101,10 +104,11 @@ def _entities() -> list[Entity]:
         Entity.make("zhongling", H, "钟灵", martial=0.25, agility=0.8, alertness=0.8),
         Entity.make("sikongxuan", H, "司空玄", martial=0.7, agility=0.5, alertness=0.7),
         Entity.make("shennong", H, "神农帮帮众", martial=0.4, agility=0.5, alertness=0.6),
+        *extra,
     ]
 
 
-_DOORS = {
+DOORS = {
     "d_gate": ("shandao", "hall"), "d_corridor": ("hall", "houyuan"), "d_backgate": ("houyuan", "houshan"),
     "d_path": ("houshan", "yading"), "d_trail": ("houshan", "camp"), "d_camproad": ("camp", "shandao"),
     "d_cliff": ("yading", "jianhu"), "d_cave": ("jianhu", "shidong"), "d_stonedoor": ("shidong", "langhuan"),
@@ -112,29 +116,35 @@ _DOORS = {
 }
 
 
-def _relations() -> list[Relation]:
+PLACEMENT = {
+    "swordrack": "hall", "yubi": "jianhu", "statue": "langhuan", "putuan": "langhuan",
+    "mink": "zhongling", "antidote": "zhongling", "sword": "swordrack", "yijing": "duanyu",
+    "scroll_bm": "putuan", "scroll_lb": "putuan",
+    "duanyu": "hall", "mawude": "hall", "zuozimu": "hall", "xinshuangqing": "hall", "gongguangjie": "hall",
+    "ganguanghao": "hall", "geguangpei": "hall", "zhongling": "hall", "sikongxuan": "camp", "shennong": "shandao",
+}
+OWNS = (("zhongling", "mink"), ("zhongling", "antidote"), ("duanyu", "yijing"))
+
+
+def relations(doors: dict[str, tuple[str, str]] = DOORS, placement: dict[str, str] = PLACEMENT,
+              owns: tuple[tuple[str, str], ...] = OWNS, extra: tuple[Relation, ...] = ()) -> list[Relation]:
+    """通道两端、各物各人所在、归属，再加 extra（钥匙配哪扇门之类）；缺省即本幕的原样。"""
     R = Relation
-    rels = [R(d, Rel.CONNECTS, p) for d, ends in _DOORS.items() for p in ends]
-    placement = {
-        "swordrack": "hall", "yubi": "jianhu", "statue": "langhuan", "putuan": "langhuan",
-        "mink": "zhongling", "antidote": "zhongling", "sword": "swordrack", "yijing": "duanyu",
-        "scroll_bm": "putuan", "scroll_lb": "putuan",
-        "duanyu": "hall", "mawude": "hall", "zuozimu": "hall", "xinshuangqing": "hall", "gongguangjie": "hall",
-        "ganguanghao": "hall", "geguangpei": "hall", "zhongling": "hall", "sikongxuan": "camp", "shennong": "shandao",
-    }
+    rels = [R(d, Rel.CONNECTS, p) for d, ends in doors.items() for p in ends]
     rels += [R(e, Rel.AT, h) for e, h in placement.items()]
-    rels += [R("zhongling", Rel.OWNS, "mink"), R("zhongling", Rel.OWNS, "antidote"), R("duanyu", Rel.OWNS, "yijing")]
-    return rels
+    rels += [R(o, Rel.OWNS, i) for o, i in owns]
+    return rels + list(extra)
 
 
-def _layout(*doors: str) -> tuple[Fact, ...]:
-    facts = [Fact(Proposition.rel(d, Rel.CONNECTS, p)) for d in doors for p in _DOORS[d]]
+def layout(*doors: str, table: dict[str, tuple[str, str]] = DOORS) -> tuple[Fact, ...]:
+    """熟悉的路：这几道门各连着哪两处（断崖另附“只能下”）。table 缺省是本幕的通道表。"""
+    facts = [Fact(Proposition.rel(d, Rel.CONNECTS, p)) for d in doors for p in table[d]]
     if "d_cliff" in doors:
         facts.append(Fact(Proposition.attr("d_cliff", "oneway", "jianhu")))   # 本门弟子都知道断崖爬不上来
     return tuple(facts)
 
 
-def _allies(me: str, *groups: tuple[str, ...]) -> tuple[str, ...]:
+def allies(me: str, *groups: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(p for g in groups for p in g if p != me))
 
 
@@ -152,7 +162,7 @@ def _allies(me: str, *groups: tuple[str, ...]) -> tuple[str, ...]:
 # ============================================================
 
 
-def _profiles() -> dict[str, Profile]:
+def profiles() -> dict[str, Profile]:
     return {
         # ---- 玩家：目标只驱动提示（/hint、“我该做什么”），玩家不跑策略 ----
         # ESCAPE 取其“抵达”的达成语义：离开无量山、到澜沧江畔（第一幕终）；“途中灭口”只是 NPC 策略的做法，与玩家无关。
@@ -168,14 +178,14 @@ def _profiles() -> dict[str, Profile]:
         # ---- 东宗 ----
         "gongguangjie": Profile(
             "gongguangjie", "东宗弟子", "东宗弟子，骄横好胜；方才比剑得胜，却被一个书生当众嗤笑，恼羞成怒",
-            goals=(Goal(GoalKind.HOSTILE, person="duanyu", until="wounded"),), allies=_allies("gongguangjie", EAST),
+            goals=(Goal(GoalKind.HOSTILE, person="duanyu", until="wounded"),), allies=allies("gongguangjie", EAST),
             voice="骄横刻薄，好出言讥讽，开口便是“酸秀才”“小子”，句句夹枪带棒，受不得半点顶撞",
             knows="无量剑东西二宗每五年比剑一次，胜的一宗入主剑湖宫五年；今日他替东宗出场，赢了西宗的对手",
             intro="无量剑东宗掌门左子穆门下的弟子，今日比剑替东宗出场赢了一场，性子骄横",
             chatty=0.3, temper=0.8),
         "zuozimu": Profile(
             "zuozimu", "东宗掌门", "无量剑东宗掌门，多疑而护短，门下弟子吃了亏必要讨回",
-            allies=_allies("zuozimu", EAST, ("xinshuangqing",)),
+            allies=allies("zuozimu", EAST, ("xinshuangqing",)),
             voice="阴沉多疑，说话绵里藏针：客客气气里夹着试探与威压，护短，从不轻易认错",
             knows="无量剑原有东、北、西三宗，北宗早已式微，东西二宗五年一比剑；后山是本派禁地；"
                   "门中老辈传说，月明之夜剑湖畔的无量玉璧上现过仙人舞剑的影子，他从没亲眼见过，只当是个传闻",
@@ -184,7 +194,7 @@ def _profiles() -> dict[str, Profile]:
         "ganguanghao": Profile(
             "ganguanghao", "东宗弟子",
             "东宗弟子，与西宗葛光佩私下相好；神农帮围山，二人暗中与神农帮通了声气，打算入夜后私奔去投神农帮，最怕被人撞见",
-            goals=(Goal(GoalKind.ESCAPE, home="camp", not_before=ELOPE),), allies=_allies("ganguanghao", LOVERS, SHENNONG),
+            goals=(Goal(GoalKind.ESCAPE, home="camp", not_before=ELOPE),), allies=allies("ganguanghao", LOVERS, SHENNONG),
             voice="心虚躲闪，说话含糊敷衍、眼神游移，旁人多问两句便岔开话头",
             knows="东宗弟子，师从左子穆；后山是本派禁地，后山崖顶下去便是断崖，只能下、不能上",
             intro="无量剑东宗弟子，左子穆的徒弟",
@@ -193,14 +203,14 @@ def _profiles() -> dict[str, Profile]:
         "xinshuangqing": Profile(
             "xinshuangqing", "西宗掌门",
             "无量剑西宗掌门，冷傲寡言，与东宗面和心不和；东宗弟子吃了亏她乐得袖手，外人欺到本派掌门头上却不会坐视",
-            allies=_allies("xinshuangqing", WEST, ("zuozimu",)),
+            allies=allies("xinshuangqing", WEST, ("zuozimu",)),
             voice="冷峻寡言，惜字如金，开口多是短短一两句，不假辞色",
             knows="东西二宗同出无量剑一脉，五年一比剑，胜者入主剑湖宫；这回西宗又输了一场",
             intro="无量剑西宗掌门，一位冷傲的女子",
             chatty=0.05, temper=0.4),
         "geguangpei": Profile(
             "geguangpei", "西宗弟子", "西宗女弟子，与干光豪私订终身，入夜后便要随他逃去投神农帮",
-            goals=(Goal(GoalKind.ESCAPE, home="camp", not_before=ELOPE),), allies=_allies("geguangpei", LOVERS, SHENNONG),
+            goals=(Goal(GoalKind.ESCAPE, home="camp", not_before=ELOPE),), allies=allies("geguangpei", LOVERS, SHENNONG),
             voice="心虚躲闪，说话细声细气、欲言又止，被人盯着便低头不语",
             knows="西宗女弟子，师父是辛双清；后山是本派禁地，寻常弟子不得擅入",
             intro="无量剑西宗的女弟子，辛双清的徒弟",
@@ -224,14 +234,14 @@ def _profiles() -> dict[str, Profile]:
         "sikongxuan": Profile(
             "sikongxuan", "神农帮帮主",
             "神农帮帮主，精于药理毒物，率众围住无量山，要强占后山采药；已许了无量剑中来投的人入夜到营中",
-            goals=(Goal(GoalKind.GUARD, home="camp"),), allies=_allies("sikongxuan", SHENNONG, LOVERS),
+            goals=(Goal(GoalKind.GUARD, home="camp"),), allies=allies("sikongxuan", SHENNONG, LOVERS),
             voice="蛮横粗豪，嗓门洪亮，说话不留余地，动辄拿毒药吓人，自称“老夫”",
             knows="神农帮以采药制药为业，精研药性毒物；无量山后山多生奇花异草；帮众奉他之命把守山道，谁也别想下山",
             intro="神农帮帮主，精于药理毒物",
             chatty=0.3, temper=0.7),
         "shennong": Profile(
             "shennong", "神农帮帮众", "神农帮帮众，奉命把守下山的道路，不许任何人离开",
-            goals=(Goal(GoalKind.GUARD, home="shandao"),), allies=_allies("shennong", SHENNONG, LOVERS),
+            goals=(Goal(GoalKind.GUARD, home="shandao"),), allies=allies("shennong", SHENNONG, LOVERS),
             voice="粗鲁，张口便骂，粗声大气，三句不离“帮主有令”",
             knows="奉司空玄帮主之命把守山道，一个人也不许下山；神农帮的人个个识得毒草",
             intro="神农帮的帮众",
@@ -248,7 +258,7 @@ ENDINGS = (Ending("river", "第一幕终 · 澜沧江畔", "lancang", EPILOGUE_R
 
 
 def build_wuliang(seed: int = 7) -> Scenario:
-    state = WorldState.build(seed, START, _entities(), _relations())
+    state = WorldState.build(seed, START, entities(), relations())
 
     def past(facts: tuple[Fact, ...]):
         return replace(make_percept(state, Modality.SCENE, facts=facts), tick=START - 30)
@@ -256,16 +266,16 @@ def build_wuliang(seed: int = 7) -> Scenario:
     def now_seen(agent: str):
         return replace(scene_percept(state, agent), tick=START - 1)
 
-    palace = _layout("d_gate", "d_corridor", "d_backgate", "d_path", "d_trail", "d_cliff")
+    palace = layout("d_gate", "d_corridor", "d_backgate", "d_path", "d_trail", "d_cliff")
     swords = (Fact(Proposition.rel("swordrack", Rel.AT, "hall")), Fact(Proposition.rel("sword", Rel.AT, "swordrack")))
     legend = (Fact(Proposition.rel("yubi", Rel.AT, "jianhu")),)     # 本门都知道剑湖畔有面无量玉璧（显影的事只是传闻）
     priors: dict[str, tuple] = {a: (past(palace + swords + legend), now_seen(a)) for a in SECT}
-    priors["duanyu"] = (past(_layout("d_gate")), now_seen("duanyu"))    # 随马五德从山道上山：知道宫门外就是山道
-    priors["mawude"] = (past(_layout("d_gate", "d_corridor")), now_seen("mawude"))
-    priors["zhongling"] = (past(_layout("d_gate")), now_seen("zhongling"))
-    camp = _layout("d_camproad", "d_trail", "d_gate")
+    priors["duanyu"] = (past(layout("d_gate")), now_seen("duanyu"))    # 随马五德从山道上山：知道宫门外就是山道
+    priors["mawude"] = (past(layout("d_gate", "d_corridor")), now_seen("mawude"))
+    priors["zhongling"] = (past(layout("d_gate")), now_seen("zhongling"))
+    camp = layout("d_camproad", "d_trail", "d_gate")
     # 帮主派帮众去守山道：彼此知道对方守在哪里
     priors["sikongxuan"] = (past(camp + (Fact(Proposition.rel("shennong", Rel.AT, "shandao")),)), now_seen("sikongxuan"))
     priors["shennong"] = (past(camp + (Fact(Proposition.rel("sikongxuan", Rel.AT, "camp")),)), now_seen("shennong"))
-    return Scenario("wuliang", state, _profiles(), priors, setting=SETTING, lore=LORE, aliases=ALIASES, hints=HINTS,
+    return Scenario("wuliang", state, profiles(), priors, setting=SETTING, lore=LORE, aliases=ALIASES, hints=HINTS,
                     style=STYLE, guide=GUIDE, endings=ENDINGS, secrets=SECRETS, guide_at=GUIDE_AT, common_words=COMMON_WORDS)
