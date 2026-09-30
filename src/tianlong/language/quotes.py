@@ -3,7 +3,7 @@
          _clause_after / _clause_before / _post_attribution / _persons）与词表（STATUS_LEXICON / STATUS_EXCLUSIONS / MIN_ALIAS / SPEECH_MARKS /
          PRONOUNS / POST_WINDOW / QUOTE_OPEN），language/scene 的 SceneBrief / VoiceLine
 [OUTPUT]: 对外提供 check_quotes()（台词闸门：引语归属、替玩家开口、NPC 越界点名、凭空多出的说话者）、voiced()（正文里确有归属引语的说话者，
-          供叙述者查台词是否讲到）、said_by()（正文里确凿归到本回合有台词的人名下的原话，供会话记台词账本）、unspoken()（不是话的引语的起点，交给叙述闸门照叙述查）、
+          供叙述者查台词是否讲到）、said_by()（正文里确凿归到本回合有台词的人名下、且本名就在这段引语引子里的原话，供会话记台词账本）、unspoken()（不是话的引语的起点，交给叙述闸门照叙述查）、
           台词词表 OBJECT_MARKERS / SUBJECT_LEADS / PERCEPTION / PLAYER_MIND / VOICED / SEQUENCE / PRETEND / DOUBTED / SOUNDS
 [POS]: language 的台词闸门，与 render.check()、deeds.check_deeds() 并用。每段引语（含无引号的“某某道：……”与“某某说……”式转述）
        归到说话者：引子小句的主语、句首引语之后的“某某喝道”、上一段引语的说话者、上一句的主语（句首引语紧跟在谁的动作之后，
@@ -294,13 +294,27 @@ def voiced(text: str, plan: RenderPlan, brief: SceneBrief) -> frozenset[str]:
 
 def said_by(text: str, brief: SceneBrief) -> tuple[tuple[str, str], ...]:
     """交付的正文里确凿归到本回合有台词的人名下的引语：(本名, 原话)，按先后。转述、不是话的引语、归属不明的都不算。
-    只认 brief 里说话者的本名（会话手里没有计划，别称认不出就不记——宁可少记）。"""
+    只认 brief 里说话者的本名（会话手里没有计划，别称认不出）；所以还须他的本名就在这段引语自己的引子里
+    （同一句里、上一段引语之后，或句首引语紧跟的“某某道”），或紧接着他上一段记下的引语说——
+    “左掌门沉声喝道：”“一个清脆的声音道：”“段誉拱手道：”里认不出的人不会被往前找、记到龚光杰名下。宁可少记。"""
     names = {vl.speaker_name for vl in brief.lines}
     plan = RenderPlan("", (), frozenset(), frozenset(), frozenset(), frozenset(), (), (),
                       people=tuple((n, n) for n in sorted(names)))
     quotes, _, whos, inert = _speakers(text, plan, names)
-    return tuple((who, q.words.strip()) for k, (q, (who, sure)) in enumerate(zip(quotes, whos, strict=True))
-                 if sure and who in names and k not in inert and not q.indirect and _norm(q.words))
+    spans = _spans(text)
+    out: list[tuple[str, str]] = []
+    kept: set[int] = set()
+    for k, (q, (who, sure)) in enumerate(zip(quotes, whos, strict=True)):
+        if not (sure and who in names and k not in inert and not q.indirect and _norm(q.words)):
+            continue
+        a = next((a for a, b in spans if a <= q.start < b), 0)
+        lead = text[max(a, quotes[k - 1].end if k else 0):q.start]
+        named = who in lead or (not lead.strip() and who in _clause_after(text, q.end, POST_WINDOW))
+        chained = k - 1 in kept and whos[k - 1][0] == who and not text[quotes[k - 1].end:q.start].strip()
+        if named or chained:
+            kept.add(k)
+            out.append((who, q.words.strip()))
+    return tuple(out)
 
 
 def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: Iterable[str] = (), *,

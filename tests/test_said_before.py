@@ -4,7 +4,8 @@
 [OUTPUT]: M3 台词不重复与天色的提示词验收（设计 §7 M3 的 test_said_before）：本回合开口的人最近说过的原话进提示词
           “他最近说过的话（别重复）”，至多 SAID_SHOWN 句，与这回合要说的原话三字片段重合 ≥REPEAT 的加注“换个说法”、
           不重合的只列不注；本回合不开口的人不列，said_before 为空时提示词与旧版逐字相同；sky 给了才有“天色”一节；
-          系统规则 8 不许编造征兆；台词账本只记确凿归到本回合有台词的人名下的引语（转述、拟声、归属不明、玩家自己的话都不记），
+          系统规则 8 不许编造征兆；台词账本只记确凿归到本回合有台词的人名下的引语（转述、拟声、归属不明、玩家自己的话都不记；
+          引子里认不出的人不往前记到上一个说话者名下），
           每人最近 SAID_KEEP 句
 [POS]: tests 的台词账本与提示词规格。只依赖核心，零依赖 CI 同跑；会话里账本随运行态落库、读档恢复由 test_continuity 验
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -73,3 +74,13 @@ def test_ledger_keeps_only_sure_lines_of_todays_speakers():
         ledger = said(ledger, f"钟灵道：“第{i}句。”", brief)
     assert ledger["ling"] == [f"第{i}句。" for i in range(2, SAID_KEEP + 2)], "每人只留最近几句（旧→新）"
     assert said(ledger, "钟灵道：“多一句。”", None) == ledger, "没有叙述上下文不记"
+
+
+def test_ledger_never_hands_an_unrecognised_speakers_line_to_someone_else():
+    """引子里的人认不出（别称“左掌门/灵儿”、玩家本名、本回合没台词的人、无名的声音），归属就往前找到了上一个说话者：
+    账本只收本名就在这段引语自己引子里的（或紧接着他上一段记下的引语说），宁可少记也不记错人。"""
+    brief = SceneBrief(lines=(GONG,))
+    for other in ("左掌门沉声喝道：“光杰，退下！”", "灵儿拍手笑道：“我家住万劫谷。”", "段誉拱手道：“在下段誉。”",
+                  "钟灵拍手道：“好玩。”", "一个清脆的声音道：“好玩。”"):
+        assert said({}, "龚光杰冷笑道：“你笑什么？”" + other, brief) == {"gong": ["你笑什么？"]}, other
+    assert said({}, "“你笑什么？”龚光杰冷笑道。", brief) == {"gong": ["你笑什么？"]}, "句首引语紧跟的“某某道”照记"

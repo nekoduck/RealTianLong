@@ -3,9 +3,10 @@
          language/scene 的 SceneBrief / Sky / MOON_*，tests/gate_fixtures 的 corpus（语料里的真实 plan / brief）
 [OUTPUT]: M3 硬事实审计验收（设计 §7 M3 的 test_audit）：possession（阿顺手持北冥神功，钟灵“从你另一只手里抽过”违规、
           “盯着你手里的”通过；环顾回合玩家自己“抽出长剑”违规、本回合真拿到了或本来就在身上通过）、
-          affordance（钟灵被制时“拍手笑道”违规、“眼珠一转，笑道”通过，代词不判、省略主语往前找；先出手后被制的人不判）、
+          affordance（钟灵被制时“拍手笑道”违规、“眼珠一转，笑道”通过，代词不判、省略主语往前找；先出手后被制的人不判；
+          感知/期盼之后的人才是施动者、“脚步声渐渐走远”不回溯）、possession 的逗号小句后省略主语照拦、只认宾语位置的东西、
           sky（18:20 月出之前“一轮明月升起”违规；19:45 月已在天上“月亮从峭壁后探出”违规、“月光洒在湖面”通过；
-          sky=None 整项不查；lore 原文与引语不查），每条拦截都配着“相似但应通过”的阴性对照
+          sky=None 整项不查；lore 原文与引语不查；“还没落下/快要落下”是还在、比方里的月光不算），每条拦截都配着“相似但应通过”的阴性对照
 [POS]: tests 的硬事实审计规格。只依赖核心，核心零依赖 CI 同样跑。每一条都走 gate.violations，测的是线上那条路
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -33,6 +34,8 @@ PLAN = RenderPlan(
 SUBDUED = replace(PLAN, statuses=frozenset({"subdued"}), afflicted=(("钟灵", "subdued"),))
 DUSK = Sky("酉时，天色将暗未暗，月亮还没出来", night=False, moon=MOON_NONE)
 MOONLIT = Sky("戌时，月亮已从峭壁后升起，照得湖面一片银白", night=True, moon=MOON_UP)
+DARK = Sky("戌时，天已黑透，月亮还没出来", night=True, moon=MOON_NONE)
+HELD = replace(PLAN, statuses=frozenset({"subdued"}), afflicted=((ME, "subdued"),))
 
 
 QUIET = SceneBrief()
@@ -87,6 +90,26 @@ def test_looking_around_never_puts_the_sword_in_your_hand():
     assert [v for v in mine if v.kind in ("possession", "outcome")] == [], "易经本来就在他身上"
 
 
+@pytest.mark.parametrize("piece", [
+    "钟灵一伸手，便从你手里抽过北冥神功。",           # “从你手里”的你是宾语：主语省略，往前找到钟灵
+    "钟灵手一伸，从你手里抽过北冥神功。",
+    "钟灵看着你，一把抽过北冥神功。",                 # 只是看着你，抽过的仍是钟灵
+    "钟灵一伸手，便把北冥神功抽了过去。",
+])
+def test_possession_finds_the_omitted_subject_before_the_comma(piece):
+    assert "possession" in _kinds(piece), piece
+
+
+@pytest.mark.parametrize("plan, piece", [
+    (replace(PLAN, holdings=(), done=((ME, "take"),)), "钟灵看着你从湖边抽出北冥神功。"),     # 抽出的是她看着的你
+    (replace(PLAN, done=((ME, "give"), ("钟灵", "receive"))), "钟灵看着你把北冥神功递给了她。"),
+    (PLAN, "钟灵接过话头说起北冥神功的来历。"),                                            # 接过的是话头
+    (PLAN, "钟灵收回盯着北冥神功的目光。"),                                                # 收回的是目光
+])
+def test_possession_credits_the_watched_and_the_real_object(plan, piece):
+    assert "possession" not in _kinds(piece, plan), piece
+
+
 # ============================================================
 #  affordance：被制的人没有肢体动作；开口、眼神、神情、笑都可以
 # ============================================================
@@ -111,6 +134,31 @@ def test_affordance_blocks_a_subdued_body_moving(piece):
 ])
 def test_affordance_lets_eyes_voice_and_others_through(piece):
     assert "affordance" not in _kinds(piece, SUBDUED), piece
+
+
+@pytest.mark.parametrize("plan, piece", [
+    (HELD, "你看着钟灵转身走开。"),                     # 感知之后的人才是施动者
+    (HELD, "你眼睁睁看着钟灵拂袖而去，走到湖边。"),     # 前一小句“看着某人做某事”：不回溯到你
+    (HELD, "你只盼钟灵快些走。"),
+    (HELD, "你动弹不得，只听见脚步声走远。"),           # 内嵌的非人主语
+    (HELD, "你动弹不得，脚步声渐渐走远。"),             # 小句自带非人主语
+    (SUBDUED, "钟灵看着你转身离开。"),
+    (SUBDUED, "钟灵见你走来，眼里一亮。"),
+    (SUBDUED, "钟灵眼看你走近，脸上一红。"),
+    (SUBDUED, "钟灵只盼你快些走。"),
+])
+def test_affordance_credits_the_one_being_watched(plan, piece):
+    assert "affordance" not in _kinds(piece, plan), piece
+
+
+@pytest.mark.parametrize("piece", [
+    "钟灵看着你，转身便走。",                           # 只是看着你：走的仍是钟灵
+    "钟灵见状，拍手笑道：“好玩！”",                     # “见状”不是内嵌小句
+    "你只见钟灵拍手大笑。",                             # 感知之后的钟灵就是拍手的人
+    "钟灵翻身坐起。",
+])
+def test_affordance_still_blocks_the_watcher_moving(piece):
+    assert "affordance" in _kinds(piece, SUBDUED), piece
 
 
 def test_affordance_only_for_the_subdued():
@@ -150,6 +198,23 @@ def test_sky_no_sun_at_night():
     assert "sky" in _kinds("夕阳斜照在湖面上。", brief=SceneBrief(sky=MOONLIT))
     assert "sky" not in _kinds("夕阳早已沉下山去，湖上只剩月色。", brief=SceneBrief(sky=MOONLIT))
     assert "sky" not in _kinds("夕阳斜照在湖面上。", brief=SceneBrief(sky=DUSK)), "黄昏另议：还没入夜"
+
+
+@pytest.mark.parametrize("piece", [
+    "夕阳还没落下。", "太阳还没下山，湖面金光闪闪。", "夕阳尚未落尽，余晖洒在湖面。",   # 否定后接落/下山：此刻还在
+    "月亮还没落下，挂在峭壁上。", "月亮快要落下去了。",
+    "像月光一样洒在湖面上的月光，冷冷清清。",                                       # 比方收住之后的月光是实物
+])
+def test_sky_still_there_is_not_absent(piece):
+    assert "sky" in _kinds(piece, brief=SceneBrief(sky=DARK)), piece
+
+
+@pytest.mark.parametrize("piece", [
+    "月亮还没出来，湖面一片昏暗。", "夕阳早已沉下山去，湖面一片昏暗。",
+    "钟灵的脸白得像月光。", "钟灵的笑容像月色一样温柔。", "钟灵脸上绽开阳光般的笑容。", "火光照得湖面通红，如同落日。",
+])
+def test_sky_spares_absence_and_likeness(piece):
+    assert "sky" not in _kinds(piece, brief=SceneBrief(sky=DARK)), piece
 
 
 def test_sky_ignores_quotes_lore_and_old_worlds():
