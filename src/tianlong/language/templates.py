@@ -206,13 +206,16 @@ def _scene(p: Percept, names: Names, viewer: str, me: str) -> str:
             groups.setdefault(str(prop.value), []).append(_n(names, prop.subject, viewer, me))
         elif f.holds and prop.predicate == Rel.CONNECTS.value:
             ends.setdefault(prop.subject, []).append(str(prop.value))
-    # 看得见的通道与它连着的地方（“回廊连着剑湖宫后院”）：四下看看，路也是看得见的东西；不说能不能走（断崖只能下，试过才知道）
-    ways = [f"{_n(names, d, viewer, me)}连着{_n(names, o, viewer, me)}" for d, places in ends.items()
-            if here in places for o in places if o != here]
+    # 看得见的通道与它连着的地方（“回廊连着剑湖宫后院”）：四下看看，路也是看得见的东西；不说能不能走（断崖只能下，试过才知道）；
+    # 门那头没亲眼见过的地方不点名（山腹隧道黑洞洞的，看不出通往澜沧江畔），只说有这么一条路
+    def far(o: str) -> str:
+        sk = names.get(o)
+        return f"连着{sk.name}" if sk is not None and sk.seen else "不知通往何处"
+    ways = [f"{_n(names, d, viewer, me)}{far(o)}" for d, places in ends.items() if here in places for o in places if o != here]
     rows = [f"{'、'.join(who)}{'都' if len(who) > 1 else ''}在{_where(names, where, viewer, me)}"
             for where, who in groups.items()]
     if not rows and not ways:
-        return "四下空无一物"
+        return "四下空无一物" if here is not None else ""      # 只记下格局的旧感知（“知道宫门外是山道”）：没什么可说的
     return "；".join(rows + ways)
 
 

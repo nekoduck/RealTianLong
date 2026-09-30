@@ -100,8 +100,7 @@ def _nearby(me: BeliefStore, here: str | None) -> tuple[str, ...]:
         elif sk.kind == Kind.DOOR:
             ends = {str(b.prop.value) for b in me.positives(eid, Rel.CONNECTS.value)}
             if here in ends:
-                out.setdefault(sk.name)
-                out.update(dict.fromkeys(n for n in (_name(me, e) for e in sorted(ends - {here})) if n))
+                out.setdefault(sk.name)         # 门那头没亲眼见过的地方不算近旁：看得见隧道，看不出它通往哪里
     return tuple(out)
 
 

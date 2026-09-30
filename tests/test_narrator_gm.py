@@ -327,7 +327,7 @@ def test_fallback_template_lines_read_as_sentences(view):
     rows = r.text.splitlines()
     assert rows[0] == render_voice(GONG), "以收引号收尾的台词不再补标点"
     assert rows[1].startswith("你看到：") and rows[1].endswith("剑湖宫宫门连着无量山山道。"), "清单行补上句号"
-    assert "长剑在兵器架上；回廊连着剑湖宫后院" in rows[1], "看得见的通道也在所见里"
+    assert "长剑在兵器架上；回廊不知通往何处" in rows[1], "看得见的通道也在所见里（没去过的那头不点名）"
     assert _template(view).splitlines()[1].endswith("剑湖宫宫门连着无量山山道"), "没有模型时的模板照旧"
 
 

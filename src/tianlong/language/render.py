@@ -114,8 +114,9 @@ def fact_lines(viewer: str, percepts: Sequence[Percept], names: Names, show_scen
     lines: list[str] = []
     for p in percepts:
         if p.modality == Modality.SCENE:
-            if show_scene or moved:
-                lines.append("你看到：" + render_percept(p, names, viewer, me="你", familiar=familiar))
+            seen = render_percept(p, names, viewer, me="你", familiar=familiar)
+            if (show_scene or moved) and seen:
+                lines.append("你看到：" + seen)
         else:
             lines.append(render_percept(p, names, viewer, me="你", familiar=familiar))
     return list(dict.fromkeys(lines))      # 同一分钟里的三声响动，只说一次
