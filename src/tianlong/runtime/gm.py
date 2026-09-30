@@ -9,7 +9,8 @@
           build_brief()（SceneBrief：要替 NPC 说出口的话——谈资只给没说过的、被问到的人附上来历——+ 前后照应 + 没人接的话 + 是否收幕）、
           self_view() / goal_text() / aside_prompt()（场外问答只用玩家自己的认知）、gated_stream()（场外回答逐句过名字闸门、边生成边交付）、
           closing_prompt()（终章只取玩家亲历）、leaked() / leaks()（名字闸门：玩家不认识的实体不许出现在模型写的文字里，玩家亲口说出的名字除外）、
-          reveal()（终章的真相揭晓表）、META_HELP / ASIDE_SYSTEM / ASIDE_TOKENS / CLOSING_SYSTEM
+          reveal()（终章的真相揭晓表）、is_ooc() / asks_direction()（场外还是故事里的自问、问没问方向）、
+          META_HELP / ASIDE_SYSTEM（场外）/ ASIDE_INNER（故事里的自问：故事口吻、不标场外）/ ASIDE_TOKENS / CLOSING_SYSTEM
 [POS]: runtime 的主持层纯函数：会话（session）的回合循环调用它们，它们只读传进来的认知、已落库的请求进度与事件日志，从不写任何东西
        （gated_stream 只经调用方给的回调交付文字）。
        给模型看的（场外问答、终章收束）只取玩家自己的认知与亲历；真相只出现在 reveal() 里——落幕之后、明确标作“真相”，
@@ -42,6 +43,7 @@ from tianlong.core import (
     clock_label,
 )
 from tianlong.core.attributes import true_value
+from tianlong.core.memories import MemoryRecord
 from tianlong.core.profiles import Goal, GoalKind, Profile
 from tianlong.kernel.perception import sketches_for
 from tianlong.language.llm import LLMUnavailable
@@ -70,6 +72,13 @@ ASIDE_SYSTEM = (
     "那是他自己以为的，不一定是真相；你不知道、也不许猜测他不知道的人、物、地方与事。不剧透，不替他做决定，"
     "第二人称，两三句，不写钟点。"
 )
+ASIDE_INNER = (
+    "你是一部中文武侠文字游戏的主持人。玩家在故事里自问了一句（不是跳出故事问你）：用故事里的口吻、第二人称，"
+    "像他自己心里盘算、低头打量那样答两三句。只能依据给出的玩家自己的认知、目标、提示与最近的正文——那是他自己以为的，"
+    "不一定是真相；不许说他“听说过”没人告诉过他的事，不许提他不知道的人、物、地方与事。不剧透，不替他做决定，不写钟点。"
+)
+# 故事里的自问要不要给提示：问到“怎么办、往哪走”才给，问身上有什么、这是哪里就只答所问
+_DIRECTION = re.compile(r"怎么办|怎么做|该做什么|做什么好|往哪|去哪|怎么走|下一步|接下来|出路|怎么出去|提示|线索")
 CLOSING_SYSTEM = (
     "你是一部中文武侠文字游戏的主持人。这一幕已经落幕，请用第二人称写一段 120~250 字的终章收束。"
     "只能取材于列出的玩家亲历之事，按给定的基调收束；不得添加玩家不知道的人物、事件或结论，不预告后事，不写钟点。"
@@ -79,6 +88,15 @@ CLOSING_SYSTEM = (
 # ============================================================
 #  输入：元指令与场外问题（规则解析器不认它们；主持层解释器并入之前由这里兜住）
 # ============================================================
+
+
+def is_ooc(text: str) -> bool:
+    """玩家明说了“GM：/OOC：”，是跳出故事问主持人；其余的问话（“我该怎么办？”）是故事里的自问。"""
+    return _GM_PREFIX.match(text) is not None
+
+
+def asks_direction(question: str) -> bool:
+    return _DIRECTION.search(question) is not None
 
 
 def gm_command(text: str) -> Parsed | None:
@@ -137,18 +155,22 @@ def salient(percepts: Iterable[Percept], player: str, friends: Iterable[str], he
 
 def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_of: Callable[[str], BeliefStore],
                 recent: Sequence[str], before: BeliefStore | None = None, closing: bool = False,
-                told: Mapping[str, Collection[int]] | None = None) -> SceneBrief:
+                told: Mapping[str, Collection[int]] | None = None,
+                memories_of: Callable[[str], Sequence[MemoryRecord]] | None = None,
+                hooks: Sequence[str] = ()) -> SceneBrief:
     """要替 NPC 说出口的话（本回合玩家听见的每一句 NPC 言语、看见的每一个 NPC 姿态）、最近几段正文、玩家原话，
     以及前后照应（continuity：玩家自己的身体状况、本回合的意外与变化、身在何处身边有谁；出人意料地出现的人带上他近来的经历）。
     耳语（只看见在交谈、没听见内容）不算：玩家没听见的话，叙述者也不该替它编出来。
     answering：NPC 冲着玩家、且在玩家开口（或冲他摆了姿态、赔了罪道了谢）之后说的话，带上玩家这一步作回话的由头。
     before 是本回合之前玩家的认知（重试补写时没有）；closing 表示这是这一幕的最后一段；
-    told 是谈资账本（每个 NPC 已经说过的谈资条目）：只把还没说过的交给叙述者。
+    told 是谈资账本（每个 NPC 已经说过的谈资条目）：只把还没说过的交给叙述者；memories_of 取某人自己的经历记录
+    （早先是谁制住了谁、他挨过的那一下，短期经历里早已滚掉）；hooks 是行动建议，只在玩家干等、身边没人说话时交给叙述者。
     玩家问到的人（原话里点了名、说话者认识的），附上说话者所知的公开来历；玩家冲着谁说了话、他本回合却没接话，记在 unanswered；
     普通等待被身边的事打断，前后照应里添一句“你本想再等下去”。"""
     player = me.owner
     prof = scenario.profiles.get(player)
-    ctx = continuity(env, me, before, companions(prof) if prof else ())
+    recall = memories_of or (lambda _: ())
+    ctx = continuity(env, me, before, companions(prof) if prof else (), recall(player))
     plan = (env.intent, *env.followups)
     mine = next((it for it in plan if it.utterance and it.op in (Op.TELL, Op.ASK, Op.WAIT)), None)
     # 玩家本回合冲人说的话、做的姿态或只有言语行为的客套（赔罪、道谢）：之后冲着他来的话都是在回应它
@@ -167,7 +189,7 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
             answer = cue if ev.target == player and acted is not None and p.tick > acted.tick else None
             mind = beliefs_of(ev.actor)
             lines.append(_voice(ev, me, scenario, mind, answer,
-                                lately(mind, ev.actor, p.tick) if ev.actor in ctx.newcomers else "",
+                                lately(mind, ev.actor, p.tick, recall(ev.actor)) if ev.actor in ctx.newcomers else "",
                                 (told or {}).get(ev.actor, ())))
     asked = (acted.event.target if acted is not None and acted.event.kind in TALK
              and acted.event.outcome == Outcome.SUCCESS else None)          # 话没说成（人不在）就谈不上没人接
@@ -182,7 +204,8 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
         notes = (*notes, "你本想再等下去，却被眼前的事打断了")
     return SceneBrief(tuple(lines), tuple(recent), mine.utterance if mine is not None else None,
                       condition=ctx.condition, notes=notes, present=ctx.present, statuses=ctx.statuses,
-                      afflicted=ctx.afflicted, closing=closing, nearby=ctx.nearby, unanswered=unanswered)
+                      afflicted=ctx.afflicted, closing=closing, nearby=ctx.nearby, unanswered=unanswered, hurt=ctx.hurt,
+                      hooks=tuple(hooks) if env.intent.op == Op.WAIT and not lines and not closing else ())
 
 
 def _cue(ev: PerceivedEvent, me: BeliefStore) -> str | None:

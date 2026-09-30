@@ -83,6 +83,7 @@ from tianlong.persistence import (
 )
 from tianlong.runtime import gm, talk
 from tianlong.runtime.authority import Settlement, WorldAuthority
+from tianlong.runtime.suggest import suggestions
 from tianlong.runtime.versions import check_save, current_versions
 from tianlong.scenarios import Ending, Scenario
 
@@ -372,7 +373,7 @@ class GameSession:
         render, brief = self._render(env, text, clock, sink, before=me,
                                      closing=self.ending is None and self._ended() is not None)
         narration = render.text if request_id is None else self._record(request_id, render.text)
-        self._remember(narration)
+        self._remember(narration, brief)
         return TurnReport(clock_label(head.clock), parsed, narration, True, tuple(events), tuple(deliberations),
                           settlement, clock.laps, render, request_id, kind=parsed.kind, ending=self._reach_ending(),
                           first_text_ms=sink.first_ms, brief=brief)
@@ -427,7 +428,7 @@ class GameSession:
             narration = render.text
             if env.done or stuck:
                 narration = self._record(env.request_id, render.text)
-                self._remember(narration)
+                self._remember(narration, brief)
         else:
             sink(narration)
         wanted = {v - 1 for v in env.versions}       # 本请求各 tick 的意图都基于提交前的那个版本
@@ -498,13 +499,14 @@ class GameSession:
         before 是本回合之前玩家的认知（前后照应的比对基准；重试补写时没有）；closing：这一回合抵达了结局，叙述收在余韵上。"""
         me = self.beliefs(self.player)
         lapse = clock_label(env.ticks[-1]) if _interruptible(env) and env.planned_ticks > 1 and env.ticks else ""
-        brief = gm.build_brief(env, me, self.scenario, self.beliefs, self._recent, before, closing, self._told)
+        brief = gm.build_brief(env, me, self.scenario, self.beliefs, self._recent, before, closing, self._told,
+                               lambda a: self.store.recent_memories(self.ref, a, 0), suggestions(me))
         # 此前已知下落的东西：再翻出来不算“发现”（重试补写时没有 before，照旧）
         familiar = frozenset(e for e in before.entities if before.location_of(e) is not None) if before else frozenset()
         scene = getattr(self.narrator, "narrate_scene", None)
         if scene is not None:
             render = scene(self.player, env.percepts, me.entities, brief=brief, fresh=env.fresh, command=text,
-                           familiar=familiar,
+                           familiar=familiar, since=clock_label(env.start_clock) if lapse else "",
                            lapse=lapse, known=self._known(me), on_text=sink)
         else:
             render = self.narrator.narrate_rendered(self.player, env.percepts, me.entities, fresh=env.fresh,
@@ -513,11 +515,13 @@ class GameSession:
         clock.lap("narrate")
         return render, brief
 
-    def _remember(self, narration: str) -> None:
-        """最近几段正文与谈资账本：叙述写成之后更新（派生数据），随下一次提交落库。"""
+    def _remember(self, narration: str, brief: SceneBrief | None = None) -> None:
+        """最近几段正文与谈资账本：叙述写成之后更新（派生数据），随下一次提交落库。
+        交给叙述者的谈资（brief 里的台词）换了说法也认得出来：说话者开了口、这条谈资的字眼大半出现了，就算说过。"""
         self._recent = [*self._recent, narration][-RECENT_KEEP:]
+        offered = {vl.speaker: vl.knows for vl in (brief.lines if brief else ()) if vl.speaker_name in narration}
         for npc in self.scenario.npcs:
-            said = talk.told(self.scenario.profiles[npc].knows, narration)
+            said = talk.told(self.scenario.profiles[npc].knows, narration, offered.get(npc, ""))
             if said:
                 self._told[npc] = self._told.get(npc, set()) | said
 
@@ -604,7 +608,7 @@ class GameSession:
         if self.ending is not None and parsed.kind not in (MoveKind.ASK_GM, MoveKind.META):
             render = Rendered(ENDED, RenderStatus.TEMPLATE)
         elif parsed.kind == MoveKind.ASK_GM:
-            render = self._gm_aside(parsed.question or "", me, sink)          # 边生成边交付
+            render = self._gm_aside(parsed.question or "", me, sink, gm.is_ooc(text))     # 边生成边交付
         elif parsed.kind == MoveKind.META:
             render = Rendered(self._meta(parsed.question or ""), RenderStatus.TEMPLATE)
         else:
@@ -664,23 +668,29 @@ class GameSession:
         here = self.beliefs(self.player).location_of(self.player) or ""
         return min(self.scenario.guide_at.get(here, 0), max(len(self.scenario.guide) - 1, 0))
 
-    def _gm_aside(self, question: str, me: BeliefStore, sink: _Sink) -> Rendered:
+    def _gm_aside(self, question: str, me: BeliefStore, sink: _Sink, ooc: bool = True) -> Rendered:
         """场外问答：只用玩家自己的认知、他的目标、逐级提示（到下一条为止，不剧透更深的）与最近几段正文。
         模型的回答边生成边交付，逐句过名字闸门：点了玩家不认识的名字那句不交付、流也不再读；
-        一句都没交出（首句即违规、空答、模型不可用）就交模板 = 处境摘要 + 下一条提示。"""
+        一句都没交出（首句即违规、空答、模型不可用）就交模板 = 处境摘要 + 下一条提示。
+        ooc：玩家明说了“GM：”才是跳出故事，答话标“（场外）”；故事里的自问（“我身上还有什么？”）用故事里的口吻答，
+        不标场外；提示只在问到“怎么办、往哪走”时才给（问身上有什么，不顺手塞一条攻略）。"""
         view = gm.self_view(me)
         guide, floor = self.scenario.guide, self._floor()
         level = max(self._hint, floor)
         nxt = guide[min(level, len(guide) - 1)] if guide else None
-        plain = "（场外）" + "；".join(view[:3]) + "。" + (f"\n提示：{nxt}" if nxt else "")
+        lead = "（场外）" if ooc else ""
+        guided = ooc or gm.asks_direction(question)
+        plain = lead + "；".join(view[:3]) + "。" + (f"\n提示：{nxt}" if nxt and guided else "")
         if self.llm is None:
             sink(plain)
             return Rendered(plain, RenderStatus.TEMPLATE)
         prof = self.scenario.profiles[self.player]
         goals = [t for t in (gm.goal_text(g, me) for g in prof.goals) if t]
-        prompt = gm.aside_prompt(question, view, prof.persona, goals, guide[floor:level + 1], self._recent)
-        text, found, failed = gm.gated_stream(self._aside_pieces(prompt), lambda t: gm.leaked(t, me, self.scenario),
-                                              sink, lead="（场外）")
+        prompt = gm.aside_prompt(question, view, prof.persona, goals, guide[floor:level + 1] if guided else (),
+                                 self._recent)
+        system = gm.ASIDE_SYSTEM if ooc else gm.ASIDE_INNER
+        text, found, failed = gm.gated_stream(self._aside_pieces(prompt, system), lambda t: gm.leaked(t, me, self.scenario),
+                                              sink, lead=lead)
         violations = tuple(Violation("entity", n) for n in found)
         if failed:
             status = RenderStatus.LLM_UNAVAILABLE
@@ -692,13 +702,13 @@ class GameSession:
             sink(plain)
         return Rendered(text or plain, status, violations)
 
-    def _aside_pieces(self, prompt: str) -> Iterator[str]:
+    def _aside_pieces(self, prompt: str, system: str = gm.ASIDE_SYSTEM) -> Iterator[str]:
         """有流式接口就边生成边交付，没有就一次拿全文（同样逐句过闸门）；两者都限两三句的长度。"""
         stream = getattr(self.llm, "stream", None)
         if callable(stream):
-            yield from stream(prompt, system=gm.ASIDE_SYSTEM, max_tokens=gm.ASIDE_TOKENS)
+            yield from stream(prompt, system=system, max_tokens=gm.ASIDE_TOKENS)
         else:
-            yield self.llm.generate(prompt, system=gm.ASIDE_SYSTEM, temperature=0.4, max_tokens=gm.ASIDE_TOKENS)
+            yield self.llm.generate(prompt, system=system, temperature=0.4, max_tokens=gm.ASIDE_TOKENS)
 
     # ------------------------------------------------------------
     #  落幕：玩家（据世界真相）身处结局地点

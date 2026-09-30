@@ -281,7 +281,7 @@ def test_instant_lead_is_told_first_and_never_restated():
     """lead_after=0：先声立即交付，模型被告知开头已写好；漏讲不必补，换个说法复述的那句悄悄略过，夹带错的照样丢句。"""
     view = _settle(("duanyu", Op.ATTACK, "gongguangjie", None, Manner.NORMAL))
     lead = lead_line(view[0], view[1], "duanyu")
-    assert lead.startswith("你") and "龚光杰" in lead and "挡了开去" in lead, "落空照实写出，而且写明原因"
+    assert lead.startswith("你") and "龚光杰" in lead and "化解" in lead, "落空照实写出，而且写明原因"
     calm = "满堂目光都落在你身上，谁也没有作声。"
     for stream in (calm, "你一掌拍向龚光杰，却被他挡了开去。" + calm):
         r, got = _lead_run(view, _script(stream), 0)
@@ -292,7 +292,7 @@ def test_instant_lead_is_told_first_and_never_restated():
     _lead_run(view, prompt, 0)
     sent = prompt.prompts[-1][1]
     assert lead in sent and "不要复述" in sent, "模型知道开头已经写好"
-    assert "但没有成功（被对方挡了开去）" not in sent, "先声讲过的那一行不再列给模型"
+    assert "但没有成功（被对方化解了）" not in sent, "先声讲过的那一行不再列给模型"
 
 
 def test_late_lead_only_steps_in_when_the_model_is_slow():
@@ -745,3 +745,11 @@ def test_a_kowtow_reads_as_a_kowtow_and_the_cliff_drop_is_told():
     drop = Percept(10, Modality.SELF, PerceivedEvent(Op.MOVE.value, "jianhu", "duanyu", "jianhu", "d_cliff",
                                                      outcome=Outcome.SUCCESS))
     assert "d_cliff@pass" in lore_keys("duanyu", [drop], SC.lore), "下断崖的经过：藤萝兜住、衣衫刮破，不是毫发无伤地一跃"
+
+
+def test_looking_around_needs_no_stray_template_line():
+    """“环顾四周”什么也没翻出来：模型写出眼前的光景就是交代了，不再在钩子后面补一句“你仔细查看剑湖宫大殿”。"""
+    view = _settle(("duanyu", Op.INSPECT, "hall", None, Manner.NORMAL))
+    scene = "满殿宾客或坐或立，龚光杰按剑而立，满殿的目光都在等你开口。"
+    r, _ = _run(view, _script(scene), SceneBrief())
+    assert "仔细查看" not in r.text and "omitted" not in {v.kind for v in r.violations}, r.text

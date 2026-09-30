@@ -308,9 +308,9 @@ def test_status_is_bound_to_the_person_who_has_it():
 
 
 def test_failed_attack_and_take_are_not_narrated_as_success():
-    """段誉出手被挡开：“拍中”就是说成了；没拿兵器架上的长剑，它就不在你手里。"""
+    """段誉出手被化解：“拍中”就是说成了；没拿兵器架上的长剑，它就不在你手里。"""
     plan, known = _wuliang_turn(("duanyu", Op.ATTACK, "gongguangjie"))
-    assert "你猛地向龚光杰出手，但没有成功（被对方挡了开去）" in plan.lines
+    assert "你猛地向龚光杰出手，但没有成功（被对方化解了）" in plan.lines
     for bad, kind in [("你大喝一声，一掌拍中龚光杰胸口，他踉跄着连退三步。", "outcome"),
                       ("你抢上两步，从兵器架上抽出长剑，横在胸前。", "outcome"), ("长剑已握在你手中。", "outcome"),
                       ("转眼之间，你已身在后院。", "teleport"), ("你出了大殿，站在剑湖宫后院里。", "teleport")]:

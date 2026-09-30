@@ -49,7 +49,7 @@ REASONS: dict[str, str] = {
     "duplicate_actor": "同一时刻只能做一件事",
     "subdued": "穴道被制，动弹不得",
     "evaded": "被对方轻飘飘地闪了开去",
-    "parried": "被对方挡了开去",
+    "parried": "被对方化解了",          # 不说怎么化解的：弱者靠貂、靠运气避过强者的一掌，交给叙述者写得合情理
     "one_way": "陡峭异常，爬不回去",
     "nothing_to_learn": "看不出什么门道",
     "already_learned": "早已学会了",

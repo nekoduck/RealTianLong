@@ -49,7 +49,9 @@ class SceneBrief:
     notes: tuple[str, ...] = ()              # 本回合的意外与变化（“你原以为钟灵被点了穴道、还困在剑湖宫大殿”“钟灵没有跟来”）
     present: tuple[str, ...] = ()            # 玩家以为此刻身在何处、身边有谁（首项是地点）：无事发生时也有东西可写
     statuses: frozenset[str] = frozenset()   # 上面这些话里出现的状态（wounded/poisoned/subdued）：说到它们不算状态升级
-    afflicted: tuple[tuple[str, str], ...] = ()   # (本名, 状态)：玩家自己身上确有的状态，状态词落在他身上不算错
+    afflicted: tuple[tuple[str, str], ...] = ()   # (本名, 状态)：玩家自己身上确有的、以为身边的人身上有的状态，状态词落在他们身上不算错
     closing: bool = False                    # 这一幕的最后一段：收在余韵上，不再抛出选择
     nearby: tuple[str, ...] = ()             # 此地叫得出名字的东西、门与门那头的地点：可以点名（“回头是剑湖宫”），不进提示词
     unanswered: str | None = None            # 玩家冲着谁说了话、本回合他却没接话（“马五德”）：别替他编答案，写出他没顾上回答的样子
+    hurt: tuple[str, ...] = ()               # 身边的人玩家以为的伤毒被制（“钟灵受了伤”）：写他们的举动别像没事人
+    hooks: tuple[str, ...] = ()              # 玩家干等、眼前却有可做的事（行动建议的原话）：可把他的目光引过去，不替他决定

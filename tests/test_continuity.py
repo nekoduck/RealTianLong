@@ -7,7 +7,8 @@
           一路相随的同伴没跟来就说一声；抵达结局那一回合收在余韵上；闲扯不打断等待而当面招呼照旧打断；
           无事发生时有模型就写眼前的光景与身边的人，没有模型才是“时间悄悄过去”；第二轮评审回归——问到的人附上说话者所知的来历、
           谈资说过一回就不再给（账本随会话运行态落库、读档恢复）、没人接的话照实记下、等待被打断照实说、提醒写明是谁制住的且许说“被制”、
-          被制住的同伴不说“没跟来”、近来的经历留着挨的那一下、提示从玩家所在之处说起
+          被制住的同伴不说“没跟来”、近来的经历留着挨的那一下、提示从玩家所在之处说起；第三轮回归——故事里的自问不标场外、
+          谁制住的与挨过的那一下从经历记录里找、身边人的伤、同一时辰里说过了多久、干等时的钩子、换了说法的谈资也记账
 [POS]: tests 的前后照应：证伪“人被点了穴，下一幕毫发无伤地走来却没人觉得奇怪”“挨了一掌此后再没人提”“NPC 每开口就背一遍设定”
        “问了人没人答却像答了”“身在崖底还提开场的事”
        “等到天黑被闲聊打断得原地打转”“到了结局还问要不要回头”
@@ -206,3 +207,73 @@ def test_hints_start_where_the_player_is():
     s.turn("去后院")
     assert s.turn("/hint").narration == "提示：" + GUIDE[1], "走过的路不再提"
     assert s.turn("/hint").narration == "提示：" + GUIDE[2]
+
+
+# ============================================================
+#  第三轮评审回归：故事里的自问不标场外、谁制住的从经历记录里找、身边人的伤、同一时辰里说过了多久、干等时的钩子
+# ============================================================
+
+
+def test_a_question_asked_in_the_story_is_answered_in_the_story():
+    """“我身上还有什么？”是故事里的自问：用故事口吻答、不标“（场外）”、不顺手塞提示；明说“GM：”才是场外。"""
+    llm = ScriptedLLM(lambda p, sy, sc: "你摸了摸怀里，只有一卷易经。")
+    s = session(llm=llm)
+    s.interpreter = Interp({"我身上还有什么？": Parsed(None, kind=MoveKind.ASK_GM, question="我身上还有什么？")}, s.parser)
+    r = s.turn("我身上还有什么？")
+    system, prompt = llm.prompts[-1]
+    assert r.narration == "你摸了摸怀里，只有一卷易经。" and system == gm.ASIDE_INNER
+    assert GUIDE[0] not in prompt, "问身上有什么，不顺手塞一条攻略"
+    r = s.turn("GM：我身上还有什么？")
+    assert r.narration.startswith("（场外）") and llm.prompts[-1][0] == gm.ASIDE_SYSTEM
+    assert gm.asks_direction("接下来该往哪儿走？") and not gm.asks_direction("我身上还有什么？")
+
+
+def test_who_held_them_and_the_blow_come_from_the_records_when_episodes_have_rolled_off():
+    """短期经历早已滚掉：玩家的经历记录里“左子穆向钟灵出手——钟灵被点了穴道”照样找得到是谁；
+    钟灵自己的记录里挨的那一下留着，添一句“后来穴道自己解开了”——她此刻能说能走，内核里被制只会到时自解。"""
+    from tianlong.core.memories import MemoryRecord
+    from tianlong.runtime.continuity import RELEASED
+
+    seen = MemoryRecord("m1", "w", "b", HERO, "event", "看见龚光杰猛地向钟灵出手——钟灵被点了穴道，动弹不得", T0 - 40, T0 - 40,
+                        "o1", ("gong", "ling", "hall"))
+    s = session()
+    me = s.beliefs(HERO)
+    held = Proposition.attr("ling", "subdued", True)
+    before = replace(me, beliefs={**me.beliefs, held: replace(next(iter(me.beliefs.values())), prop=held)})
+    s.turn("环顾四周", request_id="look")
+    ctx = continuity(s.store.request(s.ref, "look"), s.beliefs(HERO), before, memories=(seen,))
+    assert any("钟灵被龚光杰制住" in n for n in ctx.notes), ctx.notes
+    mine = MemoryRecord("m2", "w", "b", "ling", "event", "看见龚光杰猛地向我出手——我被点了穴道，动弹不得", T0 - 40, T0 - 40,
+                        "o2", ("gong", "ling", "hall"))
+    walk = Episode(T0, Modality.SELF, PerceivedEvent(Op.MOVE.value, "hall", "ling", "yard", outcome=Outcome.SUCCESS))
+    told = lately(replace(BeliefStore("ling"), episodes=(walk,)), "ling", T0 + 1, (mine,))
+    assert told.startswith("看见龚光杰猛地向我出手——我被点了穴道") and RELEASED in told and told.endswith("我来到yard"), told
+
+
+def test_the_hurt_of_people_around_is_kept_in_mind():
+    s = session()
+    me = s.beliefs(HERO)
+    hurt = Proposition.attr("ling", "wounded", True)
+    me = replace(me, beliefs={**me.beliefs, hurt: replace(next(iter(me.beliefs.values())), prop=hurt)})
+    s.turn("环顾四周", request_id="look")
+    ctx = continuity(s.store.request(s.ref, "look"), me, None)
+    assert ctx.hurt == ("钟灵受了伤",) and ("钟灵", "wounded") in ctx.afflicted and "wounded" in ctx.statuses
+
+
+def test_waiting_within_the_same_hour_says_how_long_not_what_hour():
+    from tianlong.language.narrator import _when
+
+    assert _when("第1日 18:30", "第1日 17:50") == "（不觉过了两三刻工夫）", "开场已是酉时：等了四十分钟不说“到了酉时”"
+    assert _when("第1日 19:00", "第1日 17:50") == "（不觉已是入夜戌时）"
+
+
+def test_a_plain_wait_offers_hooks_and_a_paraphrased_topic_counts_as_told():
+    from tianlong.runtime.talk import told
+
+    s = session()
+    r = s.turn("等一会")
+    assert r.brief is not None and r.brief.hooks, "干等、身边没人说话：把行动建议交给叙述者作钩子"
+    knows = "家住万劫谷；养着一只闪电貂，咬人有毒，最听她的话"
+    said = "钟灵道：“你瞧见我那貂儿没有？咬人可是有毒的，最听我的话啦！”"
+    assert told(knows, said) == frozenset(), "三字片段认不出换了说法的"
+    assert told(knows, said, offered="养着一只闪电貂，咬人有毒，最听她的话") == {1}, "交给了叙述者、她也开了口：认得出"

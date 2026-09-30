@@ -26,7 +26,8 @@
        最近正文只留最后三段、每段末尾约 300 字，钟点换成时辰文字；世界前提与文风来自场景
        前后照应（SceneBrief：玩家的身体状况、出乎他意料之处、眼前的地点与人、说话者近来的经历）写进提示词且算出处；闲话只可说谈资、近来的经历与眼前的事；
        无事发生时有模型就写眼前的光景；到了结局收在余韵上；玩家的话没人接就照实写出没人接（不替他编答案）；
-       回话先接住玩家的话头，谈资只给没说过的（会话记账），被问到的人附上说话者所知的来历；此地叫得出名字的东西（nearby）可以点名
+       回话先接住玩家的话头，谈资只给没说过的（会话记账），被问到的人附上说话者所知的来历；此地叫得出名字的东西（nearby）可以点名；
+       四下看看而什么也没翻出来不是必讲之事（写出眼前的光景就是交代了）；等待还在同一个时辰里说过了多久（_when）
        先声之后，别的必讲之事讲到没有只看模型自己交付的正文；有台词时引语里的名字与状态词交给台词闸门按说话者查。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -133,6 +134,22 @@ _SKY = ("夜半", "深夜", "黎明前", "破晓", "清晨", "上午", "正午",
 _TIMED = re.compile(f"[{_BRANCHES}]时|{'|'.join(_SKY)}")     # 正文已经交代过时辰
 
 
+def _span(minutes: int) -> str:
+    return ("一小会儿" if minutes < 20 else "两三刻工夫" if minutes < 50 else "约莫半个时辰" if minutes < 90
+            else "一个多时辰")
+
+
+def _when(lapse: str, since: str = "") -> str:
+    """一段等待之后的时辰：跨了时辰说“（不觉已是入夜戌时）”；还在同一个时辰里说“（不觉过了两三刻工夫）”——
+    开场已是酉时，等了半个时辰再说“到了傍晚酉时”，读来像时间倒流。"""
+    a, b = _CLOCK.search(since), _CLOCK.search(lapse)
+    if a and b:
+        start, end = (int(m.group(1)) * 1440 + int(m.group(2)) * 60 + int(m.group(3)) for m in (a, b))
+        if 0 <= end - start < 240 and (int(a.group(2)) + 1) // 2 == (int(b.group(2)) + 1) // 2:
+            return f"（不觉过了{_span(end - start)}）"
+    return f"（不觉已是{_in_words(lapse)}）"
+
+
 def _in_words(text: str) -> str:
     """“第1日 19:00” → “入夜戌时”：模型只见时辰文字，不见钟点数字。"""
     def say(m: re.Match[str]) -> str:
@@ -218,11 +235,13 @@ class _Row:
     said: str = ""                 # 玩家自己的原话或姿态：正文照着写了出来（三字片段重合过半）也算讲到了
 
 
-def _must(p: Percept, viewer: str) -> bool:
+def _must(p: Percept, viewer: str, line: str = "") -> bool:
     ev = p.event
     if ev is None:
         return False
     if p.modality == Modality.SELF:
+        if ev.kind == Op.INSPECT.value and ev.target == ev.place and "——" not in line:
+            return False                    # 四下看看、什么也没翻出来：写出眼前的光景就是交代了，不必补“你仔细查看某处”
         return ev.kind != Op.WAIT.value or bool(ev.utterance)     # 干等不必交代
     return p.modality == Modality.SPEECH or (p.modality == Modality.SIGHT and ev.target == viewer)
 
@@ -267,7 +286,7 @@ def _scene_lines(plan: RenderPlan, viewer: str, percepts: Sequence[Percept], nam
             rows.append(_Row(render_voice(brief.lines[k], salt), voice=brief.lines[k]))
         elif (p := facts.get(text)) is not None:
             mine = p.modality == Modality.SELF and p.event is not None and p.event.actor == viewer
-            rows.append(_Row(text, keys=_keys(p, viewer, names, aliases, text), must=_must(p, viewer), mine=mine,
+            rows.append(_Row(text, keys=_keys(p, viewer, names, aliases, text), must=_must(p, viewer, text), mine=mine,
                              said=(p.event.utterance or "") if mine and p.event is not None else ""))
         else:
             rows.append(_Row(text))
@@ -509,9 +528,10 @@ class Narrator:
     def narrate_scene(self, viewer: str, percepts: Sequence[Percept], names: Names, *, brief: SceneBrief,
                       show_scene: bool = False, fresh: Sequence[str] = (), command: str = "", lapse: str = "",
                       known: Iterable[str] = (), on_text: TextSink | None = None,
-                      familiar: Iterable[str] = ()) -> Rendered:
+                      familiar: Iterable[str] = (), since: str = "") -> Rendered:
         """familiar 是玩家此前已知下落的东西（再翻出来不算“发现”）；command 是玩家原话（让“跳下断崖”读起来像跳，成败仍以清单为准）；lapse 是一段等待之后的时辰，排在事实之前；
-        known 是闸门用来拒绝的名字全集（玩家认识的 + 场景全部实体）；on_text 收到每一段交付的文字（通过闸门即交付）。"""
+        known 是闸门用来拒绝的名字全集（玩家认识的 + 场景全部实体）；on_text 收到每一段交付的文字（通过闸门即交付）；
+        since 是这段等待开始时的时辰（还在同一个时辰里就说过了多久，不说“到了某时”）。"""
         known, familiar = frozenset(known), frozenset(familiar)
         looks = [self.lore[k] for k in fresh if k in self.lore]
         passed = [f"（不觉已是{lapse}）"] if lapse else []
@@ -538,7 +558,7 @@ class Narrator:
         # ---- 模型：逐句生成、逐句过闸门，通过即交付（先声讲过的玩家自己的行动不再列给模型，免得它照着再讲一遍） ----
         told = {r.text for r in rows if r.mine} if gate.lead else set()
         facts = [x for x in plan.lines if x not in covered and x not in told]
-        prompt = self._prompt(brief, command, lapse, facts, looks, plan, known, gate.lead)
+        prompt = self._prompt(brief, command, [_when(lapse, since)] if lapse else [], facts, looks, plan, known, gate.lead)
         failed = False
         pieces = self._pieces(prompt, self._system())
         if lead and not gate.lead:
@@ -571,7 +591,7 @@ class Narrator:
             hearsay = [v for v in check(out.text, plan, known) if v.kind == "hearsay"]
             violations += hearsay
             status = RenderStatus.GATED_FALLBACK if gate.dropped >= MAX_DROPS or hearsay else RenderStatus.LLM
-        when = [f"（不觉已是{_in_words(lapse)}）"] if lapse else []
+        when = [_when(lapse, since)] if lapse else []
         body = out.text[len(gate.lead):]              # 模型交付的正文：先声里点过的名字不替别的事作证
         rows = [r for r in rows if not (gate.lead and r.mine)]      # 玩家自己的行动由先声讲过
         if status == RenderStatus.LLM:
@@ -615,7 +635,7 @@ class Narrator:
     def _system(self) -> str:
         return _GM + (f"\n世界：{self.setting}" if self.setting else "") + (f"\n文风：{self.style}" if self.style else "")
 
-    def _prompt(self, brief: SceneBrief, command: str, lapse: str, facts: Sequence[str], looks: Sequence[str],
+    def _prompt(self, brief: SceneBrief, command: str, when: Sequence[str], facts: Sequence[str], looks: Sequence[str],
                 plan: RenderPlan, known: frozenset[str], lead: str = "") -> str:
         parts: list[str] = []
         recent = [_in_words(p).strip() for p in brief.recent[-RECENT_KEEP:] if p.strip()]
@@ -627,15 +647,19 @@ class Narrator:
             parts.append(f"玩家的输入：{command}")
         if brief.player_line:
             parts.append(f"玩家本回合说出口的话或做出的姿态（可原样照引，一字不改）：{brief.player_line}")
-        when = [f"（不觉已是{_in_words(lapse)}）"] if lapse else []
         empty = "（除下列言语外无事发生）" if brief.lines else "（无事发生：写眼前的光景与身边的人此刻的样子，不要编出新的事）"
-        parts.append("本回合玩家感知到的事实：\n" + "\n".join(when + (list(facts) or [empty])))
+        parts.append("本回合玩家感知到的事实：\n" + "\n".join([*when, *(list(facts) or [empty])]))
         if brief.present:
             around = f"{brief.present[0]}" + (f"，身边有{'、'.join(brief.present[1:])}" if len(brief.present) > 1 else "，身边没有别人")
             parts.append(f"玩家以为自己此刻在：{around}")
         if brief.condition:
             parts.append(f"玩家自己的身体状况（记在心里，不要写得像没事人，也不要加重；只在这一步吃力——走动攀爬、出手、挨打——"
                          f"或刚受伤时带一笔，别每回合都写疼）：{brief.condition}")
+        if brief.hurt:
+            parts.append("身边的人（玩家以为的伤势；写他们的举动时别像没事人，也不要加重）：" + "；".join(brief.hurt))
+        if brief.hooks:
+            parts.append("玩家在等，眼前却有可做的事（" + " / ".join(brief.hooks) + "）：可以把他的目光引向其中一处，"
+                         "只写看得见的样子，不点破会有什么结果，不替他决定")
         if brief.notes:
             parts.append("本回合出乎玩家意料之处（写出他的觉察与惊讶，不要替他下结论，也不要替别人解释原因）：\n"
                          + "\n".join(f"- {n}" for n in brief.notes))
