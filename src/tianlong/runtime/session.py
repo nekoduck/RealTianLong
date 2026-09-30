@@ -1,23 +1,24 @@
 """
 [INPUT]: 依赖 runtime/authority 的 WorldAuthority / Settlement，runtime/versions 的 current_versions / check_save，runtime/talk 的谈资账本，
-         runtime/gm 的主持层纯函数（gm_command / companions / salient / build_brief / self_view / goal_text / aside_prompt / gated_stream /
-         closing_prompt / leaked / leaks / reveal），
-         agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
+         runtime/gm 的主持层纯函数（gm_command / companions / salient / build_brief），runtime/aside 的 AsideMixin / ENDED（不推进的回合），
+         runtime/endings 的 EndingMixin（落幕与终章），agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
          memory 的 QdrantMemoryIndex / Recall / MemoryIndexer / MemoryScope，language 的 IntentParser / MoveKind / Parsed / Narrator /
-         TemplateSpeaker / LLMClient / LLMUnavailable，language/command 的 clarify，language/scene 的 SceneBrief / TextSink，
-         language/render 的 Rendered / RenderStatus / Violation，persistence 的 WorldStore / InMemoryWorldStore / WorldRef / TurnEnvelope /
+         TemplateSpeaker / LLMClient，language/scene 的 SceneBrief / TextSink，
+         language/render 的 Rendered，persistence 的 WorldStore / InMemoryWorldStore / WorldRef / TurnEnvelope /
          RequestConflict / VersionConflict，scenarios 的 Scenario / Ending，cognition 的 Candidate / believed_place，
          language/templates 的 render_fact，memory/view 的 MemoryView（NPC 的长期记忆摘要，增量汇总——水位含边界、按记录 ID 去重，与读档后重建逐项相同）
 [OUTPUT]: 对外提供 GameSession（可玩会话：turn() 一回合、intro()/epilogue() 开场与终章、belief_lines() 玩家自己的认知；
           读档接续并恢复调度标记、已描写实体、最近几段正文、提示进度与谈资账本；请求幂等、存档版本闸门）、
-          TurnReport（一回合的全部产物：世界侧与文字侧分开记录，含这句话的类别、结局、首字耗时、分阶段耗时与叙述上下文）
+          TurnReport（一回合的全部产物：世界侧与文字侧分开记录，含这句话的类别、结局、首字耗时、分阶段耗时与叙述上下文）、
+          ENDED（再导出自 runtime/aside）
 [POS]: runtime 的装配中心（主持层的回合循环）：一回合 = 解释玩家输入（后台同时算好本 tick 的 NPC 决策；元指令与“GM：”一眼认得，不算）→ 按类别推进：
        ACT 走 1~3 步计划（失败即止）、SAY/GESTURE 与冲着在场之人的行动再加一个反应 tick、普通等待按时长且只被要紧的事打断
        （当面动手、对同伴——自己人与 DEFEND 目标——动手都算）、
-       ASK_GM/META/追问不推进时间也不落库（场外回答边生成边逐句过名字闸门；模型写的追问同样过闸门，玩家自己说出的名字不算）→
+       ASK_GM/META/追问不推进时间也不落库（AsideMixin：场外回答边生成边逐句过名字闸门；模型写的追问同样过闸门，玩家自己说出的名字不算）→
        权威结算（同一事务附上请求进度与会话运行态）→ 同步记忆索引 →
        主持人之声据玩家感知与 SceneBrief 流式叙述（过语义闸门；SceneBrief 带前后照应——拿本回合开始前玩家的认知比对，
-       此前已知下落的东西再翻出来不算发现，抵达结局的那一回合收幕）→ 幂等记下叙述（先写者为准，返回与记住的都是落库的那一段）→ 抵达结局地点即落幕。
+       此前已知下落的东西再翻出来不算发现，抵达结局的那一回合收幕）→ 幂等记下叙述（先写者为准，返回与记住的都是落库的那一段）→
+       抵达结局地点即落幕（EndingMixin）。
        后台预算的决策只依赖同一版本；首 tick 时版本未变才用，否则或本回合不推进就丢弃——结果与顺序执行逐项相同。
        带 request_id 的请求：同 ID 同内容返回既有结果、不再结算；同 ID 异内容抛 RequestConflict；提交后崩溃的重试只重写文字，
        多 tick 请求（等待、多步计划、反应 tick）中途崩溃的重试由已提交的 tick 数推出剩下的步骤，只走剩下的 tick。
@@ -32,7 +33,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 
@@ -60,12 +61,11 @@ from tianlong.core import (
     make_id,
     minutes_until_night,
 )
-from tianlong.language.command import clarify
 from tianlong.language.interpret import Interpreter
-from tianlong.language.llm import CachedLLM, LLMClient, LLMUnavailable
+from tianlong.language.llm import CachedLLM, LLMClient
 from tianlong.language.narrator import LEAD_AFTER, Narrator, lore_keys
 from tianlong.language.parser import IntentParser, MoveKind, Parsed
-from tianlong.language.render import Rendered, RenderStatus, Violation
+from tianlong.language.render import Rendered
 from tianlong.language.scene import SceneBrief, TextSink
 from tianlong.language.speaker import Speaker, TemplateSpeaker
 from tianlong.language.templates import render_fact
@@ -82,10 +82,14 @@ from tianlong.persistence import (
     WorldStore,
 )
 from tianlong.runtime import gm, talk
+from tianlong.runtime.aside import ENDED, AsideMixin
 from tianlong.runtime.authority import Settlement, WorldAuthority
+from tianlong.runtime.endings import EndingMixin
 from tianlong.runtime.suggest import suggestions
 from tianlong.runtime.versions import check_save, current_versions
 from tianlong.scenarios import Ending, Scenario
+
+__all__ = ["ENDED", "GameSession", "TurnReport"]     # ENDED 再导出自 runtime/aside
 
 
 @dataclass(frozen=True)
@@ -109,9 +113,6 @@ class TurnReport:
 
 MAX_WAIT = 240       # 一次最多等四个时辰（240 分钟）
 RECENT_KEEP = 3      # 最近几段正文：随会话运行态落库，交给叙述者与解释器接续上下文
-ENDED = "第一幕已终。可以输入 /recap 回顾，或重新开始一局。"
-PARDON = "没太听明白，能换个说法吗？"   # 模型写的追问点了玩家不该知道的名字时，换成这句
-ASIDE_KEEP = 64      # 带 request_id 的不推进回合在本进程里记住最近这么多个（重试原样返回；它们不是世界事实，不落库）
 _ENGAGE = frozenset({Op.ATTACK, Op.GIVE, Op.USE, Op.TELL, Op.ASK})
 
 
@@ -192,7 +193,7 @@ class _Ahead:
         return got if version == self.version else None
 
 
-class GameSession:
+class GameSession(AsideMixin, EndingMixin):
     def __init__(
         self,
         scenario: Scenario,
@@ -602,154 +603,6 @@ class GameSession:
         if self._ahead is not None:
             wait((self._ahead.future,))              # 作废的预算：结果与异常一并丢弃
             self._ahead = None
-
-    # ------------------------------------------------------------
-    #  不推进时间的回合：场外问答、元指令、追问、落幕之后
-    # ------------------------------------------------------------
-
-    def _aside(self, parsed: Parsed, text: str, head: WorldState, me: BeliefStore, clock: _Stopwatch, sink: _Sink,
-               request_id: str | None) -> TurnReport:
-        """不推进时间、不落库：后台预算的决策作废（它从不写任何东西）。带 request_id 的记在本进程里，重试原样返回。"""
-        if self.ending is not None and parsed.kind not in (MoveKind.ASK_GM, MoveKind.META):
-            render = Rendered(ENDED, RenderStatus.TEMPLATE)
-        elif parsed.kind == MoveKind.ASK_GM:
-            render = self._gm_aside(parsed.question or "", me, sink, gm.is_ooc(text))     # 边生成边交付
-        elif parsed.kind == MoveKind.META:
-            render = Rendered(self._meta(parsed.question or ""), RenderStatus.TEMPLATE)
-        else:
-            render = self._clarify(parsed, text, me)
-        clock.lap("aside")
-        if parsed.kind != MoveKind.ASK_GM:
-            sink(render.text)
-        report = TurnReport(clock_label(head.clock), parsed, render.text, advanced=False, timings=clock.laps,
-                            render=render, request_id=request_id, kind=parsed.kind, ending=self.ending,
-                            first_text_ms=sink.first_ms)
-        if request_id is not None:
-            self._asides[request_id] = (digest("turn", text), report)
-            while len(self._asides) > ASIDE_KEEP:
-                del self._asides[next(iter(self._asides))]
-        return report
-
-    def _replay_aside(self, request_id: str, payload: str, clock: _Stopwatch, sink: _Sink) -> TurnReport:
-        """重试一次不推进的回合：同 ID 同内容原样返回（提示不再往下翻、场外问答不再问一遍模型），异内容抛 RequestConflict。"""
-        bound, report = self._asides[request_id]
-        if bound != payload:
-            raise RequestConflict(f"请求 {request_id} 已绑定另一份内容：拒绝执行")
-        sink(report.narration)
-        return replace(report, timings=clock.laps, replayed=True, first_text_ms=sink.first_ms)
-
-    def _clarify(self, parsed: Parsed, text: str, me: BeliefStore) -> Rendered:
-        """追问与场内说法。模型写的（未必是模板：它熟读原著，可能点出玩家不该知道的名字）过名字闸门——玩家自己说出的名字不算；
-        拦下即换成不带名字的追问。"""
-        reply = parsed.clarification or "……"
-        found = gm.leaked(reply, me, self.scenario, said=text) if parsed.source == "llm" else []
-        if not found:
-            return Rendered(reply, RenderStatus.TEMPLATE)
-        cmd = parsed.command
-        plain = clarify(cmd) if cmd is not None and not cmd.immediate else PARDON
-        return Rendered(plain, RenderStatus.GATED_FALLBACK, tuple(Violation("entity", n) for n in found))
-
-    def _meta(self, name: str) -> str:
-        if name == "hint":
-            return self._next_hint()
-        if name == "recap":
-            return "\n\n".join(self._recent) if self._recent else "（故事才刚开始。）"
-        if name == "beliefs":
-            return "\n".join(self.belief_lines()) or "（你一无所知。）"
-        return gm.META_HELP
-
-    def _next_hint(self) -> str:
-        """逐级提示：每次给下一条没给过的（给完了就重复最后一条）；进度随下一次提交落库。"""
-        guide = self.scenario.guide
-        if not guide:
-            return "（这一幕没有提示。）"
-        self._hint = max(self._hint, self._floor())
-        line = guide[min(self._hint, len(guide) - 1)]
-        self._hint = min(self._hint + 1, len(guide))
-        return f"提示：{line}"
-
-    def _floor(self) -> int:
-        """提示至少从第几条说起：走过的路不再提（身在崖底还说“龚光杰来者不善”，是主持人没跟上故事）。"""
-        here = self.beliefs(self.player).location_of(self.player) or ""
-        return min(self.scenario.guide_at.get(here, 0), max(len(self.scenario.guide) - 1, 0))
-
-    def _gm_aside(self, question: str, me: BeliefStore, sink: _Sink, ooc: bool = True) -> Rendered:
-        """场外问答：只用玩家自己的认知、他的目标、逐级提示（到下一条为止，不剧透更深的）与最近几段正文。
-        模型的回答边生成边交付，逐句过名字闸门：点了玩家不认识的名字那句不交付、流也不再读；
-        一句都没交出（首句即违规、空答、模型不可用）就交模板 = 处境摘要 + 下一条提示。
-        ooc：玩家明说了“GM：”才是跳出故事，答话标“（场外）”；故事里的自问（“我身上还有什么？”）用故事里的口吻答，
-        不标场外；提示只在问到“怎么办、往哪走”时才给（问身上有什么，不顺手塞一条攻略）。"""
-        view = gm.self_view(me)
-        guide, floor = self.scenario.guide, self._floor()
-        level = max(self._hint, floor)
-        nxt = guide[min(level, len(guide) - 1)] if guide else None
-        lead = "（场外）" if ooc else ""
-        guided = ooc or gm.asks_direction(question)
-        plain = lead + "；".join(view[:3]) + "。" + (f"\n提示：{nxt}" if nxt and guided else "")
-        if self.llm is None:
-            sink(plain)
-            return Rendered(plain, RenderStatus.TEMPLATE)
-        prof = self.scenario.profiles[self.player]
-        goals = [t for t in (gm.goal_text(g, me) for g in prof.goals) if t]
-        prompt = gm.aside_prompt(question, view, prof.persona, goals if ooc else (),       # 元目标只在场外说
-                                 guide[floor:level + 1] if guided else (), self._recent)
-        system = gm.ASIDE_SYSTEM if ooc else gm.ASIDE_INNER
-        text, found, failed = gm.gated_stream(self._aside_pieces(prompt, system), lambda t: gm.leaked(t, me, self.scenario),
-                                              sink, lead=lead)
-        violations = tuple(Violation("entity", n) for n in found)
-        if failed:
-            status = RenderStatus.LLM_UNAVAILABLE
-        elif text:
-            status = RenderStatus.LLM            # 中途拦下一句：已交付的照旧算数，拦下的记在 violations
-        else:
-            status, violations = RenderStatus.GATED_FALLBACK, violations or (Violation("empty", ""),)
-        if not text:
-            sink(plain)
-        return Rendered(text or plain, status, violations)
-
-    def _aside_pieces(self, prompt: str, system: str = gm.ASIDE_SYSTEM) -> Iterator[str]:
-        """有流式接口就边生成边交付，没有就一次拿全文（同样逐句过闸门）；两者都限两三句的长度。"""
-        stream = getattr(self.llm, "stream", None)
-        if callable(stream):
-            yield from stream(prompt, system=system, max_tokens=gm.ASIDE_TOKENS)
-        else:
-            yield self.llm.generate(prompt, system=system, temperature=0.4, max_tokens=gm.ASIDE_TOKENS)
-
-    # ------------------------------------------------------------
-    #  落幕：玩家（据世界真相）身处结局地点
-    # ------------------------------------------------------------
-
-    def _ended(self) -> Ending | None:
-        place = self.authority.head().target(self.player, Rel.AT)
-        return next((e for e in self.scenario.endings if e.place == place), None)
-
-    def _reach_ending(self) -> Ending | None:
-        """推进过的回合之后检查一次：落幕即定，之后的回合不再推进。"""
-        self.ending = self.ending or self._ended()
-        return self.ending
-
-    def epilogue(self) -> str:
-        """终章：先是一段收束（有模型时据 Ending.epilogue 与玩家亲历写成、过名字闸门；否则只有标题），
-        再是明确标作“真相”的揭晓——你以为的 vs 实际的、你没看见的事——由世界状态与玩家认知确定地生成。"""
-        me = self.beliefs(self.player)
-        head = f"【{self.ending.title}】" if self.ending else "【尚未落幕】"     # 标题由场景给全（“第一幕终 · 澜沧江畔”）
-        truth = gm.reveal(self.scenario, self.authority.head(), me, self.store.events(self.ref))
-        return "\n\n".join(x for x in (head, self._closing(me), truth) if x)
-
-    def _closing(self, me: BeliefStore) -> str:
-        """终章收束只取玩家亲历（他自己的经历记录与最近的正文），从不给模型看真相；点了他不认识的名字即不用。"""
-        if self.llm is None or self.ending is None:
-            return ""
-        lived = sorted(self.store.recent_memories(self.ref, self.player, 0), key=lambda m: (m.known_at, m.id))
-        prompt = gm.closing_prompt(self.ending.epilogue or self.ending.title, [m.text for m in lived[-40:]],
-                                   self._recent)
-        system = gm.CLOSING_SYSTEM + (f"\n世界：{self.scenario.setting}" if self.scenario.setting else "") + (
-            f"\n文风：{self.scenario.style}" if self.scenario.style else "")
-        try:
-            text = self.llm.generate(prompt, system=system, temperature=0.7).strip()
-        except LLMUnavailable:
-            return ""
-        return "" if not text or gm.leaks(text, me, self.scenario) else text
 
     # ------------------------------------------------------------
     #  NPC 装配：每个角色只拿到自己的 port

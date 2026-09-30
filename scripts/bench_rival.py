@@ -6,7 +6,7 @@
           scripted_respond() / scripted_gm() / scripted_judge() / scripted_llms()（--llm scripted 的离线脚本模型）
 [POS]: scripts/bench_gm 的模型侧，单独成文件只为各自不超过 800 行；不依赖 bench_gm。
        对照组复刻 Jenova 式纯模型主持人：系统提示是由场景生成的全知世界圣经（路线与单向/夜现规则、人物的为人、秘密、目标与所在、
-       物品在哪、玩家目标、结局）加上它公开的主持规矩，每回合发出完整对话记录与新输入、流式取回复、挂钟计时——它没有内核，
+       物品在哪、玩家目标——用玩家自己的口吻，不借 NPC 的行事语义、结局）加上它公开的主持规矩，每回合发出完整对话记录与新输入、流式取回复、挂钟计时——它没有内核，
        成败与台账全凭模型自己。评审是独立调用、要求严格 JSON；解析容忍代码块、多余文字与缺引号的键，拿不准就判无效、绝不瞎猜。
        脚本模型按提示词写出像样的回复（解释器 JSON 兼容新旧两种 schema、照事实清单写成的叙述、原样的对白、顺着玩家的主持人）并模拟延迟，
        只为整条评测管道离线跑通，它的数字不作验收依据
@@ -44,10 +44,16 @@ _GOAL_CN = {
     "guard": "守住{home}，不许外人逗留", "hostile": "与{person}为敌，直到对方{until}",
     "escape": "悄悄前往{home}，途中撞见外人便灭口", "defend": "护着{person}，谁对他动手就对谁动手",
 }
+# 玩家的目标用他自己的口吻（与主持层场外问答告诉玩家的同一口径）：上面是 NPC 的行事语义，“撞见外人便灭口”不是玩家的打算
+_PLAYER_GOAL_CN = {
+    "protect": "护住{item}", "acquire": "弄到{item}", "deliver": "把{item}交给{recipient}", "guard": "守住{home}",
+    "hostile": "对付{person}", "escape": "设法去往{home}", "defend": "护着{person}",
+}
 
 
 def world_bible(scenario: Scenario) -> str:
-    """由场景生成的世界圣经：主持人全知——路线与单向/夜现规则、人物的为人、秘密、目标与所在、物品在哪、玩家目标、结局。"""
+    """由场景生成的世界圣经：主持人全知——路线与单向/夜现规则、人物的为人、秘密、目标与所在、物品在哪、玩家目标、结局。
+    玩家那一行的目标用他自己的口吻（“设法去往澜沧江畔”），NPC 的行事语义（ESCAPE 的“撞见外人便灭口”）只属于 NPC。"""
     st, lore = scenario.state, scenario.lore
 
     def name(e: str | None) -> str:
@@ -90,12 +96,13 @@ def world_bible(scenario: Scenario) -> str:
             row.append(f"腔调：{p.voice}")
         if getattr(p, "knows", ""):
             row.append(f"谈资：{p.knows}")
-        goals = [_GOAL_CN.get(g.kind.value, g.kind.value).format(
+        table = _PLAYER_GOAL_CN if p.is_player else _GOAL_CN
+        goals = [table.get(g.kind.value, g.kind.value).format(
             item=name(g.item), home=name(g.home), recipient=name(g.recipient), person=name(g.person),
             until=_UNTIL_CN.get(g.until, g.until)) + (f"（{clock_label(g.not_before)} 之后才动身）" if g.not_before else "")
             for g in p.goals]
         if goals:
-            row.append("目标：" + "；".join(goals))
+            row.append(("目标（玩家自己的打算，做不做、怎么做由玩家决定）：" if p.is_player else "目标：") + "；".join(goals))
         if p.allies:
             row.append("自己人：" + "、".join(name(x) for x in p.allies))
         carried = [name(i) for i in st.sources(a, Rel.AT)]

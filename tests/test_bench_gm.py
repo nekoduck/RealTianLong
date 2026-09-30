@@ -3,7 +3,8 @@
          tianlong.language.llm 的 ScriptedLLM，tianlong.language.parser 的 MoveKind / Parsed
 [OUTPUT]: 主持层评测工具的测试：探针文件结构与实体核对、指标函数（分位数、4-gram 重合、R4 归类、C2/R1 真相判定、词法启发式、指标汇总、首字计时的三种来源）、
           --llm none 三条探针的端到端（写出 bench.json 与 report.md）、scripted 全链路（对照组 + 评审 + 盲评）、
-          纯模型主持人保留完整对话并量出首字与总耗时、世界圣经全知、评审 JSON 解析容忍坏输入、脚本解释器兼容新旧两种 schema
+          纯模型主持人保留完整对话并量出首字与总耗时、世界圣经全知且玩家那一行的目标用玩家口吻（不含“灭口”）、评审 JSON 解析容忍坏输入、
+          脚本解释器兼容新旧两种 schema
 [POS]: tests 的评测工具验收；只跑离线、快速的路径（真模型与全量探针由命令行手动跑）。会话相关用例缺 LangGraph / Qdrant 时跳过
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -283,6 +284,13 @@ def test_world_bible_is_omniscient():
                    "私奔", "闪电貂：在钟灵身上", "北冥神功帛卷：在蒲团上", "藏着",     # 秘密与物品所在
                    "与段誉为敌", "19:20 之后才动身", "龚光杰（东宗弟子）"):         # 目标与时间闸门
         assert needle in bible, needle
+
+
+def test_bible_player_row():
+    """玩家的目标用玩家自己的口吻：ESCAPE 的 NPC 语义“撞见外人便灭口”不能写成玩家的打算。"""
+    rows = [r for r in bench.world_bible(build_wuliang()).splitlines() if r.startswith("- 段誉（玩家")]
+    assert len(rows) == 1, rows
+    assert "灭口" not in rows[0] and "设法去往澜沧江畔" in rows[0] and "护着钟灵" in rows[0], rows[0]
 
 
 # ============================================================

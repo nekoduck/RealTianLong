@@ -1,0 +1,234 @@
+[
+ {
+  "input": "向龚光杰拱手道：在下失笑，并无恶意，还望海涵",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"gongguangjie\", \"speech\": \"tell\", \"line\": \"在下失笑，并无恶意，还望海涵\", \"social\": \"apologize\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "问马五德这位龚师兄是什么来头",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"mawude\", \"speech\": \"ask\", \"line\": \"这位龚师兄是什么来头？\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "对钟灵说：多谢姑娘仗义",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"zhongling\", \"speech\": \"tell\", \"line\": \"多谢姑娘仗义\", \"social\": \"thank\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "四下打量一番",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"inspect\", \"target\": \"houyuan\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "叹了口气，自言自语道：这禁地可不能久留",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"叹了口气，自言自语道：这禁地可不能久留\", \"social\": \"remark\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "探头往崖下望了望",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"inspect\", \"target\": \"d_cliff\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "在湖边找块石头坐下歇歇脚",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"在湖边找块石头坐下歇歇脚\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "对钟灵说：钟姑娘，你怎么也跟下来了？",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"zhongling\", \"speech\": \"ask\", \"line\": \"钟姑娘，你怎么也跟下来了？\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "再等到天黑",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"wait\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "望着湖水发了会儿呆",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"望着湖水发了会儿呆\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "一直等到月亮出来",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"wait\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "不理会旁人，继续等到天黑",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"wait\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "看看那尊玉像",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"inspect\", \"target\": \"statue\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我从怀里掏出北冥神功",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"take\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"北冥神功\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我施展凌波微步",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"use\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"凌波微步\", \"reply\": \"\"}"
+ },
+ {
+  "input": "钟灵，你昨天答应过我的事呢",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"zhongling\", \"speech\": \"ask\", \"line\": \"你昨天答应过我的事呢？\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我把解药给龚光杰",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"give\", \"target\": \"gongguangjie\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"解药\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我一掌打倒司空玄",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"attack\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"司空玄\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我用六脉神剑点倒龚光杰",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"attack\", \"target\": \"gongguangjie\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"六脉神剑\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我亮出大理段氏的金牌，喝令众人退下",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"亮出大理段氏的金牌，喝令众人退下\", \"social\": \"command\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"大理段氏的金牌\", \"reply\": \"\"}"
+ },
+ {
+  "input": "马五德，你刚才不是说要护送我下山吗",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"mawude\", \"speech\": \"ask\", \"line\": \"你刚才不是说要护送我下山吗？\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我放出怀里的闪电貂去咬龚光杰",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"attack\", \"target\": \"gongguangjie\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"闪电貂\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我翻开凌波微步帛卷细细研读",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"study\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"凌波微步帛卷\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我运起北冥神功，吸龚光杰的内力",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"attack\", \"target\": \"gongguangjie\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"北冥神功\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我喝下钟灵先前给我的解药",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"use\", \"target\": \"duanyu\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"解药\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我把刚才捡到的玉佩送给钟灵",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"give\", \"target\": \"zhongling\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"玉佩\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我回到琅嬛福地",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"move\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"琅嬛福地\", \"reply\": \"\"}"
+ },
+ {
+  "input": "左掌门，您刚才已经收我为徒了，快教我剑法",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"zuozimu\", \"speech\": \"tell\", \"line\": \"您刚才已经收我为徒了，快教我剑法\", \"social\": \"plead\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我一招制服左子穆",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"attack\", \"target\": \"zuozimu\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我点了龚光杰的穴道，让他动弹不得",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"attack\", \"target\": \"gongguangjie\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"点穴\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我三拳两脚打翻辛双清",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"attack\", \"target\": \"xinshuangqing\", \"obj\": null, \"manner\": \"rough\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我一把抢过钟灵腰间的闪电貂",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"take\", \"target\": null, \"obj\": null, \"manner\": \"rough\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"闪电貂\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我攀着藤萝爬回崖顶",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"move\", \"target\": \"yading\", \"obj\": \"d_cliff\", \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我在大白天钻进玉璧旁的石缝",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"move\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"石缝\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我从大殿一步跨到澜沧江畔",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"move\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"澜沧江畔\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我研读易经，当场悟出绝世神功",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"study\", \"target\": \"yijing\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我一个人打退满殿的无量剑弟子",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"attack\", \"target\": \"gongguangjie\", \"obj\": null, \"manner\": \"normal\"}, {\"op\": \"attack\", \"target\": \"ganguanghao\", \"obj\": null, \"manner\": \"normal\"}, {\"op\": \"attack\", \"target\": \"geguangpei\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我抄近路直接走到剑湖畔",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"move\", \"target\": null, \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"剑湖畔\", \"reply\": \"\"}"
+ },
+ {
+  "input": "拱手向众人赔个不是",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"拱手向众人赔个不是\", \"social\": \"apologize\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "给钟灵讲个笑话",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"zhongling\", \"speech\": \"tell\", \"line\": \"\", \"social\": \"joke\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "装疯卖傻",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"装疯卖傻\", \"social\": \"joke\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "偷偷看龚光杰腰间的剑",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"inspect\", \"target\": \"gongguangjie\", \"obj\": null, \"manner\": \"careful\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "问马五德神农帮是什么来头",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"mawude\", \"speech\": \"ask\", \"line\": \"神农帮是什么来头？\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "我躲到钟灵身后",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"躲到钟灵身后\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "拿起长剑舞个剑花",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"take\", \"target\": \"sword\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "向左子穆行礼请教无量玉璧的传说",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"zuozimu\", \"speech\": \"ask\", \"line\": \"请教无量玉璧的传说\", \"social\": \"greet\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "叹了口气",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"叹了口气\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "大声吟诗",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"大声吟诗\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "对龚光杰说：在下并无恶意，方才失笑，实在失礼",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"gongguangjie\", \"speech\": \"tell\", \"line\": \"在下并无恶意，方才失笑，实在失礼\", \"social\": \"apologize\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "冲钟灵眨眨眼",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"zhongling\", \"speech\": \"tell\", \"line\": \"冲钟灵眨眨眼\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "问钟灵腰间鼓鼓囊囊的藏着什么",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"zhongling\", \"speech\": \"ask\", \"line\": \"你腰间鼓鼓囊囊的藏着什么？\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "摸摸怀里的易经",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"摸了摸怀里的易经\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "翻开易经念上几句",
+  "json": "{\"kind\": \"act\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [{\"op\": \"study\", \"target\": \"yijing\", \"obj\": null, \"manner\": \"normal\"}], \"listener\": null, \"speech\": \"tell\", \"line\": \"\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "向辛双清作了个揖",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"xinshuangqing\", \"speech\": \"tell\", \"line\": \"向辛双清作了个揖\", \"social\": \"greet\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "夸左掌门剑法高明",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"zuozimu\", \"speech\": \"tell\", \"line\": \"左掌门剑法高明！\", \"social\": \"praise\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "找个位子坐下来喝口茶",
+  "json": "{\"kind\": \"gesture\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": null, \"speech\": \"tell\", \"line\": \"找个位子坐下来喝了口茶\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "问马五爷怎样才能下山",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"mawude\", \"speech\": \"ask\", \"line\": \"怎样才能下山？\", \"social\": \"none\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ },
+ {
+  "input": "劝龚光杰消消气",
+  "json": "{\"kind\": \"say\", \"mode\": \"immediate\", \"actor\": \"player\", \"steps\": [], \"listener\": \"gongguangjie\", \"speech\": \"tell\", \"line\": \"消消气\", \"social\": \"comfort\", \"topic_subject\": null, \"topic_value\": null, \"topic_holds\": true, \"missing\": \"\", \"reply\": \"\"}"
+ }
+]
