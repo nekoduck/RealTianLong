@@ -44,6 +44,11 @@ class Scenario:
     common_words: frozenset[str] = frozenset()  # 别称里同时是普通名词的（“石壁”）：只供解析，闸门不据此拒绝
 
     @property
+    def gate_aliases(self) -> dict[str, tuple[str, ...]]:
+        """交给叙述闸门的别称：去掉同时是普通名词的（“石壁”在石洞里只是石壁），解析玩家输入仍用全部别称。"""
+        return {k: tuple(a for a in v if a not in self.common_words) for k, v in self.aliases.items()}
+
+    @property
     def player(self) -> str | None:
         return next((p.agent for p in self.profiles.values() if p.is_player), None)
 

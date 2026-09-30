@@ -166,6 +166,7 @@ def test_g01_displacement_is_not_information_gain():
     from tianlong.kernel import Kernel
     from tianlong.kernel.perception import scene_percept
     pytest.importorskip("numpy")
+    pytest.importorskip("torch")            # datagen 经 samples 导入 torch：只装 numpy 的环境同样跳过
     from tianlong.learning.datagen import observation_gain, own_effect_slots
 
     ents = [Entity.make("hall", Kind.PLACE, "大堂"), Entity.make("yard", Kind.PLACE, "后院"),

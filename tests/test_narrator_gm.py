@@ -724,9 +724,7 @@ def test_a_surprise_may_name_who_held_them_and_nearby_places_may_be_named():
 
 def test_common_nouns_among_aliases_are_not_names():
     """“石壁”是无量玉璧的别称，也是寻常的石壁：交给闸门的别称去掉它，大殿里说“石壁”不再被当成点名了玉璧。"""
-    from tianlong.runtime.session import _gated
-
-    gated = _gated(SC)
+    gated = SC.gate_aliases
     assert "石壁" not in gated["yubi"] and "玉璧" in gated["yubi"]
     percepts, names = _settle(("duanyu", Op.WAIT, None, None, Manner.NORMAL))
     wall = "殿角的石壁上挂着几幅字画。"

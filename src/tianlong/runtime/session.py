@@ -137,11 +137,6 @@ def _compact(percepts: tuple[Percept, ...]) -> tuple[Percept, ...]:
     return tuple(p for i, p in enumerate(percepts) if p.modality != Modality.SCENE or i == last)
 
 
-def _gated(scenario: Scenario) -> dict[str, tuple[str, ...]]:
-    """交给叙述闸门的别称：去掉同时是普通名词的（“石壁”在石洞里只是石壁），解析玩家输入仍用全部别称。"""
-    return {k: tuple(a for a in v if a not in scenario.common_words) for k, v in scenario.aliases.items()}
-
-
 def _interruptible(env: TurnEnvelope) -> bool:
     """只有普通等待（不带计划、不带反应 tick）会被身边的事打断；计划的步骤与反应 tick 从不被截短。"""
     return env.intent.op == Op.WAIT and not env.followups and not env.reaction
@@ -255,7 +250,7 @@ class GameSession(AsideMixin, EndingMixin):
                                                       universe=(e.name for e in scenario.state.entities.values()))
         self.pipeline = pipeline
         # 开了磁盘缓存（评测、演示录像）就不用迟到的先声：它由网速决定出不出场，同一局重跑的文字就对不上了
-        self.narrator = Narrator(llm, scenario.setting, scenario.lore, scenario.style, _gated(scenario), scenario.secrets,
+        self.narrator = Narrator(llm, scenario.setting, scenario.lore, scenario.style, scenario.gate_aliases, scenario.secrets,
                                  lead_after=None if isinstance(llm, CachedLLM) else LEAD_AFTER)
         self._universe = frozenset(e.name for e in scenario.state.entities.values())  # 闸门拒绝用的名字全集
         self._friends = gm.companions(scenario.profiles[self.player])   # 有人对他们动手即打断等待
