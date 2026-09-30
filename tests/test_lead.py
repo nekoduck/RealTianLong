@@ -90,7 +90,7 @@ def test_first_text_does_not_wait_for_a_slow_model():
 
 
 def test_kowtow_reads_as_a_kowtow_and_discoveries_are_grouped():
-    """原著路线的伏地叩拜：先声写的是磕头而不是“四下打量”；翻出的两卷帛书按藏处归成一句。"""
+    """原著路线的伏地叩拜：先声写的是磕头而不是“四下打量”；翻出的两卷帛书按藏处归成一句，再翻一遍不算又“发现”。"""
     from tianlong.language.lead import _BOW
     from tianlong.language.templates import consequences
 
@@ -117,3 +117,5 @@ def test_kowtow_reads_as_a_kowtow_and_discoveries_are_grouped():
     assert any(b[:-1] in lead for b in _BOW), lead
     found = [c for p in seen["p"] for c in consequences(p, names, s.player, "你") if c.startswith("发现")]
     assert all(c.count("发现") == 1 for c in found) and len(found) <= 1, found
+    again = s.turn("查看蒲团")
+    assert "帛卷" in again.narration and "发现" not in again.narration, "已知下落的东西再翻出来，不算又“发现”一回"

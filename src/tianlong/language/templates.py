@@ -1,6 +1,6 @@
 """
 [INPUT]: 依赖 core 的 EntitySketch / Kind / Fact / PerceivedEvent / Percept / Modality / Op / Outcome / Rel / Social
-[OUTPUT]: 对外提供 Names 类型、render_fact()、render_event()、render_experience()、render_percept()、consequences()（事件的看得见的后果）、
+[OUTPUT]: 对外提供 Names 类型、render_fact()、render_event()、render_experience()、render_percept()、consequences()（事件的看得见的后果；familiar——此前已知下落的——只说“仍在”）、
           REASONS / SUCCESS_NOTES / ATTR_WORDS、
           SOCIAL_VERBS（没有原话的言语按言语行为写成动作：“向钟灵打了个招呼”）
 [POS]: language 的确定性文本层（无 LLM）；memory 用它生成经历文本，narrator 在无模型时用它兜底——同一套措辞，两处复用。
@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Container, Mapping
 
 from tianlong.core import (
     EntitySketch,
@@ -177,14 +177,15 @@ def render_event(v: PerceivedEvent, names: Names, viewer: str | None = None, me:
     return text
 
 
-def render_percept(p: Percept, names: Names, viewer: str, me: str = "我") -> str:
-    """角色视角的一句话（me 是观察者的自称：记忆里是“我”，对玩家叙述时是“你”）。SCENE 渲染为所见清单。"""
+def render_percept(p: Percept, names: Names, viewer: str, me: str = "我", familiar: Container[str] = ()) -> str:
+    """角色视角的一句话（me 是观察者的自称：记忆里是“我”，对玩家叙述时是“你”）。SCENE 渲染为所见清单。
+    familiar：观察者此前已知下落的东西——再翻出来不算“发现”。"""
     if p.modality == Modality.SCENE:
         return _scene(p, names, viewer, me)
     if p.event is None:
         return "；".join(render_fact(f, names, viewer, me) for f in p.facts)
     text = render_experience(p.modality, p.event, names, viewer, me)
-    after = consequences(p, names, viewer, me)
+    after = consequences(p, names, viewer, me, familiar)
     return text + ("——" + "，".join(after) if after else "")
 
 
@@ -202,11 +203,12 @@ def _scene(p: Percept, names: Names, viewer: str, me: str) -> str:
                     for where, who in groups.items())
 
 
-def consequences(p: Percept, names: Names, viewer: str, me: str) -> list[str]:
-    """事件带来的看得见的后果：谁受伤中毒被制、学成了什么、发现了什么暗道与藏匿之物。"""
+def consequences(p: Percept, names: Names, viewer: str, me: str, familiar: Container[str] = ()) -> list[str]:
+    """事件带来的看得见的后果：谁受伤中毒被制、学成了什么、发现了什么暗道与藏匿之物（familiar 里的——此前已知下落的——不再算发现，只说“仍在”）。"""
     out: list[str] = []
     hidden = {f.prop.subject for f in p.facts if f.prop.is_attr and f.prop.attr_key == "hidden" and f.holds}
     found: dict[str, list[str]] = {}          # 藏匿之物按藏处归拢：“发现蒲团里藏着北冥神功帛卷、凌波微步帛卷”
+    still: dict[str, list[str]] = {}          # 此前已知下落的：不算发现，只说“仍在”
     for f in p.facts:
         prop = f.prop
         if prop.is_attr and prop.attr_key in _NOTABLE and f.holds:
@@ -215,11 +217,14 @@ def consequences(p: Percept, names: Names, viewer: str, me: str) -> list[str]:
             if prop.predicate == Rel.CONNECTS.value and prop.value != (p.event.place if p.event else None):
                 out.append(f"发现一处暗道：{_n(names, prop.subject, viewer, me)}通往{_n(names, str(prop.value), viewer, me)}")
             elif prop.predicate == Rel.AT.value:
-                found.setdefault(str(prop.value), []).append(_n(names, prop.subject, viewer, me))
+                (still if prop.subject in familiar else found).setdefault(str(prop.value), []).append(
+                    _n(names, prop.subject, viewer, me))
     for where, things in found.items():
         sk = names.get(where)
         spot = _where(names, where, viewer, me) + ("里" if sk is not None and sk.kind == Kind.PLACE else "")
         out.append(f"发现{spot}藏着{'、'.join(things)}")
+    for where, things in still.items():
+        out.append(f"{'、'.join(things)}仍在{_where(names, where, viewer, me)}")
     return out
 
 

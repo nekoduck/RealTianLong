@@ -1,6 +1,6 @@
 """
 [INPUT]: 依赖 core 的 Percept / Modality / Op / Outcome / Kind / Rel / SKILLS / STATUS_ATTRS，language/templates 的 Names / render_percept
-[OUTPUT]: 对外提供 fact_lines()（本回合允许讲的事实清单）、RenderPlan / build_plan()（渲染计划）、Violation / check()（叙述闸门）、
+[OUTPUT]: 对外提供 fact_lines()（本回合允许讲的事实清单；familiar 里的东西再翻出来不算发现）、RenderPlan / build_plan()（渲染计划）、Violation / check()（叙述闸门）、
           restated_hearsay()（逐句查传闻：这一句替只闻其说的说法作保）、check_utterance()（对白闸门）、
           sentence_ends()（流式分句）、RenderStatus / Rendered（渲染结果与来源、丢句数）、
           词表 STATUS_LEXICON / DENIALS / COMMITMENT_WORDS / ARRIVAL_VERBS / ATTRIBUTION_VERBS / NEGATIONS / QUANTIFIERS / EXTRA_MARKERS
@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cache
@@ -101,7 +101,8 @@ _FREE = f"[^{re.escape(_PUNCT)}]"
 # ============================================================
 
 
-def fact_lines(viewer: str, percepts: Sequence[Percept], names: Names, show_scene: bool = False) -> list[str]:
+def fact_lines(viewer: str, percepts: Sequence[Percept], names: Names, show_scene: bool = False,
+               familiar: Container[str] = ()) -> list[str]:
     """本回合值得讲的事：事件感知全部讲；环顾只在移动/查看之后（或被要求时）讲。"""
     moved = any(
         p.modality == Modality.SELF and p.event and p.event.kind in (Op.MOVE.value, Op.INSPECT.value)
@@ -112,9 +113,9 @@ def fact_lines(viewer: str, percepts: Sequence[Percept], names: Names, show_scen
     for p in percepts:
         if p.modality == Modality.SCENE:
             if show_scene or moved:
-                lines.append("你看到：" + render_percept(p, names, viewer, me="你"))
+                lines.append("你看到：" + render_percept(p, names, viewer, me="你", familiar=familiar))
         else:
-            lines.append(render_percept(p, names, viewer, me="你"))
+            lines.append(render_percept(p, names, viewer, me="你", familiar=familiar))
     return list(dict.fromkeys(lines))      # 同一分钟里的三声响动，只说一次
 
 
@@ -151,7 +152,8 @@ class RenderPlan:
 
 def build_plan(viewer: str, percepts: Sequence[Percept], names: Names, show_scene: bool = False,
                looks: Sequence[str] = (), lapse: str = "",
-               aliases: Mapping[str, Sequence[str]] | None = None, secrets: Sequence[str] = ()) -> RenderPlan:
+               aliases: Mapping[str, Sequence[str]] | None = None, secrets: Sequence[str] = (),
+               familiar: Container[str] = ()) -> RenderPlan:
     """与 fact_lines() 同样的输入：观察者、本回合感知、观察者的名称表。looks/lapse 是一并交给 LLM 的外观描写与时辰；
     aliases 是场景别称全表（实体 ID → 别称）：本回合出场实体的别称可说，其余的只用于拒绝；secrets 是场景的秘密词表。"""
     aliases = aliases or {}
@@ -225,7 +227,7 @@ def build_plan(viewer: str, percepts: Sequence[Percept], names: Names, show_scen
         return tuple(sorted({(n, x) for e, x in pairs if (n := name(e))}))
 
     items = Counter(n for e in ids if (n := name(e)) and table[e][1] == Kind.ITEM)
-    lines = fact_lines(viewer, percepts, names, show_scene)
+    lines = fact_lines(viewer, percepts, names, show_scene, familiar)
     allowed = frozenset(n for e in ids if (n := name(e)))
     spoken = frozenset(a for e in ids for a in aliases.get(e, ()))
     return RenderPlan(

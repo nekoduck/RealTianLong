@@ -16,7 +16,8 @@
        （当面动手、对同伴——自己人与 DEFEND 目标——动手都算）、
        ASK_GM/META/追问不推进时间也不落库（场外回答边生成边逐句过名字闸门；模型写的追问同样过闸门，玩家自己说出的名字不算）→
        权威结算（同一事务附上请求进度与会话运行态）→ 同步记忆索引 →
-       主持人之声据玩家感知与 SceneBrief 流式叙述（过语义闸门）→ 幂等记下叙述（先写者为准，返回与记住的都是落库的那一段）→ 抵达结局地点即落幕。
+       主持人之声据玩家感知与 SceneBrief 流式叙述（过语义闸门；SceneBrief 带前后照应——拿本回合开始前玩家的认知比对，
+       此前已知下落的东西再翻出来不算发现，抵达结局的那一回合收幕）→ 幂等记下叙述（先写者为准，返回与记住的都是落库的那一段）→ 抵达结局地点即落幕。
        后台预算的决策只依赖同一版本；首 tick 时版本未变才用，否则或本回合不推进就丢弃——结果与顺序执行逐项相同。
        带 request_id 的请求：同 ID 同内容返回既有结果、不再结算；同 ID 异内容抛 RequestConflict；提交后崩溃的重试只重写文字，
        多 tick 请求（等待、多步计划、反应 tick）中途崩溃的重试由已提交的 tick 数推出剩下的步骤，只走剩下的 tick。
@@ -359,7 +360,8 @@ class GameSession:
             stored = self.store.request(self.ref, env.request_id)
             return self._resume_request(_bound(stored, payload), text, clock, sink, execute=False,
                                         committed=settlement is not None)
-        render, brief = self._render(env, text, clock, sink)
+        render, brief = self._render(env, text, clock, sink, before=me,
+                                     closing=self.ending is None and self._ended() is not None)
         narration = render.text if request_id is None else self._record(request_id, render.text)
         self._remember(narration)
         return TurnReport(clock_label(head.clock), parsed, narration, True, tuple(events), tuple(deliberations),
@@ -480,15 +482,20 @@ class GameSession:
                                               if env.intent.op == Op.WAIT else Intent("", self.player, Op.WAIT))
         return replace(base, id=self._intent_id(self.player, version), based_on=version)
 
-    def _render(self, env: TurnEnvelope, text: str, clock: _Stopwatch, sink: _Sink) -> tuple[Rendered, SceneBrief]:
+    def _render(self, env: TurnEnvelope, text: str, clock: _Stopwatch, sink: _Sink, before: BeliefStore | None = None,
+                closing: bool = False) -> tuple[Rendered, SceneBrief]:
         """只依据已持久化的请求进度（加此刻各人的认知）渲染：提交后崩溃的重试写出的是同一回合的文字。
-        叙述者有 narrate_scene（主持人之声）就交给它流式写，否则一次写完再交付。"""
+        叙述者有 narrate_scene（主持人之声）就交给它流式写，否则一次写完再交付。
+        before 是本回合之前玩家的认知（前后照应的比对基准；重试补写时没有）；closing：这一回合抵达了结局，叙述收在余韵上。"""
         me = self.beliefs(self.player)
         lapse = clock_label(env.ticks[-1]) if _interruptible(env) and env.planned_ticks > 1 and env.ticks else ""
-        brief = gm.build_brief(env, me, self.scenario, self.beliefs, self._recent)
+        brief = gm.build_brief(env, me, self.scenario, self.beliefs, self._recent, before, closing)
+        # 此前已知下落的东西：再翻出来不算“发现”（重试补写时没有 before，照旧）
+        familiar = frozenset(e for e in before.entities if before.location_of(e) is not None) if before else frozenset()
         scene = getattr(self.narrator, "narrate_scene", None)
         if scene is not None:
             render = scene(self.player, env.percepts, me.entities, brief=brief, fresh=env.fresh, command=text,
+                           familiar=familiar,
                            lapse=lapse, known=self._known(me), on_text=sink)
         else:
             render = self.narrator.narrate_rendered(self.player, env.percepts, me.entities, fresh=env.fresh,

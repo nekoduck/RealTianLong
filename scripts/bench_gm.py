@@ -7,7 +7,8 @@
           claim_met / player_acted，timed_turn / engine_turn / run_engine，run_baseline / run_judges，engine_metrics / baseline_metrics，
           write_report，run / main；并再导出 bench_rival 的 world_bible / PureLLMGM / premise_prompt / pairwise_prompt / parse_verdict /
           pairwise_order / scripted_llms
-[POS]: scripts 的主持层评测（设计 §7 与“评测细则”）。不属于引擎本体：只把 GameSession 当黑盒一回合一回合地跑，按 TurnReport 与世界真相计分；
+[POS]: scripts 的主持层评测（设计 §7 与“评测细则”）。不属于引擎本体：只把 GameSession 当黑盒一回合一回合地跑，按 TurnReport 与世界真相计分
+       （走到结局时连同终章一并记下、交给整局盲评——玩家落幕时读得到它）；
        会话新加的字段（on_text、first_text_ms、kind、ending、render.violations / dropped）一律 getattr 取、缺了就退化。
        每条探针从全新会话出发、先走 setup，异常逐条记下、绝不中断整轮。对照组（纯模型主持人）没有内核可查，
        C2/R1 只能交给独立评审调用（--judge，严格 JSON）或词法启发式。--llm scripted 的报告开头注明它不是真模型，不作验收依据
@@ -371,6 +372,7 @@ def run_engine(probes: Mapping[str, Any], seed: int = 7, voice: Any = None, fast
             _echo_turn(echo, rec)
             if rec.get("ending"):
                 out["ending"] = rec["ending"]
+                out["epilogue"] = s.epilogue()      # 玩家在网页与命令行里落幕时读到的终章（收束 + 真相揭晓）
                 break                               # 落幕：本幕到此为止
         head = s.authority.head()
         out["final_place"] = head.entity(head.target(s.player, Rel.AT)).name   # 整局走到了哪里（真相）
@@ -444,6 +446,8 @@ def run_judges(llm: Any, probes: Mapping[str, Any], engine: dict, baseline: dict
     if baseline is None:
         return None
     ours = [(r["text"], r["narration"]) for r in engine["playthrough"]]
+    if engine.get("epilogue"):
+        ours.append(("（落幕）", engine["epilogue"]))           # 玩家落幕时读到的终章同样交给评审
     theirs = [(r["text"], r["narration"]) for r in baseline["playthrough"]]
     engine_is_a = pairwise_order(seed)
     verdict = ask_judge(llm, pairwise_prompt(*((ours, theirs) if engine_is_a else (theirs, ours))), PAIR_SCHEMA,

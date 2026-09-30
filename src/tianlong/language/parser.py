@@ -14,6 +14,7 @@
        姿态过 pose.witness()（夹带的拿取/研读落空就照实说落空，不让姿态把它吞掉），言语在原话之外“拔出长剑”同样要真在手里，
        “拿出勇气/亮出身份”不是掏东西；磕头只在此地有神像、蒲团一类可拜的陈设时才是伏地细看，其余是当众服软的姿态；
        normalize()/exits()/leave_here() 可指定出发地（多步计划从上一步的终点算起）
+       先叫人再说话（句首人名紧跟逗号或冒号、此人在眼前）整句是说给他的原话，在语态分析之前认出。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -379,6 +380,9 @@ def rule_parse(text: str, store: BeliefStore, aliases: Aliases | None = None) ->
     （“揣进兜里”的“进”不该赢过“揣”）；都不成时给出最具体的那句场内追问。"""
     t = text.strip().lower()
     ms = mentions(t, store, aliases)
+    called = _vocative(text.strip(), ms, store)
+    if called is not None:
+        return called
     command = analyze(text, ms, store.owner)
     only = {i for w in _MANNER_ONLY for a in _find_all(t, w) for i in range(a, a + len(w))}
     hits = [h for h in action_hits(t) if h[0] not in only]
@@ -397,6 +401,29 @@ def rule_parse(text: str, store: BeliefStore, aliases: Aliases | None = None) ->
     if chosen is None:
         chosen = next((p for p in attempts if p.clarification not in _GENERIC), attempts[0])
     return replace(chosen, command=command)
+
+
+_CALL = re.compile(r"^(?:喂|哎|嘿|诶|咳)?[，,\s]*")
+_ASKING = ("？", "?", "吗", "呢", "么", "吧？")
+
+
+def _vocative(text: str, ms: Sequence[Mention], store: BeliefStore) -> Parsed | None:
+    """开口先叫人（“钟灵，你怎么也来了？”“喂，龚兄，看招！”）：句首的人名后紧跟逗号或冒号，后面整句都是说给他的原话。
+    只认玩家以为就在眼前的人；叫到的人不在眼前、或逗号后什么也没说，交回常规解析。"""
+    lead = _CALL.match(text)
+    at = lead.end() if lead else 0
+    who = next((m for m in ms if m.pos == at and m.kind == Kind.PERSON and m.eid != store.owner), None)
+    if who is None:
+        return None
+    rest = text[at + who.length:]
+    if not rest or rest[0] not in "，,：:！!":
+        return None
+    line = rest[1:].strip()
+    here = store.location_of(store.owner)
+    if not line or here is None or store.location_of(who.eid) != here:
+        return None
+    op = Op.ASK if line.endswith(_ASKING) else Op.TELL
+    return Parsed(Candidate(op, who.eid), line, source="rules", kind=MoveKind.SAY)
 
 
 def _find_all(t: str, w: str) -> list[int]:

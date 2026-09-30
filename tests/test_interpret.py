@@ -420,7 +420,8 @@ def test_template_mode_greeting_and_looking_are_not_attacks(world, duanyu):
 
 
 def test_template_mode_glancing_idling_and_asking_the_way_are_understood(world, duanyu):
-    """模型不可用时退回规则：张望是四下看看（不是要走路），发呆出神是姿态，看一个人是打量，“接下来该往哪儿走”是问主持人。"""
+    """模型不可用时退回规则：张望是四下看看（不是要走路），发呆出神是姿态，看一个人是打量，“接下来该往哪儿走”是问主持人，
+    先叫人再说话（“钟灵，……”）是说给他听。"""
     it = _interp(world)
     for text in ("四下张望", "探头往崖下望了望", "看了看四周"):
         p = it.interpret(text, duanyu)
@@ -430,6 +431,10 @@ def test_template_mode_glancing_idling_and_asking_the_way_are_understood(world, 
         assert p.kind == MoveKind.GESTURE and p.candidate.op == Op.WAIT, text
     assert it.interpret("看了看钟灵", duanyu).candidate.op == Op.WAIT, "看人仍是打量，不是搜身"
     assert it.interpret("接下来该往哪儿走？", duanyu).kind == MoveKind.ASK_GM
+    called = it.interpret("钟灵，你怎么也在这里？", duanyu)
+    assert called.kind == MoveKind.SAY and (called.candidate.op, called.candidate.target) == (Op.ASK, "zhongling")
+    assert called.utterance == "你怎么也在这里？", "先叫人再说话：逗号后整句都是说给他的原话"
+    assert it.interpret("喂，龚光杰，看招！", duanyu).candidate.target == "gongguangjie"
 
 
 def test_template_mode_cries_and_covering_the_face_are_not_use(world, duanyu):
