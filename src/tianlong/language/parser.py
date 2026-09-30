@@ -1,6 +1,6 @@
 """
 [INPUT]: 依赖 cognition 的 BeliefStore / Candidate / routes_between，core 的 Op / Manner / Kind / Rel / Fact / Proposition / Social /
-         signature_error，language/command 的 ACTION_WORDS / SOCIAL_WORDS / GESTURE_WORDS / action_hits / analyze / clarify /
+         OP_SIGNATURES / signature_error，language/command 的 ACTION_WORDS / SOCIAL_WORDS / GESTURE_WORDS / action_hits / analyze / clarify /
          ParsedCommand / Mention，language/pose 的 pose_of / witness，language/llm 的 LLMClient / LLMUnavailable / parse_json
 [OUTPUT]: 对外提供 MoveKind、Parsed（含语态结构、等待时长、这句话的类别、多步行动与问主持人的原话）、
           IntentParser（语态闸门 → 规则解析 → 受约束的 LLM 语义解析）、rule_parse()、normalize()，
@@ -13,7 +13,7 @@
        点名了不认识的秘籍就不悄悄改读手里那本，原话只引说出口的那句（没有可解析的命题就是闲话，不再反问“告诉谁什么”），
        姿态过 pose.witness()（夹带的拿取/研读落空就照实说落空，不让姿态把它吞掉），言语在原话之外“拔出长剑”同样要真在手里，
        “拿出勇气/亮出身份”不是掏东西；磕头只在此地有神像、蒲团一类可拜的陈设时才是伏地细看，其余是当众服软的姿态；
-       normalize()/exits()/leave_here() 可指定出发地（多步计划从上一步的终点算起）
+       normalize()/exits()/leave_here() 可指定出发地（多步计划从上一步的终点算起），查看门或东西改成在此地四下细看；
        先叫人再说话（句首人名紧跟逗号或冒号、此人在眼前）整句是说给他的原话，在语态分析之前认出。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -28,7 +28,7 @@ from enum import StrEnum
 
 from tianlong.cognition import BeliefStore, Candidate
 from tianlong.cognition.navigation import routes_between
-from tianlong.core import Fact, Kind, Manner, Op, Proposition, Rel, Social
+from tianlong.core import OP_SIGNATURES, Fact, Kind, Manner, Op, Proposition, Rel, Social
 from tianlong.core.grammar import signature_error
 from tianlong.language.command import (
     ACTION_WORDS,
@@ -635,10 +635,17 @@ def normalize(c: Candidate, store: BeliefStore, here: str | None = None) -> Cand
     """MOVE 绑定一条玩家自己知道的路：“朝那扇门走” = 经这扇门去门那边的地点；“去某地” = 经玩家认为连通的门
     （认为没锁的优先）；点名的门玩家并不认为通往那里，就换一条认为连通的。目的地就是脚下（“走进大殿”而人已在大殿）
     不算移动：经某扇门离开此地的，改成去门那头；否则目的地留空。玩家不知道怎么去，路线就留空——语法检查会追问，
-    内核不会替他从真实地图里挑一条暗道。here 缺省为玩家以为自己所在之处；多步计划传入上一步的终点。"""
+    内核不会替他从真实地图里挑一条暗道。here 缺省为玩家以为自己所在之处；多步计划传入上一步的终点。
+    查看一扇门、一件东西（“往崖下望了望”“看看那把剑”）内核不收，改成在此地四下细看——看得见的都在所见里。"""
+    here = store.location_of(store.owner) if here is None else here
+    if c.op == Op.INSPECT:
+        sk = store.sketch(c.target or "")
+        seen = OP_SIGNATURES[Op.INSPECT].target or frozenset()
+        if sk is not None and sk.kind not in seen and here is not None:
+            return Candidate(Op.INSPECT, here, None, c.manner, None, c.social)
+        return c
     if c.op != Op.MOVE:
         return c
-    here = store.location_of(store.owner) if here is None else here
     sk = store.sketch(c.target or "")
     if sk is not None and sk.kind == Kind.DOOR:
         others = [b.prop.value for b in store.positives(sk.id, Rel.CONNECTS.value) if b.prop.value != here]

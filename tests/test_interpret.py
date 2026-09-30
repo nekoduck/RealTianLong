@@ -7,7 +7,8 @@
           规则看见的否定与非即时语态压过模型；提示词只含玩家认识的实体（至多 40 个）与最近两段正文；
           模型失败与模板模式退回规则解析，规则层修掉的误判（打招呼/打量不是动手、救命/挡脸不是施用、走出大殿、陌生秘籍、原话包装）；
           评审回归：回显只用玩家写过的名字、姿态只留看得见的、原话只收玩家打出来的字、言语里的兵刃、非十进制数字、
-          模型失败只问一次、多步路线与“已在此地”、问号结尾的命令、说法不是掏东西、假设与转述压过模型、磕头按可拜的陈设分流
+          模型失败只问一次、多步路线与“已在此地”、问号结尾的命令、说法不是掏东西、假设与转述压过模型、磕头按可拜的陈设分流、
+          查看门或东西是在此地四下细看
 [POS]: tests 的主持层输入语义；把“模型听得懂任何话，但变不出玩家没有的东西、越不过玩家的认知”写成可证伪断言
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -755,3 +756,12 @@ def test_kowtowing_in_the_hall_is_a_submission_the_challenger_registers():
     cues = [(c.frm, c.social) for c in s.beliefs("gongguangjie").cues]
     assert ("duanyu", Social.SUBMIT) in cues, "龚光杰看见段誉当众磕头服软"
     assert not [e for e in events if e.actor == "gongguangjie" and e.op == Op.ATTACK], "服软之后不再动手"
+
+
+@pytest.mark.parametrize("text, target", [("探头往门外望了望", "d1"), ("看看那把剑", "sword")])
+def test_looking_at_a_door_or_a_thing_is_looking_around_here(text, target):
+    """模型把“往崖下望了望”解成查看断崖（一扇门）、把“看看那把剑”解成查看一件东西：内核只收地点/陈设/人，
+    改成在此地四下细看（看得见的都在所见里），不回一句“你一时不知从何下手”。"""
+    me = _room(EntitySketch("sword", Kind.ITEM, "长剑"))
+    p = Interpreter(_llm(kind="act", steps=[_step("inspect", target)])).interpret(text, me)
+    assert p.kind == MoveKind.ACT and (p.candidate.op, p.candidate.target) == (Op.INSPECT, "room"), p.clarification

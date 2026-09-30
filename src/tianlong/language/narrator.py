@@ -16,8 +16,10 @@
        读流在常驻线程里边读边计时（_deadline）。随后逐句流式生成：每句对“已交付的文字 + 这一句”跑 check()、逐句传闻 restated_hearsay()、人事闸门 check_deeds()
        与台词闸门 check_quotes()，再查钟点数字（含“19点20分”“七点二十分”）；通过即经 on_text 交付，违规即丢弃并记下；
        交付满 MAX_CHARS 字即停止读流。收尾：传闻有没有归属整段查；台词没说出口、玩家自己的行动与后果、冲着玩家来的事、
-       听见的话一个参与者都没提的，补上模板行、状态记为 gated_fallback（违规 omitted）；一句都没通过、丢满 MAX_DROPS 句或
-       传闻没有归属，补上模板（已交付过正文的，换行后只补清单与还没说出口的台词，正文交代过时辰就不再补）。
+       听见的话一个参与者都没提的，补上模板行、状态记为 gated_fallback（违规 omitted）——一行写出的后果里的东西（翻出的帛卷）
+       也算参与者，玩家的原话或姿态照着写了出来也算讲到；一句都没通过、丢满 MAX_DROPS 句或传闻没有归属，补上模板
+       （已交付过正文的，换行后只补正文没讲到的：必讲之事照上，别人之间的事与所见一个参与者都没提的才补，空空的所见不补；
+       正文交代过时辰就不再补）。
        模型中途失败：已交付的留着，补上模板。补上的模板行读起来是句子（缺句末标点的补“。”，时辰用文字）；没有模型时的模板照旧。
        Rendered.text 恒等于 on_text 收到的全部文字首尾相接，Rendered.dropped 是丢掉的句数。
        提示词只是请求，闸门才是验收：第二人称、80~250 字、台词写成“某某道：“……””、不替玩家开口、停在钩子上、不写钟点；
@@ -207,6 +209,7 @@ class _Row:
     keys: tuple[str, ...] = ()     # 事实行的参与者（名与别称，观察者除外）：正文提到其一即算讲到了
     must: bool = False             # 必须讲到：玩家自己的行动与后果、冲着玩家来的事、听见的话
     mine: bool = False             # 玩家自己的行动：先声已经讲过，收尾补模板时不再重复
+    said: str = ""                 # 玩家自己的原话或姿态：正文照着写了出来（三字片段重合过半）也算讲到了
 
 
 def _must(p: Percept, viewer: str) -> bool:
@@ -218,12 +221,12 @@ def _must(p: Percept, viewer: str) -> bool:
     return p.modality == Modality.SPEECH or (p.modality == Modality.SIGHT and ev.target == viewer)
 
 
-def _keys(p: Percept, viewer: str, names: Names, aliases: Mapping[str, Sequence[str]]) -> tuple[str, ...]:
+def _keys(p: Percept, viewer: str, names: Names, aliases: Mapping[str, Sequence[str]], line: str) -> tuple[str, ...]:
+    """参与者之外，这一行写出来的后果与所见里的东西（“发现蒲团上藏着北冥神功帛卷……”）也算：正文写到帛卷就是讲到了。"""
     ev = p.event
-    if ev is None:
-        return ()
     table = {sk.id: sk.name for sk in p.sketches} | {eid: sk.name for eid, sk in names.items()}
-    ids = [x for x in (ev.actor, ev.target, ev.obj) if x and x != viewer]
+    ids = [x for x in ((ev.actor, ev.target, ev.obj) if ev is not None else ()) if x and x != viewer]
+    ids += [f.prop.subject for f in p.facts if f.prop.subject != viewer and table.get(f.prop.subject, "\0") in line]
     return tuple(dict.fromkeys(n for x in ids for n in (table.get(x), *aliases.get(x, ())) if n))
 
 
@@ -239,6 +242,7 @@ def _scene_lines(plan: RenderPlan, viewer: str, percepts: Sequence[Percept], nam
     facts: dict[str, Percept] = {}
     for p in percepts:
         if p.modality == Modality.SCENE:
+            facts.setdefault("你看到：" + render_percept(p, names, viewer, me="你", familiar=familiar), p)
             continue
         line = render_percept(p, names, viewer, me="你", familiar=familiar)
         facts.setdefault(line, p)
@@ -256,8 +260,9 @@ def _scene_lines(plan: RenderPlan, viewer: str, percepts: Sequence[Percept], nam
             covered.add(text)
             rows.append(_Row(render_voice(brief.lines[k], salt), voice=brief.lines[k]))
         elif (p := facts.get(text)) is not None:
-            rows.append(_Row(text, keys=_keys(p, viewer, names, aliases), must=_must(p, viewer),
-                             mine=p.modality == Modality.SELF and p.event is not None and p.event.actor == viewer))
+            mine = p.modality == Modality.SELF and p.event is not None and p.event.actor == viewer
+            rows.append(_Row(text, keys=_keys(p, viewer, names, aliases, text), must=_must(p, viewer), mine=mine,
+                             said=(p.event.utterance or "") if mine and p.event is not None else ""))
         else:
             rows.append(_Row(text))
     left = {k for ks in pending.values() for k in ks}
@@ -286,16 +291,18 @@ def _named(text: str, keys: Iterable[str]) -> bool:
                for k in keys)
 
 
-def _missing(rows: Sequence[_Row], text: str, plan: RenderPlan, brief: SceneBrief, dropped: int) -> list[_Row]:
+def _missing(rows: Sequence[_Row], text: str, plan: RenderPlan, brief: SceneBrief, dropped: int,
+             strict: bool = False) -> list[_Row]:
     """模型正文漏掉的必讲之事：台词没说出口、玩家自己的行动与后果、冲着玩家来的事、听见的话一个参与者都没提
-    （没有参与者可提的，只在丢过句子时算漏）。"""
+    （没有参与者可提的，只在丢过句子时算漏；玩家的原话或姿态照着写了出来不算漏）。
+    strict：正文没通过闸门、要补模板时，别人之间的事（有参与者可提的）一个都没提也补；没有参与者的所见清单不补。"""
     said = voiced(text, plan, brief)
     out: list[_Row] = []
     for r in rows:
         if r.voice is not None:
             ok = _spoken(r, text, said)
-        elif r.must:
-            ok = _named(text, r.keys) if r.keys else dropped == 0
+        elif r.must or (strict and r.keys):
+            ok = (_named(text, r.keys) if r.keys else dropped == 0) or _echoes(r.said, text)
         else:
             ok = True
         if not ok:
@@ -306,6 +313,12 @@ def _missing(rows: Sequence[_Row], text: str, plan: RenderPlan, brief: SceneBrie
 def _grams(text: str, n: int = 3) -> frozenset[str]:
     t = re.sub(r"[^\w]", "", text)
     return frozenset(t[i:i + n] for i in range(len(t) - n + 1))
+
+
+def _echoes(said: str, text: str) -> bool:
+    """玩家的原话或姿态在正文里照着写了出来：它的三字片段过半出现在正文里。"""
+    mine = _grams(said)
+    return bool(mine) and len(mine & _grams(text)) >= ECHO * len(mine)
 
 
 def _deadline(pieces: Iterator[str], after: float, on_late: Callable[[], None], pool: ThreadPoolExecutor) -> Iterator[str]:
@@ -561,10 +574,9 @@ class Narrator:
                 violations.append(Violation("omitted", "；".join(r.text for r in missing)))
                 status = RenderStatus.GATED_FALLBACK
                 log.info("叙述漏掉了必讲之事，补上模板行: %s", [r.text for r in missing])
-        elif out.text:
-            said = voiced(body, plan, brief)
-            tail = ([] if _TIMED.search(out.text) else when) + [
-                r.text for r in rows if r.voice is None or not _spoken(r, body, said)]
+        elif out.text:                                # 已交付过正文：只补正文没讲到的（一句正文都没有就整张清单）
+            untold = _missing(rows, body, plan, brief, gate.dropped, strict=True) if body.strip() else rows
+            tail = ([] if _TIMED.search(out.text) else when) + [r.text for r in untold]
             tail = tail if rows or gate.lead else [f"（{x}）" for x in looks]
             if tail:
                 out.emit("\n" + "\n".join(_prose(x) for x in tail))

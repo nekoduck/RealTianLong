@@ -5,7 +5,8 @@
           NPC 台词点名许可之外的人、凭空多出的说话者、台词里的状态升级各被拦下；丢满两句或一句未过即补模板；模型不可用（含中途失败）
           保留已交付的并补模板；模板把 NPC 言语写成带言语行为的台词；提示词带最近正文与台词要素且没有钟点数字；首句交付早于整段完成；
           分句器处理引号（含错配的收引号）、省略号、较长的后置归属与流的边界；合法的道谢、挑衅与如实的位置说法不被误伤；
-          漏掉的台词与内核结果补上模板行、传闻说成事实在流出前就丢、只看见的耳语不算开口、场景秘密被拦、写够长即停、回退的模板行以句号收尾
+          漏掉的台词与内核结果补上模板行、传闻说成事实在流出前就丢、只看见的耳语不算开口、场景秘密被拦、写够长即停、回退的模板行以句号收尾；
+          讲到了就不补（写到翻出的帛卷、照着写出玩家的姿态），回退也只补正文没讲到的
 [POS]: tests 的主持层叙述；证伪“流式叙述会把没过闸门的句子交给玩家”“主持人替玩家说话”“NPC 说出他不该知道的名字”
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -18,7 +19,21 @@ import time
 
 import pytest
 
-from tianlong.core import Fact, Intent, Manner, Op, Proposition, Rel, Social
+from tianlong.core import (
+    EntitySketch,
+    Fact,
+    Intent,
+    Kind,
+    Manner,
+    Modality,
+    Op,
+    Outcome,
+    PerceivedEvent,
+    Percept,
+    Proposition,
+    Rel,
+    Social,
+)
 from tianlong.language.lead import lead_line, restates
 from tianlong.language.llm import LLMUnavailable, ScriptedLLM
 from tianlong.language.narrator import MAX_CHARS, SOCIAL_PHRASES, Narrator, render_voice
@@ -603,3 +618,66 @@ def test_a_speakers_own_background_may_be_quoted_but_not_narrated():
     assert quoted in r.text and not any(v.kind == "entity" for v in r.violations)
     r, _ = _run(view, _script("司空玄正带人在山下扎营。" + G3), SceneBrief(lines=(gong,)))
     assert "司空玄" not in r.text, "叙述者的口吻不借谈资点名"
+
+
+# ============================================================
+#  评审回归（第二轮重放：讲到了就不补、补也只补没讲到的）
+# ============================================================
+
+
+def _sketches(*rows: tuple[str, Kind, str]) -> dict[str, EntitySketch]:
+    return {eid: EntitySketch(eid, kind, name) for eid, kind, name in rows}
+
+
+def _quiet(llm) -> Narrator:
+    return Narrator(llm, SC.setting, SC.lore, SC.style, SC.aliases, lead_after=None)
+
+
+def test_what_was_found_counts_as_told_even_without_the_place_name():
+    """“你仔细查看琅嬛福地——发现蒲团上藏着两卷帛卷”：正文写到了北冥神功、凌波微步，没点琅嬛福地的名，也算讲到了。"""
+    names = _sketches(("duanyu", Kind.PERSON, "段誉"), ("langhuan", Kind.PLACE, "琅嬛福地"),
+                      ("putuan", Kind.SURFACE, "蒲团"), ("scroll_bm", Kind.ITEM, "北冥神功帛卷"),
+                      ("scroll_lb", Kind.ITEM, "凌波微步帛卷"))
+    scrolls = ("scroll_bm", "scroll_lb")
+    facts = (*(Fact(Proposition.rel(i, Rel.AT, "putuan")) for i in scrolls),
+             *(Fact(Proposition.attr(i, "hidden", True)) for i in scrolls))
+    look = Percept(10, Modality.SELF, PerceivedEvent(Op.INSPECT.value, "langhuan", "duanyu", "langhuan",
+                                                     outcome=Outcome.SUCCESS), facts, ("putuan",), tuple(names.values()))
+    body = "你凝神细看，竟有两卷帛书藏在膝前的垫子里：一卷卷首写着“北冥神功”四字，另一卷题作“凌波微步”。"
+    r = _quiet(_script(body)).narrate_scene("duanyu", [look], names, brief=SceneBrief(), known=KNOWN)
+    assert r.status == RenderStatus.LLM and r.text == body, r.violations
+    r = _quiet(_script("洞中寂静无声，只有水声滴答。")).narrate_scene("duanyu", [look], names, brief=SceneBrief(), known=KNOWN)
+    assert "发现蒲团上藏着" in r.text and r.status == RenderStatus.GATED_FALLBACK, "一样都没写到才补"
+
+
+def test_the_players_own_pose_written_out_is_not_omitted_after_a_dropped_sentence():
+    """玩家叹气自语：模型照着写了出来，哪怕另有一句被丢，也不再补一遍“你叹了口气……”。"""
+    pose = "叹了口气，自言自语道：“这禁地可不能久留”"
+    names = _sketches(("duanyu", Kind.PERSON, "段誉"), ("jianhu", Kind.PLACE, "剑湖宫大殿"))
+    sigh = Percept(10, Modality.SELF, PerceivedEvent(Op.WAIT.value, "jianhu", "duanyu", utterance=pose,
+                                                     outcome=Outcome.SUCCESS), sketches=tuple(names.values()))
+    body = "你扶着柱子歇脚，不由得叹了口气，自言自语道：“这禁地可不能久留。”"
+    said = "叹了口气，自言自语道：这禁地可不能久留"
+    r = _quiet(_script(B_ENTITY + body)).narrate_scene("duanyu", [sigh], names, brief=SceneBrief(), known=KNOWN,
+                                                       command=said)
+    assert r.dropped == 1 and r.text == body and "omitted" not in {v.kind for v in r.violations}
+    r = _quiet(_script(B_ENTITY + "殿中一片寂静。")).narrate_scene("duanyu", [sigh], names, brief=SceneBrief(), known=KNOWN,
+                                                                 command=said)
+    assert r.text.endswith("\n你" + pose), "没写到的照样补上"
+
+
+def test_the_fallback_tail_only_adds_what_the_passage_left_out():
+    """丢满两句要补模板：正文已写到来到石洞，就不再补“你来到石洞”；空空的所见不补；正文没写到的才补。"""
+    names = _sketches(("duanyu", Kind.PERSON, "段誉"), ("shidong", Kind.PLACE, "石洞"),
+                      ("d_cave", Kind.DOOR, "玉璧旁的石缝"))
+    walk = Percept(10, Modality.SELF, PerceivedEvent(Op.MOVE.value, "shidong", "duanyu", "shidong", "d_cave",
+                                                     outcome=Outcome.SUCCESS), sketches=tuple(names.values()))
+    empty = Percept(10, Modality.SCENE, facts=(Fact(Proposition.rel("duanyu", Rel.AT, "shidong")),))
+    told = "你挤过窄处，眼前豁然成了一个石洞，石阶一级级向下延伸。"
+    r = _quiet(_script(told + B_ENTITY + B_PUPPET)).narrate_scene("duanyu", [walk, empty], names, brief=SceneBrief(),
+                                                                  known=KNOWN)
+    assert r.status == RenderStatus.GATED_FALLBACK and r.dropped == 2
+    assert r.text == told, "讲到了的不补，空空的所见也不补"
+    r = _quiet(_script("四下一片漆黑。" + B_ENTITY + B_PUPPET)).narrate_scene("duanyu", [walk, empty], names,
+                                                                          brief=SceneBrief(), known=KNOWN)
+    assert "你来到石洞。" in r.text, "没写到的照样补上"
