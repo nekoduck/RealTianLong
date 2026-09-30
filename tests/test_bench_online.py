@@ -5,7 +5,8 @@
           而旧版种子 7 仍是 run1–6 的布局、--world 与探针文件的 variant 不符即报错；对照组逐次作答——rival_key 停在第一个没答的调用上交出
           圣经与“完整对话 + 新输入”，答全了就回放出同样的对话，step 在命令行上写下 DONE；assemble 按新探针拼出报告（本引擎的 extras、
           对照组取 B:* 的回复、面板与新指标）；对照组的回复绝不借别的运行的录制（普通人版或 B:* 跑了一半即报出没跑完的键，
-          只有旧版种子 7 一个 B:* 都没跑时才取 rival_answers.json）
+          只有旧版种子 7 一个 B:* 都没跑时才取 rival_answers.json）；--ask-interp 时解释器缺答案同样停下（role=interp，附 schema），
+          answer 按玩家原文记进运行目录，答过的那句不再停，不开时照旧走规则解析
 [POS]: tests 的在线代理评测工具验收；只跑离线、快速的路径（真代理作答由外部编排）。起会话的用例缺 LangGraph / Qdrant 时跳过
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -123,3 +124,35 @@ def test_rival_answers_never_borrow_another_runs_recording(tmp_path):
         online._file(od, k, "done.json").write_text(json.dumps({"replies": [k]}), "utf-8")
     got = online._rival_answers(rd, od, probes, legacy=False)
     assert got["playthrough"] == ["甲", "乙"] and set(got) == {k.removeprefix(online.RIVAL) for k in keys}
+
+
+def test_ask_interp_halts_and_answers_by_input(tmp_path):
+    """--ask-interp：解释器缺答案时停下交出 role=interp 的提示词（附 schema）；answer 按玩家原文记进运行目录，
+    再次 step 同一句话直接复用、不再停；不开这个开关时照旧走规则解析（旧的重放路径不变）。"""
+    pytest.importorskip("langgraph")
+    pytest.importorskip("qdrant_client")
+    probes = online.load_probes(1, _tiny(tmp_path))
+    key = f"gaslight:{probes['gaslight'][0]['id']}"
+    od = online.online_dir(tmp_path, "wuliang", 7)
+    od.mkdir(parents=True)
+    seen: list[dict] = []
+
+    def halt(p):
+        seen.append(p)
+        raise Halt(p)
+
+    with pytest.raises(Halt):
+        online.run_key(key, ["开场。"] * 8, {}, probes, 7, on_missing=halt, ask_interp=True)
+    p = seen[-1]
+    assert p["role"] == "interp" and p["input"] in p["prompt"] and p["schema"]
+    online._file(od, key, "pending.json").write_text(json.dumps(p, ensure_ascii=False, default=str), "utf-8")
+    online._answer(od, key, '{"kind": "say", "say": "测试"}')
+    saved = online.load_interp(od.parent / "interp_answers.json")
+    assert saved == {p["input"]: '{"kind": "say", "say": "测试"}'}
+    assert not online._file(od, key, "pending.json").exists()
+    asked: list[dict] = []
+    online.run_key(key, ["开场。"] * 8, saved, probes, 7, on_missing=lambda q: asked.append(q) or "", ask_interp=True)
+    assert all(q["input"] != p["input"] for q in asked if q.get("role") == "interp")      # 答过的那句不再停
+    quiet: list[str] = []
+    online.run_key(key, ["开场。"] * 8, {}, probes, 7, on_missing=lambda q: quiet.append(q.get("role", "narrator")) or "")
+    assert "interp" not in quiet

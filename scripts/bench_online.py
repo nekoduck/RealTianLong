@@ -4,7 +4,7 @@
          tianlong.language.llm 的 ScriptedLLM；DIR 下的代理答案（<运行目录>/online/*.answers.json、interp_answers.json、rival_answers.json、
          judge_answers.json）
 [OUTPUT]: 命令行 python scripts/bench_online.py {keys|step|answer|assemble|dump} DIR [KEY] [--world W] [--seed N] [--probes FILE]
-          [--open-actions K]，也是可导入的库：PROBE_FILES / RIVAL，load_probes() / session_keys() / run_dir() / online_dir() /
+          [--open-actions K] [--ask-interp]，也是可导入的库：PROBE_FILES / RIVAL，load_probes() / session_keys() / run_dir() / online_dir() /
           load_answers() / load_interp() / run_key()（给定答案重放本引擎的一个会话）/ rival_key()（给定答案重放对照组的一个会话）/ assemble()
 [POS]: scripts 的在线代理评测（设计 §8.4：没有模型密钥时，由只看这一次调用的 system 与 prompt 的隔离代理替模型作答）。
        与事后按录制正文作答不同，代理看着真实的前文逐次作答，和真接模型时一样：step 从头重放一个会话（同样的答案 → 同样的轨迹），
@@ -17,7 +17,9 @@
        dump 把一个会话的每次叙述调用连同答案写下来。
        --world 选场景（wuliang 普通人版 / wuliang-duanyu 旧版，缺省看探针文件的 variant），--probes 选探针文件（缺省按世界取）；
        运行目录：旧版种子 7 就是 DIR 本身（run1–6 的布局原样可读），其余是 DIR/<world>-s<seed>。
-       解释器（快模型）按玩家原文取 interp_answers.json 的答案（运行目录里有就用它，否则取 DIR 的；同一句话同一份 JSON），没有就走规则解析。
+       解释器（快模型）按玩家原文取 interp_answers.json 的答案（运行目录里有就用它，否则取 DIR 的；同一句话同一份 JSON），没有就走规则解析；
+       --ask-interp 时 step 在解释器缺答案处同样停下（PENDING … interp，附 schema），answer 把 stdin 按玩家原文记进运行目录的
+       interp_answers.json——代理看着那一刻真实的解释提示词作答，同一句话以后复用。
        代理作答是瞬时的：迟到的先声本就不会上场，重放时关掉它，免得机器一卡轨迹就分叉（与先声没上场时逐字相同）
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -92,8 +94,10 @@ def load_interp(path: Path) -> dict[str, str]:
 
 
 def run_key(key: str, given: Sequence[str], interp: Mapping[str, str], probes: Mapping[str, Any], seed: int = 7,
-            on_missing: Missing | None = None, dump: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+            on_missing: Missing | None = None, dump: list[dict[str, Any]] | None = None,
+            ask_interp: bool = False) -> dict[str, Any]:
     """重放本引擎的一个会话：第 i 次叙述调用取 given[i]，解释器按玩家原文取 interp；答案用完时交给 on_missing（缺省答空串）。
+    ask_interp 时解释器缺答案也交给 on_missing（role=interp：代理看着当时真实的提示词作答），否则走规则解析。
     dump 给出时记下每次叙述调用的回合、system、prompt 与答案。返回 bench_gm 同样的会话记录，另加 calls（叙述调用次数）。"""
     calls: list[str] = []
     tag = ["intro"]
@@ -109,7 +113,11 @@ def run_key(key: str, given: Sequence[str], interp: Mapping[str, str], probes: M
         return on_missing(pending) if on_missing is not None else ""
 
     def fast(prompt: str, system: str | None, schema: Any) -> str:
-        return interp.get(prompt.rsplit("玩家输入：", 1)[-1].strip(), "")
+        text = prompt.rsplit("玩家输入：", 1)[-1].strip()
+        if text in interp or not ask_interp or on_missing is None:
+            return interp.get(text, "")
+        return on_missing({"key": key, "role": "interp", "call": "interp", "input": text, "turn": tag[0],
+                           "system": system, "prompt": prompt, "schema": schema})
 
     turn, session = bench_gm.engine_turn, bench_gm._session
 
@@ -181,8 +189,10 @@ def _halt(od: Path) -> Missing:
         same = last.exists() and last.read_text("utf-8") == system
         last.write_text(system, "utf-8")
         shown = "（与上一次调用相同，见前文）" if same else system
-        print(f"PENDING {key} call {pending['call']} (turn: {pending['turn']})\n===== SYSTEM =====\n{shown}\n"
-              f"===== PROMPT =====\n{pending['prompt']}", flush=True)
+        role = pending.get("role", "narrator")
+        schema = f"===== SCHEMA =====\n{json.dumps(pending['schema'], ensure_ascii=False)}\n" if pending.get("schema") else ""
+        print(f"PENDING {key} {role} call {pending['call']} (turn: {pending['turn']})\n===== SYSTEM =====\n{shown}\n"
+              f"{schema}===== PROMPT =====\n{pending['prompt']}", flush=True)
         os._exit(0)
     return halt
 
@@ -190,7 +200,15 @@ def _halt(od: Path) -> Missing:
 def _answer(od: Path, key: str, text: str) -> str:
     got = load_answers(_file(od, key, "answers.json"))
     pend = _file(od, key, "pending.json")
-    if not pend.exists() or json.loads(pend.read_text("utf-8"))["call"] != len(got):
+    pending = json.loads(pend.read_text("utf-8")) if pend.exists() else None
+    if pending is not None and pending.get("role") == "interp":     # 解释器的答案按玩家原文记进运行目录，同一句话以后复用
+        path = od.parent / "interp_answers.json"
+        rows = json.loads(path.read_text("utf-8")) if path.exists() else []
+        rows = [r for r in rows if r["input"] != pending["input"]] + [{"input": pending["input"], "json": text}]
+        path.write_text(json.dumps(rows, ensure_ascii=False, indent=1), "utf-8")
+        pend.unlink()
+        return f"saved interp answer for {pending['input']!r} ({key})"
+    if pending is None or pending["call"] != len(got):
         raise SystemExit("没有待答的调用，或序号对不上")
     _file(od, key, "answers.json").write_text(json.dumps([*got, text], ensure_ascii=False, indent=1), "utf-8")
     return f"saved answer {len(got)} for {key}"
@@ -295,6 +313,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--probes", type=Path, default=None, help="探针文件（缺省按 --world 取，都没给就是普通人版）")
     ap.add_argument("--open-actions", type=int, default=20, help="花样输入探针只取前 K 条")
+    ap.add_argument("--ask-interp", action="store_true",
+                    help="step 时解释器缺答案也停下来由代理作答（写进运行目录的 interp_answers.json），否则走规则解析")
     args = ap.parse_args(argv)
     d, key = args.dir, args.key
     probes = load_probes(args.open_actions, args.probes or PROBE_FILES[args.world or "wuliang"])
@@ -327,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"dumped {len(calls)} calls")
         return 0
     else:
-        rec = run_key(key, given, _interp(d, rd), probes, args.seed, on_missing=_halt(od))
+        rec = run_key(key, given, _interp(d, rd), probes, args.seed, on_missing=_halt(od), ask_interp=args.ask_interp)
     _file(od, key, "done.json").write_text(json.dumps(rec, ensure_ascii=False, indent=1), "utf-8")
     _file(od, key, "pending.json").unlink(missing_ok=True)
     print(f"DONE {key} ({rec['calls']} calls)")
