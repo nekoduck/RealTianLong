@@ -22,6 +22,7 @@ notebooks/ - Colab GPU 训练笔记本（生成物：只调用同一套训练 CL
 
 <config>
 pyproject.toml - 包元数据；核心零依赖，graph/memory/agents/learn/rl 为可选 extras；pytest 标记 neo4j/learn/rl/slow（slow 默认不跑）
+Dockerfile / .dockerignore - Python 网页云部署镜像，只安装 web extra；/data 挂载卷保存 SQLite 存档
 .env.example - 运行期环境变量模板（GEMINI_API_KEY、NEO4J_*、QDRANT_URL）；真实 .env 被 gitignore，密钥永不入库
 .gitignore - 排除虚拟环境、缓存、密钥、日志与训练产物（artifacts/）
 constraints.txt - 学习层依赖的锁定版本（torch-geometric / ray / gymnasium）：CI 与 Colab 笔记本同用一份，版本随提交走

@@ -6,6 +6,7 @@
        原话/姿态（utterance）与言语行为（social）只是修辞：随感知传给在场的人，从不产生事实；
        MOVE 的 obj 是所走的路线（门），目的地与路线一起构成行动，内核不替角色挑路；
        原因词表是 kernel（产出）与 learning（编码）之间的契约
+       物品请求与回应随 beneficiary/request_ref 传递；request_ref 是语义编号，不是世界事件 ID。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -37,6 +38,8 @@ class Intent:
     based_on: int = 0
     utterance: str | None = None    # 言语的表层文字，或 WAIT 时看得见的姿态；只是修辞，事实内容以 topic 为准
     social: Social | None = None    # 言语/姿态的社交含义（赔罪、威胁……）：修辞层，只影响旁人的态度与回应
+    beneficiary: str | None = None # REQUEST_ITEM 的受益人；物品仍请求交给 actor，由持有者随后施用
+    request_ref: str | None = None # TELL/GIVE 对哪条已听见请求的回应；独立语义编号，非世界事件溯源 ID
 
 
 # ============================================================
@@ -123,6 +126,8 @@ class PerceivedEvent:
     reason: str | None = None       # 失败原因（门锁着、没找到……）：看得见失败的人也看得见原因
     utterance: str | None = None    # 听得见的人才有：说话者的原话；看得见的人才有：姿态
     social: Social | None = None    # 与原话同进退：耳语时旁人既听不到原话，也不知道是赔罪还是威胁
+    beneficiary: str | None = None
+    request_ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

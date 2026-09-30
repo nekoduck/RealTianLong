@@ -20,7 +20,8 @@
        模型中途失败：已交付的留着，补上模板。补上的模板行读起来是句子（缺句末标点的补“。”，时辰用文字）；没有模型时的模板照旧。
        Rendered.text 恒等于 on_text 收到的全部文字首尾相接，Rendered.dropped 是丢掉的句数。
        提示词只是请求，闸门才是验收：第二人称、80~250 字、台词写成“某某道：“……””、不替玩家开口、停在钩子上、不写钟点；
-       最近正文只留最后三段、每段末尾约 300 字，钟点换成时辰文字；世界前提与文风来自场景
+       最近正文只留最后三段、每段末尾约 300 字，钟点换成时辰文字；世界前提与文风来自场景。
+       REQUEST_ITEM 作为真实言语归属与补行，不能把答应渲染为 GIVE 或 USE 的实际结果。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -108,7 +109,8 @@ SOCIAL_PHRASES: dict[Social, tuple[str, ...]] = {
     Social.REMARK: ("随口对{to}说", "自顾自地嘀咕"),
     Social.SUBMIT: ("向{to}低头服软", "朝{to}连连作揖"),
 }
-_OP_PHRASES: dict[str, tuple[str, ...]] = {Op.TELL.value: ("对{to}说", "对{to}道"), Op.ASK.value: ("问{to}", "向{to}问道")}
+_OP_PHRASES: dict[str, tuple[str, ...]] = {Op.TELL.value: ("对{to}说", "对{to}道"), Op.ASK.value: ("问{to}", "向{to}问道"),
+                                       Op.REQUEST_ITEM.value: ("请求{to}", "向{to}请求")}
 
 # 钟点：提示词里换成时辰文字，正文里出现即丢句（“第1日”“19:00”“19点20分”“晚上七点二十分”；“一点半点”不算）
 _CLOCK = re.compile(r"第\s*(\d+)\s*[日天]\s*(\d{1,2})\s*[:：]\s*(\d{2})")
@@ -182,7 +184,7 @@ def _with_lines(plan: RenderPlan, brief: SceneBrief) -> RenderPlan:
     return replace(plan, names=plan.names | names, source="\n".join([plan.source, *said]))
 
 
-_TALK = (Op.TELL.value, Op.ASK.value)
+_TALK = (Op.TELL.value, Op.ASK.value, Op.REQUEST_ITEM.value)
 
 
 @dataclass(frozen=True, slots=True)

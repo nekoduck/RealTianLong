@@ -7,6 +7,7 @@
        目标槽位编码（目标特征 + 所指实体的节点表示，按掩码汇总）→ 逐候选打分（指针式策略：操作、方式、言语谓词、
        目标/对象/命题主语/命题宾语的节点表示、命题极性、冻结世界模型的预测）；掩码外的空位 logit = -inf；
        价值头只看认知池化与目标汇总
+       候选打分的第五个实体指针是请求受益人，与新观测布局一致。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -46,7 +47,7 @@ class GraphPolicyNet(nn.Module):
         self.op_emb = nn.Embedding(N_OPS, 16)
         self.manner_emb = nn.Embedding(N_MANNERS, 8)
         self.topic_emb = nn.Embedding(N_TOPICS + 1, 8)          # 0 = 无命题
-        cand_in = 16 + 8 + 8 + 4 * d + len(CAND_FLOAT) + len(PRED_FIELDS) + 2 * d + d
+        cand_in = 16 + 8 + 8 + 5 * d + len(CAND_FLOAT) + len(PRED_FIELDS) + 2 * d + d
         self.score = nn.Sequential(nn.Linear(cand_in, d), nn.GELU(), nn.Linear(d, 1))
         self.value = nn.Sequential(nn.Linear(2 * d + d, d), nn.GELU(), nn.Linear(d, 1))
 
@@ -82,7 +83,7 @@ class GraphPolicyNet(nn.Module):
         b, a = obs["cand"].shape[:2]
         cand = obs["cand"].long()
         op, manner, topic = cand[..., 0].clamp(min=0), cand[..., 1].clamp(min=0), (cand[..., 4] + 1).clamp(min=0)
-        refs = [_gather(h, cand[..., j]) for j in (2, 3, 5, 6)]              # 目标、对象、命题主语、命题宾语
+        refs = [_gather(h, cand[..., j]) for j in (2, 3, 5, 6, 7)]          # 目标、对象、命题主语/宾语、受益人
         feats = torch.cat([
             self.op_emb(op), self.manner_emb(manner), self.topic_emb(topic), *refs, obs["cand_flag"],
             obs["cand_pred"], pooled.unsqueeze(1).expand(-1, a, -1), goal.unsqueeze(1).expand(-1, a, -1),

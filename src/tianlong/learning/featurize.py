@@ -6,6 +6,7 @@
        按 schema 的列布局把“已知值”写进节点列，未知留零且 known=0，不适用 known=-1；
        关系类型（含极性与方向）编码进边特征，与可信度/时效/传闻一起交给支持 edge_dim 的卷积；
        numpy 是中立格式：动态模型转成 PyG Data，RL 环境把它填充成定长观测
+       编码请求受益人和义务状态，未知受益人指针为 -1。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -26,6 +27,7 @@ from tianlong.learning.schema import (
     EV_OP,
     EV_OUTCOME,
     EV_REASON,
+    EV_REQUEST_STATE,
     EV_TOPIC,
     EV_TOPIC_HOLDS,
     EV_TOPIC_QUERY,
@@ -41,6 +43,7 @@ from tianlong.learning.schema import (
     OUTCOMES,
     REL_INDEX,
     REL_VOCAB,
+    REQUEST_STATES,
     SELF_COL,
     SURVEY,
     TOPIC_INDEX,
@@ -144,6 +147,7 @@ def _write_event(row: np.ndarray, ev: dict) -> None:
     _one_hot(row, EV_OP, EVENT_OPS, ev.get("op"))
     _one_hot(row, EV_MODALITY, MODALITIES, ev.get("modality"))
     _one_hot(row, EV_OUTCOME, OUTCOMES, ev.get("outcome"))
+    _one_hot(row, EV_REQUEST_STATE, REQUEST_STATES, ev.get("request_state"))
     if ev.get("reason") in _REASON_INDEX:
         row[EV_REASON.start + _REASON_INDEX[ev["reason"]]] = 1.0
     if ev.get("topic_pred") in TOPIC_INDEX:
@@ -188,6 +192,7 @@ class ActionCode:
     topic_val: int = -1
     topic_holds: float = 0.0
     topic_query: float = 0.0
+    beneficiary: int = -1
 
 
 def encode_action(g: GraphTensors, actor: str, cand: Candidate) -> ActionCode:
@@ -200,4 +205,4 @@ def encode_action(g: GraphTensors, actor: str, cand: Candidate) -> ActionCode:
         holds = 1.0 if cand.topic.holds else -1.0
         query = 1.0 if p.value is None else 0.0
     return ActionCode(OP_INDEX[cand.op], MANNER_INDEX[cand.manner], g.index_of(cand.target), g.index_of(cand.obj),
-                      g.index_of(actor), pred, subj, val, holds, query)
+                      g.index_of(actor), pred, subj, val, holds, query, g.index_of(cand.beneficiary))

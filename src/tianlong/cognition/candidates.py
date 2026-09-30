@@ -5,6 +5,7 @@
 [POS]: cognition 的行动空间；候选对象只来自角色的认知图——按角色“以为”的世界剪枝是合理的，按真实世界剪枝则是泄密。
        策略（脚本/RL）与预测器都在这个候选集上工作。超出上限时按行动族轮转配额截断（等待、移动、言语、查看、物件、
        动手、施用、锁、研读各轮流取一个，族内与目标相关的在前）：物件组合再多也挤不掉交流、观察与等待
+       v3 在原规范顺序末尾新增 REQUEST_ITEM；保留明确受益人，请求对象只从个人认知生成。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -19,12 +20,12 @@ from tianlong.core.grammar import signature_error
 
 # 候选的规范顺序（下标即策略的动作编号）：WAIT 永居首位，其余按操作、再按对象
 _PRIORITY = (Op.WAIT, Op.MOVE, Op.ATTACK, Op.USE, Op.TAKE, Op.PUT, Op.GIVE, Op.UNLOCK, Op.LOCK, Op.INSPECT, Op.STUDY,
-             Op.TELL, Op.ASK)
+             Op.TELL, Op.ASK, Op.REQUEST_ITEM)
 _OP_ORDER = {op: i for i, op in enumerate(_PRIORITY)}
 assert set(_OP_ORDER) == set(Op), "新增操作必须在规范顺序中登记"
 # 截断配额：按行动族轮转取候选。族的顺序决定预算极紧时谁先入选——交流与观察排在组合爆炸的物件操作之前
 FAMILIES: tuple[tuple[str, frozenset[Op]], ...] = (
-    ("wait", frozenset({Op.WAIT})), ("move", frozenset({Op.MOVE})), ("speech", frozenset({Op.TELL, Op.ASK})),
+    ("wait", frozenset({Op.WAIT})), ("move", frozenset({Op.MOVE})), ("speech", frozenset({Op.TELL, Op.ASK, Op.REQUEST_ITEM})),
     ("inspect", frozenset({Op.INSPECT})), ("handle", frozenset({Op.TAKE, Op.PUT, Op.GIVE})),
     ("combat", frozenset({Op.ATTACK})), ("care", frozenset({Op.USE})), ("locks", frozenset({Op.UNLOCK, Op.LOCK})),
     ("study", frozenset({Op.STUDY})),
@@ -32,8 +33,8 @@ FAMILIES: tuple[tuple[str, frozenset[Op]], ...] = (
 assert set().union(*(ops for _, ops in FAMILIES)) == set(Op), "新增操作必须归入某个行动族"
 # 候选规则的语义版本：生成规则（剪枝、话题、配额、顺序）一变就手动递增——候选下标是策略的动作编号，
 # 规则变了，旧策略的输出就指向了别的行动；部署包据此拒绝
-CANDIDATES_VERSION = "candidates-v2:" + digest(_PRIORITY, tuple((n, sorted(o.value for o in ops)) for n, ops in FAMILIES))
-_WHILE_SUBDUED = frozenset({Op.WAIT, Op.TELL, Op.ASK})
+CANDIDATES_VERSION = "candidates-v3:" + digest(_PRIORITY, tuple((n, sorted(o.value for o in ops)) for n, ops in FAMILIES))
+_WHILE_SUBDUED = frozenset({Op.WAIT, Op.TELL, Op.ASK, Op.REQUEST_ITEM})
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,18 +45,21 @@ class Candidate:
     manner: Manner = Manner.NORMAL
     topic: Fact | None = None
     social: Social | None = None       # 言语/姿态的社交含义：修辞，不进候选排序（策略编号不变）
+    beneficiary: str | None = None
+    request_ref: str | None = None
 
     def to_intent(self, intent_id: str, actor: str, based_on: int, utterance: str | None = None) -> Intent:
         return Intent(intent_id, actor, self.op, self.target, self.obj, self.manner, self.topic, based_on, utterance,
-                      self.social)
+                      self.social, self.beneficiary, self.request_ref)
 
     def sort_key(self) -> tuple:
         topic = self.topic.sort_key() if self.topic else ()
-        return (_OP_ORDER[self.op], self.target or "", self.obj or "", self.manner.value, topic)
+        return (_OP_ORDER[self.op], self.target or "", self.obj or "", self.manner.value, topic,
+                self.beneficiary or "", self.request_ref or "")
 
     @staticmethod
     def of(it: Intent) -> Candidate:
-        return Candidate(it.op, it.target, it.obj, it.manner, it.topic, it.social)
+        return Candidate(it.op, it.target, it.obj, it.manner, it.topic, it.social, it.beneficiary, it.request_ref)
 
 
 def candidates(
@@ -133,10 +137,15 @@ def candidates(
                 out.append(Candidate(Op.TELL, p, topic=Fact(best.prop, True)))
             # 以为知道也可以问：当面质问、求证，都是合理的言语行动
             out.append(Candidate(Op.ASK, p, topic=Fact(Proposition.rel(subject, Rel.AT, None), True)))
+        # 只请求自己认识、认为在听者身上的物品；受益人限自己与已知自己人。
+        beneficiaries = sorted({me, *(a for a in store.allies if a in persons)})
+        for item in of_kind(Kind.ITEM):
+            if store.location_of(item) == p:
+                out.extend(Candidate(Op.REQUEST_ITEM, p, item, beneficiary=b) for b in beneficiaries)
 
     if store.holds(Proposition.attr(me, "subdued", True)):
         out = [c for c in out if c.op in _WHILE_SUBDUED]   # 自知穴道被制：只剩开口与等待
-    valid = [c for c in out if signature_error(c.op, kind, c.target, c.obj, c.topic) is None]
+    valid = [c for c in out if signature_error(c.op, kind, c.target, c.obj, c.topic, c.beneficiary, c.request_ref) is None]
     ordered = [valid[0], *sorted(set(valid[1:]), key=Candidate.sort_key)]  # WAIT 永远在首位，截断时不丢
     return budget(ordered, max_count, interests)
 

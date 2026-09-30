@@ -7,6 +7,7 @@
        外观只给亲眼所见：言语提到的实体、隔墙听见的地点、门那头的地点都只有名字（seen=False），不读取真实外观。
        自我感知（内力、所学、进度、手中之物的手感）只进本人的环顾，永不给旁人。
        规则通过覆写 fragments()/perceive() 组合这些积木，加新行动不改本模块
+       请求的物品、受益人和语义编号只传给真正听见内容者，耳语旁观者看不到这些字段。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -28,6 +29,7 @@ from tianlong.core import (
     Fact,
     Kind,
     Modality,
+    Op,
     Outcome,
     PerceivedEvent,
     Percept,
@@ -38,6 +40,7 @@ from tianlong.core import (
     WorldState,
     derive_seed,
     is_private_attr,
+    make_id,
 )
 from tianlong.core.attributes import true_value
 from tianlong.kernel import space
@@ -156,7 +159,7 @@ def _view_ids(view: PerceivedEvent | None) -> tuple[str | None, ...]:
     if view.topic is not None:
         v = view.topic.prop.value
         topic_ids = (view.topic.prop.subject, v if isinstance(v, str) else None)
-    return (view.place, view.actor, view.target, view.obj, *topic_ids)
+    return (view.place, view.actor, view.target, view.obj, view.beneficiary, *topic_ids)
 
 
 def make_percept(
@@ -228,12 +231,15 @@ class Witnessing:
             place=self.event.place or "",
             actor=it.actor,
             target=it.target,
-            obj=it.obj,
+            obj=it.obj if with_topic or it.op != Op.REQUEST_ITEM else None,
             outcome=self.event.outcome,
             topic=it.topic if with_topic else None,
             reason=self.event.reason,
             utterance=it.utterance if with_topic else None,
             social=it.social if with_topic else None,
+            beneficiary=it.beneficiary if with_topic else None,
+            request_ref=(make_id("request", it.actor, it.target, it.obj, it.beneficiary, self.event.tick)
+                         if it.op == Op.REQUEST_ITEM else it.request_ref) if with_topic else None,
         )
 
     def public_view(self, public_reasons: frozenset[str] = frozenset(), with_topic: bool = True) -> PerceivedEvent:

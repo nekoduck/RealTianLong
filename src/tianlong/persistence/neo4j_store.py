@@ -8,7 +8,7 @@
        命题与相信分离：(:Entity)-[:BELIEVES {holds, confidence, ...}]->(:Proposition)-[:ABOUT]->(:Entity)；
        (:Entity)-[:HAS_MIND]->(:Mind)-[:KNOWS]->(:Entity)，Mind 节点另以 JSON 属性存勘察记录、承诺状态与社交状态
        （cues/attitudes/company/allies/yielded，旧存档缺省为空）；(:Memory {indexed}) 即 outbox；
-       (:Request {data, narration}) 是玩家请求的进度与叙述；World 节点另存存档版本（versions）与会话运行态（session）。
+       (:Request {data, narration}) 是玩家请求的进度与叙述；World 节点另存存档版本、会话运行态与冻结菜单；首 tick 原子消费菜单。
        commit 先对 World 节点加写锁再比对版本——read-committed 隔离下由锁保证串行，而不是指望 ACID 自动解决并发；
        持锁后再做请求绑定检查（进度必须接在已落库的那一份之后），请求进度与会话运行态与世界变化同一事务写入，
        叙述文字由 record_render() 只补写一次
@@ -48,6 +48,7 @@ from tianlong.persistence.store import (
     VersionConflict,
     WorldRef,
     check_request_progress,
+    consume_decision,
 )
 
 _LABELS = {k: k.value.capitalize() for k in Kind}   # 标签与关系类型只来自枚举白名单，绝不拼接外部输入
@@ -243,6 +244,32 @@ class Neo4jWorldStore:
             raise UnknownWorld(str(ref))
         return json.loads(rec["v"]) if rec["v"] is not None else {}
 
+    def decision(self, ref: WorldRef) -> Mapping[str, Any] | None:
+        rec = self._read(lambda t: t.run("MATCH (w:World {uid:$u}) RETURN w.decision AS d", u=_uid(ref)).single())
+        if rec is None:
+            raise UnknownWorld(str(ref))
+        return json.loads(rec["d"]) if rec["d"] else None
+
+    def publish_decision(self, ref: WorldRef, decision: Mapping[str, Any],
+                         expected_version: int) -> Mapping[str, Any]:
+        data = json.dumps(decision, ensure_ascii=False, sort_keys=True)
+
+        def tx(t: ManagedTransaction) -> Mapping[str, Any]:
+            rec = t.run("MATCH (w:World {uid:$u}) SET w._lock = true RETURN w.version AS v, w.decision AS d",
+                        u=_uid(ref)).single()
+            if rec is None:
+                raise UnknownWorld(str(ref))
+            if rec["v"] != expected_version or decision["version"] != expected_version:
+                raise VersionConflict("发布选项时局势已变化")
+            prior = json.loads(rec["d"]) if rec["d"] else None
+            if prior is not None and prior["version"] == expected_version:
+                t.run("MATCH (w:World {uid:$u}) REMOVE w._lock", u=_uid(ref)).consume()
+                return prior
+            t.run("MATCH (w:World {uid:$u}) SET w.decision=$d REMOVE w._lock", u=_uid(ref), d=data).consume()
+            return json.loads(data)
+
+        return self._write(tx)
+
     # ------------------------------------------------------------
     #  写：唯一路径
     # ------------------------------------------------------------
@@ -265,6 +292,12 @@ class Neo4jWorldStore:
                             u=_uid(ref, "request", batch.request.request_id)).single()
                 prior = codec.envelope_from(json.loads(rec["d"])) if rec else None
                 check_request_progress(prior, batch.request, batch.state.version)
+                if batch.request.choice is not None and len(batch.request.versions) == 1:
+                    rec = t.run("MATCH (w:World {uid:$u}) RETURN w.decision AS d", u=_uid(ref)).single()
+                    decision = consume_decision(json.loads(rec["d"]) if rec["d"] else None,
+                                                batch.request, batch.expected_version)
+                    t.run("MATCH (w:World {uid:$u}) SET w.decision=$d", u=_uid(ref),
+                          d=json.dumps(decision, ensure_ascii=False, sort_keys=True)).consume()
 
             # ---- 2. 世界变化：关系按净差异，属性按新状态整体覆盖 ----
             changes = [c for e in batch.events for c in e.changes]

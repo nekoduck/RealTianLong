@@ -14,6 +14,7 @@
        （gated_stream 只经调用方给的回调交付文字）。
        给模型看的（场外问答、终章收束）只取玩家自己的认知与亲历；真相只出现在 reveal() 里——落幕之后、明确标作“真相”，
        按世界状态与玩家认知确定地生成（你以为的 vs 实际的：每个 NPC 的下落与伤/毒/被制，以及你没看见的动手、偷盗与潜逃）
+       物品请求原话进入场景上下文，NPC 回应仍只据实际听见的言语编写。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -52,7 +53,7 @@ from tianlong.language.templates import render_event, render_experience, render_
 from tianlong.persistence import TurnEnvelope
 from tianlong.scenarios import Scenario
 
-TALK = frozenset({Op.TELL.value, Op.ASK.value})
+TALK = frozenset({Op.TELL.value, Op.ASK.value, Op.REQUEST_ITEM.value})
 META_HELP = "可用的指令：/hint 提示、/recap 前情回顾、/beliefs 你所知道的；场外提问请以“GM：”开头。"
 _META_WORDS = {"hint": ("hint", "提示"), "recap": ("recap", "回顾", "前情"), "beliefs": ("beliefs", "认知", "所知")}
 _GM_PREFIX = re.compile(r"^\s*(?:gm|ooc)\s*[:：]\s*", re.IGNORECASE)
@@ -138,7 +139,7 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
     answering：NPC 冲着玩家、且在玩家开口之后说的话，带上玩家的原话作回话的由头。"""
     player = me.owner
     plan = (env.intent, *env.followups)
-    mine = next((it for it in plan if it.utterance and it.op in (Op.TELL, Op.ASK, Op.WAIT)), None)
+    mine = next((it for it in plan if it.utterance and it.op in (Op.TELL, Op.ASK, Op.REQUEST_ITEM, Op.WAIT)), None)
     spoke_at = next((p.tick for p in env.percepts if p.modality == Modality.SELF and p.event is not None
                      and p.event.kind in TALK), None)
     said = mine.utterance if mine is not None and mine.op != Op.WAIT and spoke_at is not None else None

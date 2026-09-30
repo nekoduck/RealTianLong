@@ -7,7 +7,8 @@
        一掌打中没有、说了什么）用确定的句子交给玩家——首字延迟只剩“解释 + 结算”，而第一眼看到的正是最要紧的信息；
        声音模型再从下一句接着写旁人的反应与氛围。只取玩家自己的行动感知（SELF），措辞按 (tick, 操作, 对象) 派生的种子
        在几种说法里确定地轮换，失败必说原因、后果照实写出；等待不抢先（时辰与“时间悄悄过去”交给模型或模板）。
-       模型被告知开头已写好，仍可能换个说法再讲一遍（“你屏住呼吸，从桌上拿起钥匙”）：restates() 供叙述者略过这样的句子
+       模型被告知开头已写好，仍可能换个说法再讲一遍（“你屏住呼吸，从桌上拿起钥匙”）：restates() 供叙述者略过这样的句子。
+       REQUEST_ITEM 的成功先声只写请求，失败先声解释原因，均不把物品写成已收到。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -40,7 +41,7 @@ _TRY: dict[Op, str] = {
     Op.MOVE: "你想去{t}", Op.TAKE: "你伸手去拿{t}", Op.PUT: "你想把{o}放在{t}", Op.GIVE: "你想把{o}交给{t}",
     Op.UNLOCK: "你拿{o}去开{t}的锁", Op.LOCK: "你想用{o}锁上{t}", Op.INSPECT: "你想查看{t}", Op.ATTACK: "你向{t}出手",
     Op.STUDY: "你翻看{t}良久", Op.USE: "你把{o}用在{t}身上", Op.TELL: "你想对{t}说话", Op.ASK: "你想问{t}",
-    Op.WAIT: "你想做点什么",
+    Op.WAIT: "你想做点什么", Op.REQUEST_ITEM: "你想请求{t}把{o}交给自己",
 }
 
 
@@ -79,6 +80,11 @@ def _sentence(p: Percept, names: Names, viewer: str) -> str | None:
             return _TRY[op].format(t=t, o=o) + "，却没能成。"
         return _TRY[op].format(t=t, o=o) + ("，却" if why.startswith("被") else "，可") + why + "。"
     # ---- 成功 ----
+    if op == Op.REQUEST_ITEM:
+        if ev.utterance:
+            return f"你对{t}道：“{ev.utterance}”"
+        beneficiary = _name(names, ev.beneficiary, viewer)
+        return f"你请求{t}把{o}交给自己，以便帮助{beneficiary}。"
     if op in (Op.TELL, Op.ASK):
         return _say(ev, t)
     if op == Op.WAIT:

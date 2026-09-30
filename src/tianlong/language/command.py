@@ -8,6 +8,7 @@
        疑问都被识别为非即时语态——规则快路径只接受明确的单一、肯定、即时指令，其余交给受约束的语义解析或追问澄清。
        言语行为词与姿态词也是行动词：“打招呼”盖住“打”、“救命”盖住“救”、“坐下”盖住“下”，于是也受否定与条件约束。
        parser 在此之上做实体与角色绑定；本模块不引用任何实体表以外的知识
+       明确的请求物品属于言语，否定、条件与转述仍先于行动解释。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -63,6 +64,7 @@ GESTURE_WORDS: tuple[tuple[str, Social | None], ...] = (
 # ============================================================
 
 ACTION_WORDS: tuple[tuple[Op, tuple[str, ...]], ...] = (
+    (Op.REQUEST_ITEM, ("请求", "索要", "request_item")),
     (Op.ASK, ("问", "打听", "ask")),
     (Op.TELL, ("告诉", "说", "tell", *(w for w, _ in SOCIAL_WORDS))),
     (Op.UNLOCK, ("开锁", "解锁", "打开", "unlock")),
@@ -79,7 +81,7 @@ ACTION_WORDS: tuple[tuple[Op, tuple[str, ...]], ...] = (
                "出去", "go", "move")),
     (Op.WAIT, ("等", "休息", "歇", "wait", *(w for w, _ in GESTURE_WORDS))),
 )
-_SPEECH_OPS = frozenset({Op.TELL, Op.ASK})
+_SPEECH_OPS = frozenset({Op.TELL, Op.ASK, Op.REQUEST_ITEM})
 
 
 class SpeechMode(StrEnum):

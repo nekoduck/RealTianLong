@@ -1,9 +1,10 @@
 """
 [INPUT]: 依赖 core 的全部值对象，cognition 的 Belief / Episode / Obligation / Said / SocialCue，persistence/store 的 TurnEnvelope
 [OUTPUT]: 对外提供 core 值对象 ⇄ JSON 兼容 dict 的显式编解码函数（intent / change / event / percept / fact / sketch / belief / episode /
-          obligation（待答与待回话，命题可缺）/ said（闲话无命题、带言语行为）/ cue 社交线索 / attitudes 态度 / envelope 请求进度）；
-          旧记录缺新键时取缺省（言语行为为无、态度为空）
+          obligation（待答与待回话，命题可缺）/ said（闲话无命题、带言语行为）/ cue 社交线索 / attitudes 态度 / envelope 请求进度 / world 全世界 / mind 完整认知 / memory 经历）；
+          请求含冻结选项绑定与展示文字；旧记录缺新键时取缺省（无选项绑定、言语行为为无、态度为空）
 [POS]: persistence 的序列化边界；逐字段手写而非反射或 pickle——数据库里的内容不能决定构造哪个类，这是安全边界也是版本边界
+       物品请求的受益人、回应编号与义务状态显式往返；yielded 随完整认知保存，不随重启丢失；旧记录缺新键取缺省。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -12,11 +13,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from tianlong.cognition import Belief, Episode, Obligation, Said
+from tianlong.cognition import Belief, BeliefStore, Episode, Obligation, Said
 from tianlong.cognition.agenda import SocialCue
 from tianlong.core import (
     AddRelation,
     Change,
+    Entity,
     EntitySketch,
     Event,
     Fact,
@@ -34,8 +36,10 @@ from tianlong.core import (
     RemoveRelation,
     SetAttr,
     Social,
+    WorldState,
 )
-from tianlong.persistence.store import TurnEnvelope
+from tianlong.core.memories import MemoryRecord
+from tianlong.persistence.store import ChoiceUse, TurnEnvelope
 
 J = dict[str, Any]
 
@@ -73,12 +77,13 @@ def _social(v: str | None) -> Social | None:
 def intent_to(it: Intent) -> J:
     return {"id": it.id, "actor": it.actor, "op": it.op.value, "target": it.target, "obj": it.obj,
             "manner": it.manner.value, "topic": fact_to(it.topic), "based_on": it.based_on, "utterance": it.utterance,
-            "social": it.social.value if it.social else None}
+            "social": it.social.value if it.social else None, "beneficiary": it.beneficiary, "request_ref": it.request_ref}
 
 
 def intent_from(d: J) -> Intent:
     return Intent(d["id"], d["actor"], Op(d["op"]), d.get("target"), d.get("obj"), Manner(d["manner"]),
-                  fact_from(d.get("topic")), int(d["based_on"]), d.get("utterance"), _social(d.get("social")))
+                  fact_from(d.get("topic")), int(d["based_on"]), d.get("utterance"), _social(d.get("social")),
+                  d.get("beneficiary"), d.get("request_ref"))
 
 
 def change_to(c: Change) -> J:
@@ -123,7 +128,8 @@ def pevent_to(v: PerceivedEvent | None) -> J | None:
         return None
     return {"kind": v.kind, "place": v.place, "actor": v.actor, "target": v.target, "obj": v.obj,
             "outcome": v.outcome.value if v.outcome else None, "topic": fact_to(v.topic),
-            "reason": v.reason, "utterance": v.utterance, "social": v.social.value if v.social else None}
+            "reason": v.reason, "utterance": v.utterance, "social": v.social.value if v.social else None,
+            "beneficiary": v.beneficiary, "request_ref": v.request_ref}
 
 
 def pevent_from(d: J | None) -> PerceivedEvent | None:
@@ -131,7 +137,8 @@ def pevent_from(d: J | None) -> PerceivedEvent | None:
         return None
     return PerceivedEvent(d["kind"], d["place"], d.get("actor"), d.get("target"), d.get("obj"),
                           Outcome(d["outcome"]) if d.get("outcome") else None, fact_from(d.get("topic")),
-                          d.get("reason"), d.get("utterance"), _social(d.get("social")))
+                          d.get("reason"), d.get("utterance"), _social(d.get("social")),
+                          d.get("beneficiary"), d.get("request_ref"))
 
 
 def percept_to(p: Percept) -> J:
@@ -173,11 +180,13 @@ def episode_from(d: J) -> Episode:
 
 def obligation_to(o: Obligation) -> J:
     return {"kind": o.kind, "counterpart": o.counterpart, "topic": fact_to(o.topic), "since": o.since,
-            "social": o.social.value if o.social else None}
+            "social": o.social.value if o.social else None, "item": o.item, "beneficiary": o.beneficiary,
+            "request_ref": o.request_ref, "state": o.state}
 
 
 def obligation_from(d: J) -> Obligation:
-    return Obligation(d["kind"], d["counterpart"], fact_from(d.get("topic")), int(d["since"]), _social(d.get("social")))
+    return Obligation(d["kind"], d["counterpart"], fact_from(d.get("topic")), int(d["since"]), _social(d.get("social")),
+                      d.get("item"), d.get("beneficiary"), d.get("request_ref"), d.get("state", "pending"))
 
 
 def said_to(s: Said) -> J:
@@ -215,7 +224,9 @@ def envelope_to(e: TurnEnvelope) -> J:
             "planned_ticks": e.planned_ticks, "start_version": e.start_version, "start_clock": e.start_clock,
             "versions": list(e.versions), "ticks": list(e.ticks), "percepts": [percept_to(p) for p in e.percepts],
             "fresh": list(e.fresh), "done": e.done, "source": e.source,
-            "followups": [intent_to(i) for i in e.followups], "reaction": e.reaction}
+            "followups": [intent_to(i) for i in e.followups], "reaction": e.reaction,
+            "choice": {"decision_id": e.choice.decision_id, "choice_id": e.choice.choice_id} if e.choice else None,
+            "command": e.command}
 
 
 def envelope_from(d: J, narration: str | None = None) -> TurnEnvelope:
@@ -223,4 +234,52 @@ def envelope_from(d: J, narration: str | None = None) -> TurnEnvelope:
                         int(d["start_version"]), int(d["start_clock"]), tuple(int(v) for v in d["versions"]),
                         tuple(int(t) for t in d["ticks"]), tuple(percept_from(p) for p in d["percepts"]),
                         tuple(d["fresh"]), bool(d["done"]), d.get("source", "rules"), narration,
-                        tuple(intent_from(i) for i in d.get("followups", ())), bool(d.get("reaction", False)))
+                        tuple(intent_from(i) for i in d.get("followups", ())), bool(d.get("reaction", False)),
+                        ChoiceUse(d["choice"]["decision_id"], d["choice"]["choice_id"]) if d.get("choice") else None,
+                        d.get("command", ""))
+
+
+def world_to(s: WorldState) -> J:
+    return {"seed": s.seed, "version": s.version, "clock": s.clock,
+            "entities": [{"id": e.id, "kind": e.kind.value, "name": e.name, "attrs": list(e.attrs)}
+                         for e in s.entities.values()],
+            "relations": [list(r.sort_key()) for r in s.sorted_relations()]}
+
+
+def world_from(d: J) -> WorldState:
+    return WorldState.build(d["seed"], d["clock"],
+                            [Entity(e["id"], Kind(e["kind"]), e["name"], tuple(tuple(a) for a in e["attrs"]))
+                             for e in d["entities"]],
+                            [Relation(s, Rel(r), t) for s, r, t in d["relations"]], d["version"])
+
+
+def mind_to(s: BeliefStore) -> J:
+    return {"owner": s.owner, "entities": [sketch_to(e) for e in s.entities.values()],
+            "beliefs": [{"prop": prop_to(b.prop), **belief_to(b)} for b in s.sorted_beliefs()],
+            "episodes": [episode_to(e) for e in s.episodes], "trust": dict(s.trust), "last_tick": s.last_tick,
+            "surveyed": dict(s.surveyed), "searched": dict(s.searched),
+            "obligations": [obligation_to(o) for o in s.obligations], "said": [said_to(x) for x in s.said],
+            "cues": [cue_to(c) for c in s.cues], "attitudes": dict(s.attitudes),
+            "company": dict(s.company), "allies": list(s.allies), "yielded": dict(s.yielded)}
+
+
+def mind_from(d: J) -> BeliefStore:
+    sketches = [sketch_from(e) for e in d["entities"]]
+    beliefs = [belief_from(prop_from(b["prop"]), b) for b in d["beliefs"]]
+    return BeliefStore(d["owner"], {s.id: s for s in sketches}, {b.prop: b for b in beliefs},
+                       tuple(episode_from(e) for e in d["episodes"]), d["trust"], d["last_tick"],
+                       d["surveyed"], d["searched"], tuple(obligation_from(o) for o in d["obligations"]),
+                       tuple(said_from(s) for s in d["said"]), tuple(cue_from(c) for c in d["cues"]),
+                       d["attitudes"], d["company"], tuple(d["allies"]), d.get("yielded", {}))
+
+
+def memory_to(m: MemoryRecord) -> J:
+    return {"id": m.id, "world_id": m.world_id, "branch_id": m.branch_id, "owner": m.owner,
+            "kind": m.kind, "text": m.text, "occurred_at": m.occurred_at, "known_at": m.known_at,
+            "source": m.source, "subjects": list(m.subjects), "informant": m.informant, "verdict": m.verdict}
+
+
+def memory_from(d: J) -> MemoryRecord:
+    return MemoryRecord(d["id"], d["world_id"], d["branch_id"], d["owner"], d["kind"], d["text"],
+                        d["occurred_at"], d["known_at"], d["source"], tuple(d["subjects"]),
+                        d.get("informant"), d.get("verdict"))

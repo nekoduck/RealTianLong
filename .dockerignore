@@ -1,0 +1,11 @@
+.git
+.venv
+.env
+.cache
+artifacts
+runs
+__pycache__
+*.log
+docs/results
+notebooks
+tests

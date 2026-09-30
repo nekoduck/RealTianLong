@@ -21,6 +21,7 @@
        数量只认“数词 + 量词 + 物品名”与“还有/另有/又……一 + 量词 + 物品名”的直接说法；秘密只认场景给出的词表；
        抵达动词的宾语只许本回合真的到达的地点或观察者此刻就在的地点；全角开引号遇半角收引号也算收，没收的引语到换行为止。
        出处优先：清单、外观描写与原话里本来就有的词、名字、数量与“抵达”说法，照搬不算违规
+       请求中被实际听见的受益人可点名；任何交付、疗效仍以真实感知为准。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -171,8 +172,8 @@ def build_plan(viewer: str, percepts: Sequence[Percept], names: Names, show_scen
     for p in percepts:
         ev = p.event
         if ev is not None:
-            ids.update(x for x in (ev.actor, ev.target, ev.obj, ev.place) if x)
-            if ev.kind in (Op.TELL.value, Op.ASK.value) and ev.actor and p.modality in (Modality.SPEECH, Modality.SELF):
+            ids.update(x for x in (ev.actor, ev.target, ev.obj, ev.place, ev.beneficiary) if x)
+            if ev.kind in (Op.TELL.value, Op.ASK.value, Op.REQUEST_ITEM.value) and ev.actor and p.modality in (Modality.SPEECH, Modality.SELF):
                 talkers.add(ev.actor)            # 只看见在耳语、没听见内容的人不算开口
             if ev.kind == Op.MOVE.value and ev.outcome == Outcome.SUCCESS and ev.target:
                 arrived.add(ev.target)

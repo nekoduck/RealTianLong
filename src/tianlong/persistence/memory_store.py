@@ -3,7 +3,7 @@
          标准库 json（会话运行态按 JSON 往返存取）
 [OUTPUT]: 对外提供 InMemoryWorldStore
 [POS]: persistence 的内存实现；测试、训练、离线游玩的默认后端。与 Neo4j 实现遵守同一协议，用同一组契约测试验证：
-       请求绑定检查（check_request_progress）、请求进度与会话运行态随世界提交同一临界区完成，叙述文字经 record_render() 只补写一次
+       请求绑定检查、冻结菜单消费、请求进度与会话运行态随世界提交同一临界区完成；菜单发布不推进世界，叙述文字只补写一次
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -25,6 +25,7 @@ from tianlong.persistence.store import (
     VersionConflict,
     WorldRef,
     check_request_progress,
+    consume_decision,
 )
 
 
@@ -44,6 +45,7 @@ class _World:
     requests: dict[str, TurnEnvelope] = field(default_factory=dict)
     session: dict[str, Any] | None = None
     versions: dict[str, str] = field(default_factory=dict)
+    decision: dict[str, Any] | None = None
 
 
 class InMemoryWorldStore:
@@ -106,6 +108,22 @@ class InMemoryWorldStore:
     def save_versions(self, ref: WorldRef) -> Mapping[str, str]:
         return dict(self._world(ref).versions)
 
+    def decision(self, ref: WorldRef) -> Mapping[str, Any] | None:
+        with self._lock:
+            data = self._world(ref).decision
+            return None if data is None else _json_copy(data)
+
+    def publish_decision(self, ref: WorldRef, decision: Mapping[str, Any],
+                         expected_version: int) -> Mapping[str, Any]:
+        data = _json_copy(decision)
+        with self._lock:
+            w = self._world(ref)
+            if w.head.version != expected_version or data["version"] != expected_version:
+                raise VersionConflict("发布选项时局势已变化")
+            if w.decision is None or w.decision["version"] != expected_version:
+                w.decision = data
+            return _json_copy(w.decision)
+
     # ------------------------------------------------------------
     #  写
     # ------------------------------------------------------------
@@ -121,6 +139,8 @@ class InMemoryWorldStore:
             if batch.request is not None:
                 # 请求绑定与写入同一临界区：重复投递抢在后面提交即被拒，世界一处不改
                 check_request_progress(w.requests.get(batch.request.request_id), batch.request, batch.state.version)
+            decision = w.decision if batch.request is None else consume_decision(
+                w.decision, batch.request, batch.expected_version)
             w.head = batch.state
             w.beliefs.update(batch.beliefs)
             w.events.extend(batch.events)
@@ -137,6 +157,7 @@ class InMemoryWorldStore:
                     batch.request, narration=prior.narration if prior else None)
             if session is not None:
                 w.session = session
+            w.decision = None if decision is None else dict(decision)
 
     def record_render(self, ref: WorldRef, request_id: str, narration: str) -> None:
         """幂等：第一次写入的叙述为准，重试不改写；请求不存在是调用方的错。"""

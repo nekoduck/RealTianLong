@@ -14,6 +14,7 @@
        姿态过 pose.witness()（夹带的拿取/研读落空就照实说落空，不让姿态把它吞掉），言语在原话之外“拔出长剑”同样要真在手里，
        “拿出勇气/亮出身份”不是掏东西；磕头只在此地有神像、蒲团一类可拜的陈设时才是伏地细看，其余是当众服软的姿态；
        normalize()/exits()/leave_here() 可指定出发地（多步计划从上一步的终点算起）
+       请求物品保留物品、听者和受益人；默认受益人为玩家，点名陌生受益人则追问，不换成自救。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -87,6 +88,7 @@ _ROUGH = ("用力", "粗暴", "猛", "狠狠")
 _WHISPER = ("悄悄", "偷偷", "低声", "小声", "轻声", "耳语", "附耳")   # 言语的“小心”只有耳语一种：“说小心点”不是耳语
 _MANNER_ONLY = ("偷偷",)             # 只表方式的叠词：里面的“偷”不是拿
 _ASKS = {
+    Op.REQUEST_ITEM: "你想向谁请求哪件物品，帮助谁？",
     Op.TAKE: "你想拿什么？", Op.PUT: "你想把什么放到哪里？", Op.GIVE: "你想把什么交给谁？",
     Op.UNLOCK: "你想用什么打开哪扇门？", Op.LOCK: "你想用什么锁上哪扇门？", Op.MOVE: "你想去哪里？你知道怎么走过去吗？",
     Op.TELL: "你想对谁说？", Op.ASK: "你想问谁？", Op.INSPECT: "你想查看什么？",
@@ -195,7 +197,7 @@ def invalid(c: Candidate, store: BeliefStore) -> str | None:
         sk = store.sketch(eid)
         return sk.kind if sk else None
 
-    return signature_error(c.op, kind_of, c.target, c.obj, c.topic)
+    return signature_error(c.op, kind_of, c.target, c.obj, c.topic, c.beneficiary, c.request_ref)
 
 
 def manner_of(t: str) -> Manner:
@@ -387,6 +389,13 @@ def rule_parse(text: str, store: BeliefStore, aliases: Aliases | None = None) ->
         return _unclear(clarify(command) if command.mode == SpeechMode.QUOTED else _HELP, command)
     if not command.immediate:
         return _unclear(clarify(command), command)
+    request_words = next(words for op, words in ACTION_WORDS if op == Op.REQUEST_ITEM)
+    if command.action and command.action.text in request_words:
+        ops = [Op.REQUEST_ITEM]  # 请求里的“交给/救助”不是玩家自己的 GIVE/USE，缺角色就追问。
+    elif Op.REQUEST_ITEM in ops:
+        ops.remove(Op.REQUEST_ITEM)
+    if not ops:
+        return _unclear(_HELP, command)
     attempts = [_parse_as(op, text, t, store, ms, hits, aliases) for op in ops]
     chosen = next((p for p in attempts if p.candidate is not None), None)
     if chosen is not None and chosen.kind == MoveKind.GESTURE:
@@ -448,6 +457,21 @@ def _parse_as(op: Op, text: str, t: str, store: BeliefStore, ms: list[Mention],
 
     target = obj = None
     social: Social | None = None
+    if op == Op.REQUEST_ITEM:
+        target, obj = pick(Kind.PERSON, exclude=(me,)), pick(Kind.ITEM)
+        if target is None or obj is None:
+            return _unclear(_ASKS[op])
+        beneficiary = me
+        purpose = re.search(r"(?:救助|救治|帮助)([^，。！？,!?]+)", t)
+        if purpose:
+            patient = purpose.group(1).strip()
+            ps = mentions(patient, store, aliases)
+            person = next((m for m in ps if m.kind == Kind.PERSON and m.pos == 0 and m.length == len(patient)), None)
+            if person is None:
+                return _unclear("你想用这件物品帮助谁？")
+            beneficiary = person.eid
+        cand = Candidate(op, target, obj, manner, social=Social.PLEAD, beneficiary=beneficiary)
+        return _unclear(_ASKS[op]) if invalid(cand, store) else Parsed(cand, text, source="rules", kind=MoveKind.SAY)
     if op == Op.TAKE:
         target = pick(Kind.ITEM)
         if target is None:
@@ -648,7 +672,7 @@ def _schema(ids: list[str]) -> dict:
             "mode": {"type": "string", "enum": [m.value for m in SpeechMode]},
             "actor": {"type": "string", "enum": ["player", "other", "unknown"]},
             "op": {"type": "string", "enum": [o.value for o in Op] + ["unknown"]},
-            "target": ref, "obj": ref, "topic_subject": ref, "topic_value": ref,
+            "target": ref, "obj": ref, "beneficiary": ref, "topic_subject": ref, "topic_value": ref,
             "topic_holds": {"type": "boolean"},
             "manner": {"type": "string", "enum": [m.value for m in Manner]},
             "clarification": {"type": "string"},
@@ -713,14 +737,17 @@ class IntentParser:
         subject = ref("topic_subject")
         if subject:
             topic = Fact(Proposition.rel(subject, Rel.AT, ref("topic_value")), bool(data.get("topic_holds", True)))
+        beneficiary = (ref("beneficiary") or store.owner) if op == Op.REQUEST_ITEM else None
+        if op == Op.REQUEST_ITEM and data.get("beneficiary") and not ref("beneficiary"):
+            return None
         manner = next((m for m in Manner if m.value == data.get("manner")), Manner.NORMAL)
-        cand = normalize(Candidate(op, ref("target"), ref("obj"), manner, topic), store)
+        cand = normalize(Candidate(op, ref("target"), ref("obj"), manner, topic, beneficiary=beneficiary), store)
         if command is not None and cand.op in command.negated:
             # 规则层看见了对这个行动的否定：模型说“照做”也不行
             return _unclear(clarify(command), command, "llm")
         if invalid(cand, store):
             return None
-        if cand.op in (Op.TELL, Op.ASK):
+        if cand.op in (Op.TELL, Op.ASK, Op.REQUEST_ITEM):
             line = speech_line(text, store, cand.target, self.aliases, ask=cand.op == Op.ASK)
             return Parsed(cand, line, source="llm", command=command, kind=MoveKind.SAY)
         return Parsed(cand, source="llm", command=command)

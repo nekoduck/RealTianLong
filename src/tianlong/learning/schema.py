@@ -8,6 +8,7 @@
        行动与言语命题怎样编码、动态模型声明预测哪些变化”。featurize/samples/model/rl 都只从这里取维度；
        规格指纹写进每个检查点：属性、词表、行动或目标的任何增删都让旧模型在加载时被明确拒绝，而不是在张量形状上报错。
        数值以 value/scale 进入（不再压成布尔），类别以独热进入；known 列三态：1 已知、0 未知、-1 不适用
+       features-v3 增加受益人行动指针、FOR 边和持久请求状态，旧检查点明确拒绝。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -33,7 +34,7 @@ from tianlong.core import (
     digest,
 )
 
-FEATURES_VERSION = "features-v2"
+FEATURES_VERSION = "features-v3"
 
 # ============================================================
 #  词表
@@ -107,8 +108,10 @@ EV_REASON = _span(EV_OUTCOME.stop, len(REASONS))
 EV_TOPIC = _span(EV_REASON.stop, len(TOPIC_PREDICATES))
 EV_TOPIC_HOLDS = EV_TOPIC.stop            # +1 肯定 / -1 否定 / 0 无命题
 EV_TOPIC_QUERY = EV_TOPIC.stop + 1        # 1 = 提问（宾语未知）
+REQUEST_STATES = ("pending", "accepted", "deferred", "refused")
+EV_REQUEST_STATE = _span(EV_TOPIC.stop + 2, len(REQUEST_STATES))
 # 个人探索记录（角色视角）：[看清过, 看清的新鲜度, 翻查过, 翻查的新鲜度]；新鲜度 = 1 - 时效/AGE_SCALE（下限 0.05，以别于从没看过）
-SURVEY = slice(EV_TOPIC.stop + 2, EV_TOPIC.stop + 6)
+SURVEY = slice(EV_REQUEST_STATE.stop, EV_REQUEST_STATE.stop + 4)
 F_NODE = SURVEY.stop
 
 # ============================================================
@@ -116,7 +119,7 @@ F_NODE = SURVEY.stop
 # ============================================================
 
 ACTION_FIELDS = ("op", "manner", "target", "obj", "actor", "topic_pred", "topic_subj", "topic_val",
-                 "topic_holds", "topic_query")
+                 "topic_holds", "topic_query", "beneficiary")
 
 # ============================================================
 #  预测目标（StateDelta）：声明覆盖范围，指标按此分项
@@ -136,7 +139,7 @@ TARGETS = ("success", "holder", *(f"attr:{k}" for k in DYN_BOOL), *(f"num:{k}" f
 
 SCHEMA = digest(
     FEATURES_VERSION, ATTRS_VERSION, NODE_KINDS, EVENT_OPS, MODALITIES, OUTCOMES, REASONS, TOPIC_PREDICATES,
-    REL_VOCAB, OPS, MANNERS, ACTION_FIELDS, TARGETS, HOLDER_EXTRA, OBS_GAIN_CAP,
+    REL_VOCAB, OPS, MANNERS, ACTION_FIELDS, REQUEST_STATES, TARGETS, HOLDER_EXTRA, OBS_GAIN_CAP,
     tuple((b.key, b.start, b.width, b.known, b.scale) for b in ATTR_BLOCKS), (SURVEY.start, SURVEY.stop),
 )
 

@@ -22,7 +22,7 @@ from dataclasses import replace
 import pytest
 
 from tianlong.core import FrozenMap, Op, Rel
-from tianlong.persistence import InMemoryWorldStore, RequestConflict, WorldRef
+from tianlong.persistence import InMemoryWorldStore, RequestConflict, SQLiteWorldStore, WorldRef
 
 # ============================================================
 #  R01：快照不可变
@@ -120,13 +120,16 @@ def _play(scenario, store, split=None, reopen=None):
 
 
 @pytest.mark.parametrize("split", [SPLIT, 0], ids=["mid-game", "right-after-opening"])
-@pytest.mark.parametrize("backend", ["memory", pytest.param("neo4j", marks=pytest.mark.neo4j)])
-def test_resume_is_equivalent_to_continuous_play(backend, split):
+@pytest.mark.parametrize("backend", ["memory", "sqlite", pytest.param("neo4j", marks=pytest.mark.neo4j)])
+def test_resume_is_equivalent_to_continuous_play(backend, split, tmp_path):
     """split=0：看完开场、第一回合提交之前就关闭——此时还没有任何提交带着会话运行态落库，开场的初见描写也不许重来。"""
     scenario = replace(build_wuliang(), world_id=f"r02-{uuid.uuid4().hex[:8]}")
     continuous = _play(scenario, InMemoryWorldStore())
     if backend == "memory":
         resumed = _play(scenario, InMemoryWorldStore(), split=split)
+    elif backend == "sqlite":
+        path = tmp_path / "save.sqlite3"
+        resumed = _play(scenario, SQLiteWorldStore(path), split=split, reopen=lambda: SQLiteWorldStore(path))
     else:
         first, second = _neo4j_store(), _neo4j_store()        # 读档用新的连接：模拟另一个进程
         try:

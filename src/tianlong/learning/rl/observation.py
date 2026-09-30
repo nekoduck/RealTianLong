@@ -12,6 +12,7 @@
        裁剪契约：超预算时先保证自身、目标所指、以及每个保留候选的全部引用都在图里，其余节点按到这些必要节点的跳数入选；
        引用放不下的候选整个剔除并计入 CropReport，绝不留下“候选有效、指针却是 -1”的悬空引用。
        RL 环境与游戏内 LearnedPolicy 共用它——训练时看到什么，上线时就看到什么；掩码只屏蔽空位，从不按真相屏蔽行动
+       候选编码和裁剪都保留受益人引用；观测布局指纹随字段改变。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -43,7 +44,7 @@ UNTIL = ("wounded", "subdued")
 GOAL_FIELDS = (*(f"kind:{k.value}" for k in GOAL_KINDS), "weight", "active", "wait", *(f"until:{u}" for u in UNTIL),
                "maintain", "status", "potential")
 ROLES = ("self", "goal_item", "goal_place", "goal_recipient", "goal_person", "ally")
-CAND_INT = ("op", "manner", "target", "obj", "topic_pred", "topic_subj", "topic_val")
+CAND_INT = ("op", "manner", "target", "obj", "topic_pred", "topic_subj", "topic_val", "beneficiary")
 CAND_FLOAT = ("topic_holds", "topic_query")
 WAIT_SCALE = 240.0     # 距目标激活的时间：四个时辰以上视为同等遥远
 # 观测布局与语义的指纹：列一变（目标槽位、角色标记、候选编码、预测列、记忆列、尺度），旧策略的输入就换了含义——
@@ -161,7 +162,7 @@ def encode_goals(store: BeliefStore, now: int, profile: Profile, index: dict[str
 
 
 def _cand_refs(c: Candidate) -> tuple[str, ...]:
-    refs = [c.target, c.obj]
+    refs = [c.target, c.obj, c.beneficiary]
     if c.topic is not None:
         refs.append(c.topic.prop.subject)
         if isinstance(c.topic.prop.value, str):
@@ -283,7 +284,7 @@ def build_observation(
                          np.zeros((0, F_EDGE), np.float32))
     for i, (c, p) in enumerate(zip(kept_cands, kept_preds, strict=True)):
         code = encode_action(local, store.owner, c)
-        cand[i] = (code.op, code.manner, code.target, code.obj, code.topic_pred, code.topic_subj, code.topic_val)
+        cand[i] = (code.op, code.manner, code.target, code.obj, code.topic_pred, code.topic_subj, code.topic_val, code.beneficiary)
         flag[i] = (code.topic_holds, code.topic_query)
         pred[i] = np.clip([getattr(p, f) for f in PRED_FIELDS], 0.0, 1.0)
         mask[i] = 1.0

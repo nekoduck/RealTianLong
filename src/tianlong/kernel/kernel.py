@@ -3,6 +3,7 @@
          kernel/perception 的 Witnessing / scene_percept，kernel/invariants 的 assert_invariants
 [OUTPUT]: 对外提供 Kernel（纯函数式结算器）、StepResult、KERNEL_VERSION（规则语义版本，写进存档）
 [POS]: kernel 的心脏：同一版本 → 并行意图 → 统一排序与裁定 → 新版本 + 事件 + 观察。无 IO、无全局随机，可独立回放
+       kernel-v3 增加物品请求类型准入；请求、回应、递交与使用各自经同一内核结算。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -36,7 +37,7 @@ from tianlong.kernel.rules.base import MANNER_INITIATIVE
 
 # 规则语义版本：准入、先手、结算、感知投影任何一处的语义改变都要手动递增。
 # 它随存档写入；读档时不一致即拒绝（除非调用方显式迁移）——旧存档里的事件是按旧规则裁定的
-KERNEL_VERSION = "kernel-v2"   # v2：言语命题可选、带姿态的等待看得见、言语行为随感知传递
+KERNEL_VERSION = "kernel-v3"   # v3：物品请求有明确受益人；请求、同意、真实 GIVE、USE 各自结算
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +129,7 @@ class Kernel:
         def kind_of(eid: str) -> Kind | None:
             return s.kind(eid) if s.has_entity(eid) else None
 
-        err = signature_error(it.op, kind_of, it.target, it.obj, it.topic)
+        err = signature_error(it.op, kind_of, it.target, it.obj, it.topic, it.beneficiary, it.request_ref)
         return f"syntax: {err}" if err else None
 
     def _initiative(self, s: WorldState, it: Intent) -> float:

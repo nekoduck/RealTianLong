@@ -10,6 +10,7 @@
        一切判断来自信念与近期经历。
        探索只凭自己的地图与勘察记录（BeliefStore.surveyed/searched），从不读真相里的最短路或藏匿处。
        ScriptedPolicy 与 MartialTactics 都建立在这些积木之上，保证脚本行为与 RL 面对的是同一套候选与同一份认知
+       GIVE 的 request_ref 附在原候选下标上；闲话的 AGREE 不代替物理递交。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -60,6 +61,7 @@ class Choice:
                                         # 命题须是说话者自己认为为真的信念（被问到候选话题之外的事也照实答）；ASK 永不带命题。
                                         # 不占策略的动作编号（候选规则版本不变）：index 须指向 WAIT 候选，
                                         # 只认 index 的消费者（学习层的数据生成、示范）把它当作等待
+    request_ref: str | None = None       # 实际 GIVE 对应的已听见请求，保持原候选下标
 
     def chosen(self, cands: Sequence[Candidate], beliefs: BeliefStore | None = None) -> Candidate:
         """最终交给内核的行动：free 优先，否则取候选并附上言语行为。
@@ -75,7 +77,8 @@ class Choice:
         if not 0 <= self.index < len(cands):
             raise ValueError(f"策略越界选择了候选 {self.index}")
         cand = cands[self.index]
-        return replace(cand, social=self.social) if self.social is not None else cand
+        return replace(cand, social=self.social if self.social is not None else cand.social,
+                       request_ref=self.request_ref if self.request_ref is not None else cand.request_ref)
 
 
 class Policy(Protocol):

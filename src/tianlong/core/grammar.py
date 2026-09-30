@@ -2,6 +2,7 @@
 [INPUT]: 依赖 core/schema 的 Op / Kind / OP_SIGNATURES，core/propositions 的 Fact
 [OUTPUT]: 对外提供 signature_error()：检查一个行动的“语法/类型”是否合法（命题分“接受”与“必须”：言语不带命题也合法）
 [POS]: core 的行动语法；kernel 用真实实体种类调用它拒绝畸形意图，cognition 用角色已知的实体种类调用它生成候选——同一把尺子，两种视角
+       检查 REQUEST_ITEM 必须有已知种类的受益人；只有 TELL/GIVE 接受请求回应编号。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -22,10 +23,12 @@ KindOf = Callable[[str], Kind | None]
 
 
 def signature_error(
-    op: Op, kind_of: KindOf, target: str | None, obj: str | None, topic: Fact | None
+    op: Op, kind_of: KindOf, target: str | None, obj: str | None, topic: Fact | None,
+    beneficiary: str | None = None, request_ref: str | None = None,
 ) -> str | None:
     sig = OP_SIGNATURES[op]
-    for role, value, allowed in (("target", target, sig.target), ("obj", obj, sig.obj)):
+    for role, value, allowed in (("target", target, sig.target), ("obj", obj, sig.obj),
+                                 ("beneficiary", beneficiary, sig.beneficiary)):
         if allowed is None:
             if value is not None:
                 return f"{op} 不接受 {role}"
@@ -41,4 +44,6 @@ def signature_error(
         return f"{op} 缺少语义内容"
     if not sig.topic and topic is not None:
         return f"{op} 不接受语义内容"
+    if request_ref is not None and op not in (Op.TELL, Op.GIVE):
+        return f"{op} 不接受请求回应编号"
     return None

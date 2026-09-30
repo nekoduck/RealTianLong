@@ -11,7 +11,7 @@ locks.py: UnlockRule/LockRule 共享前置条件（手持、门在身边、钥�
 senses.py: InspectRule 仔细查看地点/台面发现藏匿物与暗门（night_only 只在夜里、clue 指明线索物如玉璧）、搜身发现藏在身上的小物件，并给出含藏匿物的"完整看清"范围
 combat.py: AttackRule 武斗物理（被挡开/闪开旁人看得见），身手 + 带种子随机裁定；得手依次致伤、点穴（限时自解）、带毒兵刃致毒；evasion 闪避、absorb 吸走徒手攻击者内力——技能以效果命名，书名只是内容
 cultivation.py: StudyRule 研读秘籍逐次累积（进度私密、旁人看不出学没学成）、UseRule 施用物品（cures 对症才有效）
-speech.py: TellRule/AskRule 言语不改物理世界，只给听者"说法"（可为谎言）；命题可选：不带命题的闲话只传原话与言语行为；careful 即耳语，旁人只见交谈、不闻内容也不知是赔罪还是威胁；穴道被制仍可开口
+speech.py: RequestItemRule 只传递请求，耳语不向旁观者披露物品与受益人；TellRule/AskRule 言语不改物理世界，只给听者"说法"（可为谎言）；命题可选：不带命题的闲话只传原话与言语行为；careful 即耳语，旁人只见交谈、不闻内容也不知是赔罪还是威胁；穴道被制仍可开口
 __init__.py: default_rules() 注册表，启动时校验每个 Op 都有规则
 
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

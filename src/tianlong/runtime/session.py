@@ -8,7 +8,7 @@
          language/render 的 Rendered / RenderStatus / Violation，persistence 的 WorldStore / InMemoryWorldStore / WorldRef / TurnEnvelope /
          RequestConflict / VersionConflict，scenarios 的 Scenario / Ending，cognition 的 Candidate / believed_place，
          language/templates 的 render_fact，memory/view 的 MemoryView（NPC 的长期记忆摘要，增量汇总——水位含边界、按记录 ID 去重，与读档后重建逐项相同）
-[OUTPUT]: 对外提供 GameSession（可玩会话：turn() 一回合、intro()/epilogue() 开场与终章、belief_lines() 玩家自己的认知；
+[OUTPUT]: 对外提供 GameSession（turn() 自由输入与 choose() 冻结选项共用结算；intro()/epilogue() 开场与终章、belief_lines() 玩家自己的认知；
           读档接续并恢复调度标记、已描写实体、最近几段正文与提示进度；请求幂等、存档版本闸门）、
           TurnReport（一回合的全部产物：世界侧与文字侧分开记录，含这句话的类别、结局、首字耗时、分阶段耗时与叙述上下文）
 [POS]: runtime 的装配中心（主持层的回合循环）：一回合 = 解释玩家输入（后台同时算好本 tick 的 NPC 决策；元指令与“GM：”一眼认得，不算）→ 按类别推进：
@@ -25,6 +25,7 @@
        对方尚未走完时只给出目前为止的文字、不落库。建档后尚无提交就读档，开场已描写的实体按开场规则补回。
        NPC 决策图里从不调模型（台词由主持人之声一并写出），向量回忆只为声明 reads_memories 的策略而跑。
        CLI、测试、未来的 Web 前端都只和它打交道
+       物品请求共用原执行链路与反应 tick；尝试记录和请求进度随世界同事务提交。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -80,8 +81,11 @@ from tianlong.persistence import (
     WorldRef,
     WorldStore,
 )
+from tianlong.persistence.store import ChoiceUse
 from tianlong.runtime import gm
 from tianlong.runtime.authority import Settlement, WorldAuthority
+from tianlong.runtime.choice_history import ChoiceHistory
+from tianlong.runtime.choice_service import ChoiceService
 from tianlong.runtime.versions import check_save, current_versions
 from tianlong.scenarios import Ending, Scenario
 
@@ -110,7 +114,7 @@ RECENT_KEEP = 3      # 最近几段正文：随会话运行态落库，交给叙
 ENDED = "第一幕已终。可以输入 /recap 回顾，或重新开始一局。"
 PARDON = "没太听明白，能换个说法吗？"   # 模型写的追问点了玩家不该知道的名字时，换成这句
 ASIDE_KEEP = 64      # 带 request_id 的不推进回合在本进程里记住最近这么多个（重试原样返回；它们不是世界事实，不落库）
-_ENGAGE = frozenset({Op.ATTACK, Op.GIVE, Op.USE, Op.TELL, Op.ASK})
+_ENGAGE = frozenset({Op.ATTACK, Op.GIVE, Op.USE, Op.TELL, Op.ASK, Op.REQUEST_ITEM})
 
 
 def _last(env: TurnEnvelope) -> int:
@@ -257,6 +261,7 @@ class GameSession:
         self._pool: ThreadPoolExecutor | None = None
         self._ahead: _Ahead | None = None
         self.ending: Ending | None = self._ended()    # 读档时落幕与否同样由世界真相推出
+        self.choices = ChoiceService(self)
 
     # ------------------------------------------------------------
     #  读
@@ -273,12 +278,12 @@ class GameSession:
         return clock_label(self.authority.head().clock)
 
     def session_state(self) -> dict:
-        """会话运行态：随每次世界提交一起落库的那一份（调度标记 + 已描写实体 + 最近几段正文 + 提示进度）。"""
+        """会话运行态含选项尝试记录，与世界同事务提交；提交失败不会提前记一次成功或失败。"""
         return self._state(self.scheduler, self._described)
 
-    def _state(self, sched: Scheduler, described: set[str]) -> dict:
+    def _state(self, sched: Scheduler, described: set[str], history: ChoiceHistory | None = None) -> dict:
         return {"scheduler": sched.to_state(), "described": sorted(described), "recent": list(self._recent),
-                "hint": self._hint}
+                "hint": self._hint, "choice_history": (history or self.choice_history).to_data()}
 
     def _restore(self, state: Mapping | None) -> None:
         """会话运行态以落库的那一份为准：读档时，以及一次请求被同一请求的另一次投递越过之后。"""
@@ -287,6 +292,7 @@ class GameSession:
         self._described = set(state.get("described", ()))
         self._recent = [str(x) for x in state.get("recent", ())][-RECENT_KEEP:]
         self._hint = int(state.get("hint", 0))
+        self.choice_history = ChoiceHistory.from_data(state.get("choice_history"))
 
     def _opening_keys(self) -> list[str]:
         """开场讲的初始认知里应当描写外观的实体：新游戏的 intro() 描写它们，建档后尚无提交就读档时据此补回“已描写”。"""
@@ -344,15 +350,42 @@ class GameSession:
         ahead = self._look_ahead(head) if self.ending is None and quick is None else None
         parsed = quick or self._parse(text, me)
         clock.lap("interpret")
+        return self._execute(parsed, text, payload, head, me, clock, sink, request_id, ahead)
+
+    def choose(self, decision_id: str, choice_id: str, request_id: str,
+               on_text: TextSink | None = None) -> TurnReport:
+        """冻结 Parsed 与自由输入共用执行链路。先重放已提交请求，再检查菜单是否过期。"""
+        clock = _Stopwatch()
+        sink = _Sink(on_text, clock.start)
+        self._settle_background()
+        payload = digest("choice", decision_id, choice_id)
+        prior = self.store.request(self.ref, request_id)
+        if prior is not None:
+            bound = _bound(prior, payload)
+            return self._resume_request(bound, bound.command, clock, sink)
+        if request_id in self._asides:
+            raise RequestConflict("同一请求编号不能绑定不同输入")
+        spec = self.choices.resolve(decision_id, choice_id)
+        head = self.authority.head()
+        me = self.beliefs(self.player)
+        clock.lap("interpret")
+        return self._execute(spec.parsed, spec.label, payload, head, me, clock, sink, request_id,
+                             choice=ChoiceUse(decision_id, choice_id))
+
+    def _execute(self, parsed: Parsed, text: str, payload: str, head: WorldState, me: BeliefStore,
+                 clock: _Stopwatch, sink: _Sink, request_id: str | None, ahead: _Ahead | None = None,
+                 choice: ChoiceUse | None = None) -> TurnReport:
+        """自由文本与冻结按钮共用计划、反应 tick、权威提交和叙述；按钮不经解释器。"""
         if (parsed.kind in (MoveKind.ASK_GM, MoveKind.META) or parsed.candidate is None
                 or self.ending is not None):
             return self._aside(parsed, text, head, me, clock, sink, request_id)   # 后台的决策随之作废：它不写任何东西
         steps, planned, reaction = self._plan(parsed, me, head.clock)
-        slot = next((i for i, c in enumerate(steps) if c.op in (Op.TELL, Op.ASK, Op.WAIT)), 0)   # 原话归属的那一步
+        slot = next((i for i, c in enumerate(steps) if c.op in (Op.TELL, Op.ASK, Op.REQUEST_ITEM, Op.WAIT)), 0)   # 原话归属的那一步
         plan = [c.to_intent(self._intent_id(self.player, head.version), self.player, head.version,
                             parsed.utterance if i == slot else None) for i, c in enumerate(steps)]
         env = TurnEnvelope(request_id or "", payload, plan[0], planned, head.version, head.clock,
-                           source=parsed.source, followups=tuple(plan[1:]), reaction=reaction)
+                           source=parsed.source, followups=tuple(plan[1:]), reaction=reaction,
+                           choice=choice, command=text)
         env, events, deliberations, settlement = self._advance(env, clock, request_id is not None, ahead)
         if not env.done:
             # 被越过：同一请求的另一次投递抢先推进了世界——以落库的那一份为准，本次不再多走
@@ -431,7 +464,7 @@ class GameSession:
         """已落库的请求还原成解析结果（续跑与重放的报告用）：类别由计划推出。"""
         it = env.intent
         kind = (MoveKind.GESTURE if it.op == Op.WAIT and it.utterance and env.reaction
-                else MoveKind.SAY if it.op in (Op.TELL, Op.ASK) and not env.followups else MoveKind.ACT)
+                else MoveKind.SAY if it.op in (Op.TELL, Op.ASK, Op.REQUEST_ITEM) and not env.followups else MoveKind.ACT)
         return Parsed(Candidate.of(it), it.utterance, source=env.source, repeat=env.planned_ticks, kind=kind,
                       followups=tuple(Candidate.of(f) for f in env.followups))
 
@@ -526,6 +559,7 @@ class GameSession:
 
         def annotate(s: Settlement) -> tuple[TurnEnvelope | None, dict]:
             mine = tuple(o.percept for o in s.observations_of(self.player))
+            history = self.choice_history.note(self.beliefs(self.player), mine, Candidate.of(player_intent))
             fresh = tuple(k for k in lore_keys(self.player, mine, self.narrator.lore) if k not in self._described)
             n = len(env.versions) + 1
             plan = env
@@ -538,8 +572,8 @@ class GameSession:
             progressed = replace(plan, versions=(*env.versions, s.state.version), ticks=(*env.ticks, s.state.clock),
                                  percepts=_compact(env.percepts + mine), fresh=env.fresh + fresh, done=done)
             described = self._described | set(fresh)
-            after.update(env=progressed, described=described)
-            return (progressed if persist else None), self._state(sched, described)
+            after.update(env=progressed, described=described, history=history)
+            return (progressed if persist else None), self._state(sched, described, history)
 
         settlement = self.authority.settle(intents, annotate)
         if "env" not in after:
@@ -547,6 +581,7 @@ class GameSession:
                 raise VersionConflict(f"版本 {head.version} 的意图早已由别的写入者结算")
             raise RuntimeError(f"版本 {head.version} 的意图早已结算过：会话与存储不一致")
         self.scheduler, self._described = sched, after["described"]
+        self.choice_history = after["history"]
         clock.lap("settle")
         self.indexer.drain()
         clock.lap("index")

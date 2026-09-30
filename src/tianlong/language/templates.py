@@ -5,6 +5,7 @@
           SOCIAL_VERBS（没有原话的言语按言语行为写成动作：“向钟灵打了个招呼”）
 [POS]: language 的确定性文本层（无 LLM）；memory 用它生成经历文本，narrator 在无模型时用它兜底——同一套措辞，两处复用。
        所见清单按所在处归拢成人话（也是交给声音模型的事实清单：更短、更像话，每条事实照旧都在）
+       物品请求只写请求，答应只写答应；实际 GIVE/USE 后果才进入事实文字。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -160,6 +161,8 @@ def _verb(v: PerceivedEvent, names: Names, viewer: str | None, me: str) -> str:
         Op.ATTACK: f"猛地向{t}出手" if v.kind == Op.ATTACK.value and v.target else "出手",
         Op.STUDY: f"埋头研读{t}",
         Op.USE: f"服下{o}" if v.target == v.actor else f"把{o}用在{t}身上",
+        Op.REQUEST_ITEM: (f"请求{t}把{o}交给自己，以便帮助{_n(names, v.beneficiary, viewer, me)}"
+                          if v.beneficiary else f"向{t}提出物品请求"),
     }
     return table[op]
 
@@ -222,4 +225,3 @@ def render_experience(modality: Modality, event: PerceivedEvent, names: Names, v
     """以某种感官经历一个事件：“听到……”“看见……”。"""
     prefix = {Modality.SOUND: "听到", Modality.SIGHT: "看见", Modality.SPEECH: "听见"}.get(modality, "")
     return prefix + render_event(event, names, viewer, me)
-

@@ -8,6 +8,7 @@
        是否认识新实体、有效新观察数。行动条件化包含言语命题（谓词、主语、宾语、极性、提问）。
        位置与已知性各带可学习的“惯性”项：大多数事实不变，模型只需学会何时改变。
        关系编码在行动条件化之前、与行动无关：forward(encoded=...) 让“一张认知图 × 多个候选”只编码一次
+       行动条件化含第六个角色：请求受益人。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -56,9 +57,9 @@ class RelationalEncoder(nn.Module):
 
 
 class ActionEncoder(nn.Module):
-    """ActionCode → 行动向量 + 逐节点角色标记（目标/对象/行动者/命题主语/命题宾语）。策略网络与动态模型共用同一种编码。"""
+    """ActionCode → 行动向量 + 逐节点角色标记（目标/对象/行动者/命题主语/命题宾语/受益人）。策略网络与动态模型共用同一种编码。"""
 
-    ROLES = 5
+    ROLES = 6
 
     def __init__(self, d: int) -> None:
         super().__init__()
@@ -114,7 +115,7 @@ class DynamicsModel(nn.Module):
         n, b = h.size(0), int(data.act_op.numel())
         refs = [(data.act_target, data.act_has_target), (data.act_obj, data.act_has_obj),
                 (data.act_actor, data.act_has_actor), (data.act_topic_subj, data.act_has_topic_subj),
-                (data.act_topic_val, data.act_has_topic_val)]
+                (data.act_topic_val, data.act_has_topic_val), (data.act_beneficiary, data.act_has_beneficiary)]
         a = self.action(h, data.act_op, data.act_manner, data.act_topic_pred, data.act_topic_flags, refs)   # [B, d]
 
         flags = torch.zeros(n, ActionEncoder.ROLES, device=h.device)

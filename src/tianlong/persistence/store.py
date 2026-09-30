@@ -1,10 +1,11 @@
 """
 [INPUT]: 依赖 core 的 WorldState / Event / Observation / Intent / Percept / MemoryRecord，cognition 的 BeliefStore
-[OUTPUT]: 对外提供 WorldRef / TurnEnvelope / CommitBatch / VersionConflict / RequestConflict / UnknownWorld / WorldStore 协议、
+[OUTPUT]: 对外提供 WorldRef / TurnEnvelope / ChoiceUse / CommitBatch / VersionConflict / RequestConflict / ChoiceConflict / UnknownWorld / WorldStore 协议、
           check_request_progress()（请求绑定检查：两个后端在提交的同一临界区 / 事务里调用）
 [POS]: persistence 的契约；内存实现与 Neo4j 实现都遵守它。commit 是唯一写路径：版本检查 + 请求绑定检查 + 世界变化 + 事件 + 观察 + 认知
        + 待索引经历 + 请求进度（TurnEnvelope）+ 会话运行态，一次原子提交——“世界推进了”与“这个请求推进到哪了”不可能只落一半，
        同一请求的重复投递也不可能各结算一次（进度必须恰好接在已落库的那一份之后）。
+       冻结菜单经 decision / publish_decision 旁路发布；consume_decision 与首 tick 同事务，菜单与世界不会只落一半。
        叙述文字另走幂等的 record_render()：文字失败不回滚世界，世界也不因文字重试而再结算一次
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -27,6 +28,12 @@ class WorldRef:
 
     def __str__(self) -> str:
         return f"{self.world_id}@{self.branch_id}"
+
+
+@dataclass(frozen=True, slots=True)
+class ChoiceUse:
+    decision_id: str
+    choice_id: str
 
 
 # ============================================================
@@ -55,6 +62,8 @@ class TurnEnvelope:
     followups: tuple[Intent, ...] = ()    # 多步计划的后续步骤（“拿起长剑向龚光杰刺去”= 拿 → 刺）：第 i+1 个 tick 用第 i 个；
                                           # 计划走完之后的 tick 玩家原地等待（反应 tick、多 tick 等待）
     reaction: bool = False                # 计划之后是否追加一个反应 tick：对人说了话、做了姿态、动了手，在场的人当场回应
+    choice: ChoiceUse | None = None       # 首 tick 原子消费的冻结菜单选项；后续 tick 与重放不再消费
+    command: str = ""                     # 冻结的展示文字供崩溃后叙述；不重新解释它
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +85,22 @@ class VersionConflict(Exception):
 
 class RequestConflict(Exception):
     """同一个 request_id 带来了不同的请求内容，或这份进度接不上已落库的那一份：拒绝执行，而不是猜哪一份才算数。"""
+
+
+class ChoiceConflict(RequestConflict):
+    """菜单已过期、被消费或选项不存在。"""
+
+
+def consume_decision(decision: Mapping[str, Any] | None, progress: TurnEnvelope,
+                     expected_version: int) -> Mapping[str, Any] | None:
+    """三个后端在提交临界区调用。只有首 tick 消费，与世界和请求进度一起提交或回滚。"""
+    use = progress.choice
+    if use is None or len(progress.versions) != 1:
+        return decision
+    if (decision is None or decision["id"] != use.decision_id or decision["version"] != expected_version
+            or decision.get("consumed_request") or not any(c["id"] == use.choice_id for c in decision["choices"])):
+        raise ChoiceConflict("局势已经变化，请刷新后重新选择")
+    return {**decision, "consumed_request": progress.request_id, "consumed_choice": use.choice_id}
 
 
 def check_request_progress(prior: TurnEnvelope | None, progress: TurnEnvelope, version: int) -> None:
@@ -113,6 +138,9 @@ class WorldStore(Protocol):
     def request(self, ref: WorldRef, request_id: str) -> TurnEnvelope | None: ...
     def session_state(self, ref: WorldRef) -> Mapping[str, Any] | None: ...
     def save_versions(self, ref: WorldRef) -> Mapping[str, str]: ...
+    def decision(self, ref: WorldRef) -> Mapping[str, Any] | None: ...
+    def publish_decision(self, ref: WorldRef, decision: Mapping[str, Any],
+                         expected_version: int) -> Mapping[str, Any]: ...
 
     # ---- 写（唯一路径）----
     def commit(self, batch: CommitBatch) -> None: ...

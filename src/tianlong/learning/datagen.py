@@ -15,6 +15,7 @@ from __future__ import annotations
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from tianlong.agents.policies import ScriptedPolicy, Situation
 from tianlong.agents.predictors import HeuristicPredictor
@@ -35,8 +36,10 @@ from tianlong.core import (
 )
 from tianlong.kernel import Kernel
 from tianlong.learning.parallel import ordered_map
-from tianlong.learning.samples import Sample, agent_sample, env_sample
 from tianlong.learning.task import TaskConfig
+
+if TYPE_CHECKING:
+    from tianlong.learning.samples import Sample
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,8 @@ def observation_gain(changes: list[BeliefChange], own: frozenset[tuple[str, str]
 
 def _collect_world(job: tuple[RolloutConfig, int]) -> tuple[list[Sample], list[Sample]]:
     """一个世界的全部样本（环境视角，角色视角）：只依赖 (配置, 世界序号) 派生的种子。"""
+    from tianlong.learning.samples import agent_sample, env_sample
+
     cfg, w = job
     kernel, policy, predictor = Kernel(), ScriptedPolicy(), HeuristicPredictor()
     sc = cfg.task.scenario(cfg.seed * 1_000_003 + w)

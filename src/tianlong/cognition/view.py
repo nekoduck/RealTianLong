@@ -10,6 +10,7 @@
        事件节点带着内容（操作、渠道、结果、原因、言语命题的谓词与极性），命题的主语与宾语以 ABOUT/ABOUT_VALUE 边连回实体；
        容纳者节点带着“多久以前看清过/翻查过”（个人记录，探索的依据）。
        learning 只接受 GraphView——角色入口在结构上拿不到 WorldState，隔离由类型边界保证
+       物品请求以 FOR 边连接受益人；持久请求义务和回应状态在短期经历滚掉后仍进入个人视图。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -41,7 +42,7 @@ from tianlong.core.attributes import AttrSpec, true_value
 
 ONEWAY_TO = "ONEWAY_TO"
 VIEW_RELS = (*(r.value for r in Rel), ONEWAY_TO)
-EVENT_RELS = ("OCCURRED_AT", "BY", "ON", "WITH", "ABOUT", "ABOUT_VALUE")
+EVENT_RELS = ("OCCURRED_AT", "BY", "ON", "WITH", "ABOUT", "ABOUT_VALUE", "FOR")
 EVENT_KIND = "event"
 
 
@@ -185,9 +186,20 @@ def belief_view(store: BeliefStore, now: int) -> GraphView:
             topic_ids = (tp.subject, tp.value if isinstance(tp.value, str) else None)
         nodes.append(ViewNode(eid, EVENT_KIND, (), False, tuple(content)))
         age = now - ep.tick
-        ends = (ev.place, ev.actor, ev.target, ev.obj, *topic_ids)
+        ends = (ev.place, ev.actor, ev.target, ev.obj, *topic_ids, ev.beneficiary)
         for rel, other in zip(EVENT_RELS, ends, strict=True):
             if other and store.knows(other):
                 edges.append(ViewEdge(eid, rel, other, True, 1.0, age, ep.informant is not None))
+
+    # 请求义务在经历滚掉后仍进入策略观测。它只含这个角色听见/说出的请求与回应，不读任何库存真相。
+    for i, ob in enumerate(store.obligations):
+        if ob.kind not in ("request_item", "requested_item"):
+            continue
+        eid = f"request:{i}"
+        nodes.append(ViewNode(eid, EVENT_KIND, event=(("op", "request_item"), ("request_state", ob.state))))
+        actor, listener = (ob.counterpart, store.owner) if ob.kind == "request_item" else (store.owner, ob.counterpart)
+        for rel, other in (("BY", actor), ("ON", listener), ("WITH", ob.item), ("FOR", ob.beneficiary)):
+            if other and store.knows(other):
+                edges.append(ViewEdge(eid, rel, other, age=max(0, now-ob.since)))
 
     return GraphView(store.owner, now, tuple(nodes), tuple(edges))

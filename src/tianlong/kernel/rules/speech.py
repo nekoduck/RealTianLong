@@ -2,6 +2,7 @@
 [INPUT]: 依赖 kernel/rules/base 的 ActionRule，kernel/space 的同处查询，kernel/perception 的 Witnessing
 [OUTPUT]: 对外提供 TellRule、AskRule
 [POS]: kernel/rules 的言语行动；说话不改变物理世界，只改变听者获得的“说法”——命题可以是谎言，真假由听者自行权衡
+       RequestItemRule 只传播请求，不改库存与伤毒，也不替 NPC 接受请求。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -61,3 +62,8 @@ class TellRule(_SpeechRule):
 class AskRule(_SpeechRule):
     op = Op.ASK
     # 提问不传递事实；问题本身随 PerceivedEvent.topic 抵达对方
+
+
+class RequestItemRule(_SpeechRule):
+    """请求只传递物品与受益人；绝不检查/代替听者的给予决策，也不产生位置或疗效变化。"""
+    op = Op.REQUEST_ITEM

@@ -4,6 +4,7 @@
           FRIENDLY_SOCIAL / OpSignature（命题“接受”与“必须”分开：言语的命题可选）/ OP_SIGNATURES / is_functional
 [POS]: core 的领域词汇表；kernel 据此裁定物理，cognition 据此生成候选与修正信念，learning 据此构造特征维度。
        属性的类型与获知途径在 core/attributes（唯一真相源）
+       REQUEST_ITEM 的物品与受益人有类型签名，请求不代表交付或疗效。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -89,6 +90,7 @@ class Op(StrEnum):
     ATTACK = "attack"    # 动手：先伤、再制住（点穴，限时自解）
     STUDY = "study"      # 研读手中的秘籍，累积进度后习得技能
     USE = "use"          # 把手中物品用在某人（含自己）身上：解药解毒
+    REQUEST_ITEM = "request_item"  # 请求听者把物品交给说话者，以帮助明确的受益人；请求本身不转移物品
 
 
 class Manner(StrEnum):
@@ -131,6 +133,7 @@ class OpSignature:
     obj: frozenset[Kind] | None = None
     topic: bool = False                    # 是否接受语义内容（命题）
     needs_topic: bool = False              # 是否必须带命题（言语的命题可选：没有命题就是只有原话与言语行为的闲话）
+    beneficiary: frozenset[Kind] | None = None
 
 
 def _k(*kinds: Kind) -> frozenset[Kind]:
@@ -151,4 +154,5 @@ OP_SIGNATURES: dict[Op, OpSignature] = {
     Op.ATTACK: OpSignature(target=_k(Kind.PERSON)),
     Op.STUDY: OpSignature(target=_k(Kind.ITEM)),
     Op.USE: OpSignature(target=_k(Kind.PERSON), obj=_k(Kind.ITEM)),
+    Op.REQUEST_ITEM: OpSignature(target=_k(Kind.PERSON), obj=_k(Kind.ITEM), beneficiary=_k(Kind.PERSON)),
 }

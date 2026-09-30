@@ -19,6 +19,7 @@
        固定追问。否定与非即时语态照旧拦住：规则看见的否定，模型说“照做”也不行；明确的假设（如果/万一/等……就）
        与别人作主语的转述，模型说“即时”也不替玩家动手或摆姿态；问号结尾的整句命令不走快路径。
        模型只看玩家认识的实体（点名与在场的优先，至多 MAX_TABLE 个）与最近两段正文（消解“她/那人”），绝不看世界真相
+       明确物品请求有整句规则快路径；模型步骤也必须校验已知受益人，请求不要求物品在玩家手里。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -136,6 +137,7 @@ _KOWTOW = "磕头|叩首|跪拜|磕几个头|跪下磕头|跪地磕头|(?:向|�
 _FAST: tuple[tuple[Op, re.Pattern[str]], ...] = tuple(
     (op, re.compile(rf"(?:M(?:要|就|这就|先)?)?(?:{body})"))
     for op, body in (
+        (Op.REQUEST_ITEM, "(?:请求|索要)H(?:把I交给M|给MI)(?:以便(?:救助|帮助)(?:M|H|我|自己))?"),
         (Op.INSPECT, "环顾四周|环顾|环视四周|看看四周|四下看看|四处看看|四下张望|看看周围|观察四周|查看四周|打量四周|四下打量"),
         (Op.WAIT, "等待|等等|等一等|等一下|等一会儿?|等片刻|稍等片刻?|等一炷香|等一盏茶|等半个时辰|等一个时辰|等到?天黑|"
                   "等到入夜|等到晚上|原地等待|休息一会儿?|歇一会儿?|歇息片刻"),
@@ -174,7 +176,7 @@ _SYSTEM = (
     "kind：\n"
     "- act：玩家亲手做的 1~3 个步骤（steps，按先后）。op：move 去某地或穿过某门、take 拿起、put 放下、give 交给、"
     "unlock 开锁、lock 上锁、inspect 仔细查看地点陈设或搜人身、attack 动手、study 研读手中秘籍、"
-    "use 把手中物品用在某人（含自己）身上、wait 等待。"
+    "use 把手中物品用在某人（含自己）身上、wait 等待、request_item 请求 NPC 把物品交给玩家以帮助 beneficiary（默认自己）。请求不是 give，也不是直接施治。"
     "例：“拿起长剑向龚光杰刺去”= take 长剑、attack 龚光杰；离开当前地点（“溜出大殿”）= move 经一条出路到那头："
     "target 填那头的地点，obj 填那扇门。\n"
     "- say：对一个人说话或发问。listener=听者；speech=tell（说）或 ask（问）；line=真正说出口的话，"
@@ -207,7 +209,7 @@ def _schema(ids: Sequence[str]) -> dict[str, Any]:
     step = {
         "type": "object",
         "properties": {"op": {"type": "string", "enum": [o.value for o in Op]}, "target": ref, "obj": ref,
-                       "manner": {"type": "string", "enum": [m.value for m in Manner]}},
+                       "manner": {"type": "string", "enum": [m.value for m in Manner]}, "beneficiary": ref},
         "required": ["op", "target", "obj", "manner"],
     }
     return {
@@ -237,7 +239,7 @@ def _schema(ids: Sequence[str]) -> dict[str, Any]:
 _NEGATED = clarify(ParsedCommand("", SpeechMode.NEGATED, None))
 _VAGUE = "你一时不知从何下手。"
 _IN_HAND = {Op.STUDY: "target", Op.GIVE: "obj", Op.PUT: "obj", Op.USE: "obj", Op.UNLOCK: "obj", Op.LOCK: "obj"}
-_TO_OTHERS = (Op.ATTACK, Op.INSPECT, Op.GIVE, Op.TELL, Op.ASK)
+_TO_OTHERS = (Op.ATTACK, Op.INSPECT, Op.GIVE, Op.TELL, Op.ASK, Op.REQUEST_ITEM)
 
 
 def _role_kind(op: Op, role: str) -> Kind | None:
@@ -504,7 +506,7 @@ class Interpreter:
             return _unclear(clarify(command), command, "llm")     # “如果龚光杰攻击我，我就还手”“钟灵去拿长剑”
         first = plan[0]
         repeat, until = wait_length(text.lower()) if first.op == Op.WAIT else (1, None)
-        speech = first.op in (Op.TELL, Op.ASK)
+        speech = first.op in (Op.TELL, Op.ASK, Op.REQUEST_ITEM)
         line = self._own_words(data, text, me, first.target, first.op == Op.ASK) if speech else None
         kind = MoveKind.SAY if speech and len(plan) == 1 else MoveKind.ACT
         return Parsed(first, line, source="llm", repeat=repeat, until=until, command=command, kind=kind,
@@ -522,7 +524,7 @@ class Interpreter:
             if op is None or (op == Op.WAIT and len(steps) > 1):
                 return plan, None                            # 等待只能单独成为一个计划
             refs: dict[str, str | None] = {}
-            for role in ("target", "obj"):
+            for role in ("target", "obj", "beneficiary"):
                 value = raw.get(role)
                 if value in (None, "", "null", "none"):
                     refs[role] = None
@@ -531,10 +533,11 @@ class Interpreter:
                 else:
                     return plan, _lack(op, None, _role_kind(op, role))
             manner = _enum(Manner, raw.get("manner")) or Manner.NORMAL
-            cand = normalize(Candidate(op, refs["target"], refs["obj"], hinted if manner == Manner.NORMAL else manner),
-                             me, here)
+            beneficiary = (refs["beneficiary"] or me.owner) if op == Op.REQUEST_ITEM else None
+            cand = normalize(Candidate(op, refs["target"], refs["obj"], hinted if manner == Manner.NORMAL else manner,
+                                       beneficiary=beneficiary), me, here)
             if cand.op == Op.MOVE and cand.target is None and refs["target"] == here and leaving(text.lower()):
-                out = leave_here(me, cand.manner, here)      # 说了“离开此地”却没说走哪扇门：只有一条出路就走它
+                out = leave_here(me, cand.manner, here)      # 说了“离开此地”且只有一条出路才替人走
                 if out.candidate is None:
                     return plan, out.clarification
                 cand = out.candidate

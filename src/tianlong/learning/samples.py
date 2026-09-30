@@ -12,6 +12,7 @@
        “不知道”被拆成三件事分别建模：仍不知道（UNKNOWN）、确知不在原处而去向不明（GONE）、认识了新实体（discover）；
        动态属性按类型给标签：布尔三态、数值（值 + 是否已知）——修习进度、学成的技能、被吸走的内力都是预测目标。
        标签只来自内核实际执行的结果
+       受益人行动指针有有无掩码，PyG 批处理时与其他节点指针一起偏移。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -175,7 +176,7 @@ def agent_sample(
 # ============================================================
 
 _INC_KEYS = frozenset({"located", "holder_now_idx", "holder_next_idx", "act_target", "act_obj", "act_actor",
-                       "act_topic_subj", "act_topic_val"})
+                       "act_topic_subj", "act_topic_val", "act_beneficiary"})
 
 
 class DynData(Data):
@@ -197,12 +198,14 @@ def _action_fields(a: ActionCode) -> dict[str, torch.Tensor]:
     act, no_act = _ptr(np.array([a.actor]))
     subj, no_subj = _ptr(np.array([a.topic_subj]))
     val, no_val = _ptr(np.array([a.topic_val]))
+    bene, no_bene = _ptr(np.array([a.beneficiary]))
     return dict(
         act_op=torch.tensor([a.op]), act_manner=torch.tensor([a.manner]),
         act_target=tgt, act_has_target=~no_tgt, act_obj=obj, act_has_obj=~no_obj, act_actor=act, act_has_actor=~no_act,
         act_topic_pred=torch.tensor([a.topic_pred + 1]),          # 0 = 无命题
         act_topic_subj=subj, act_has_topic_subj=~no_subj, act_topic_val=val, act_has_topic_val=~no_val,
         act_topic_flags=torch.tensor([[a.topic_holds, a.topic_query]], dtype=torch.float32),
+        act_beneficiary=bene, act_has_beneficiary=~no_bene,
     )
 
 
