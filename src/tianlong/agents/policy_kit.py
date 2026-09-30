@@ -1,7 +1,8 @@
 """
 [INPUT]: 依赖 cognition 的 BeliefStore / Candidate / navigation，core 的 Fact / Kind / Manner / Modality / Op / Proposition / Rel，
          core/profiles 的 Profile，agents/predictors 的 Prediction，memory/view 的 MemoryView
-[OUTPUT]: 对外提供 Situation（可带主角 player）/ Choice（含结构化标签 tag、言语行为 social、候选之外的言语 free 与 chosen()）/ Policy 协议、
+[OUTPUT]: 对外提供 Situation（可带主角 player）/ Choice（含结构化标签 tag、言语行为 social、候选之外的言语 free、驱力的原话 line 与出处 drive、
+          chosen()）/ Policy 协议、
           PolicyKit（规则策略共享的“在候选集中挑选”、沿自己的地图带路（认为锁着的门先试着开、打不开就不去撞）、凭个人勘察记录探索、
           开口积木 _say()（候选之外的闲话）/ _tell()（候选之外、带自己相信的命题的答话），index 都指向 WAIT，
           与 _last_spoke()（最近一次对谁开口）、信念查询积木）、WAIT_REASONS、SPEAK、CHATTER、RECENT、STALE
@@ -60,6 +61,9 @@ class Choice:
                                         # 命题须是说话者自己认为为真的信念（被问到候选话题之外的事也照实答）；ASK 永不带命题。
                                         # 不占策略的动作编号（候选规则版本不变）：index 须指向 WAIT 候选，
                                         # 只认 index 的消费者（学习层的数据生成、示范）把它当作等待
+    line: str | None = None             # 驱力给的原话：在 chosen() 之后挂上（不挂在候选上），成为任何行动的 utterance；
+                                        # 只是修辞，只认 index 的学习层看不见
+    drive: str | None = None            # 这一步出自哪条驱力（驱力标记据此只记兑现成功的）
 
     def chosen(self, cands: Sequence[Candidate], beliefs: BeliefStore | None = None) -> Candidate:
         """最终交给内核的行动：free 优先，否则取候选并附上言语行为。

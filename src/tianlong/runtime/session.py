@@ -1,14 +1,15 @@
 """
 [INPUT]: 依赖 runtime/authority 的 WorldAuthority / Settlement，runtime/versions 的 current_versions / check_save，runtime/talk 的谈资账本，
          runtime/gm 的主持层纯函数（gm_command / companions / salient / build_brief），runtime/aside 的 AsideMixin / ENDED（不推进的回合），
-         runtime/endings 的 EndingMixin（落幕与终章），agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
+         runtime/endings 的 EndingMixin（落幕与终章），runtime/cast 的 policy_for / wakes / advance_marks（驱力），
+         agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
          memory 的 QdrantMemoryIndex / Recall / MemoryIndexer / MemoryScope，language 的 IntentParser / MoveKind / Parsed / Narrator /
          TemplateSpeaker / LLMClient，language/scene 的 SceneBrief / TextSink，
          language/render 的 Rendered，persistence 的 WorldStore / InMemoryWorldStore / WorldRef / TurnEnvelope /
          RequestConflict / VersionConflict，scenarios 的 Scenario / Ending，cognition 的 Candidate / believed_place，
          language/templates 的 render_fact，memory/view 的 MemoryView（NPC 的长期记忆摘要，增量汇总——水位含边界、按记录 ID 去重，与读档后重建逐项相同）
 [OUTPUT]: 对外提供 GameSession（可玩会话：turn() 一回合、intro()/epilogue() 开场与终章、belief_lines() 玩家自己的认知；
-          读档接续并恢复调度标记、已描写实体、最近几段正文、提示进度与谈资账本；请求幂等、存档版本闸门）、
+          读档接续并恢复调度标记、已描写实体、最近几段正文、提示进度、谈资账本与驱力标记；请求幂等、存档版本闸门）、
           TurnReport（一回合的全部产物：世界侧与文字侧分开记录，含这句话的类别、结局、首字耗时、分阶段耗时与叙述上下文）、
           ENDED（再导出自 runtime/aside）
 [POS]: runtime 的装配中心（主持层的回合循环）：一回合 = 解释玩家输入（后台同时算好本 tick 的 NPC 决策；元指令与“GM：”一眼认得，不算）→ 按类别推进：
@@ -25,7 +26,9 @@
        不推进的回合不落库，带 request_id 的只记在本进程里（最近 ASIDE_KEEP 个）：重试原样返回，提示不多翻、模型不再问。
        请求绑定由存储在提交内检查：并发的重复投递只有一次能提交某个 tick，被越过的一方即停、以落库的那一份为准返回，
        对方尚未走完时只给出目前为止的文字、不落库。建档后尚无提交就读档，开场已描写的实体按开场规则补回。
-       NPC 决策图里从不调模型（台词由主持人之声一并写出），向量回忆只为声明 reads_memories 的策略而跑。
+       NPC 决策图里从不调模型（台词由主持人之声一并写出，驱力的原话除外——它随意图落库），向量回忆只为声明 reads_memories 的策略而跑。
+       场景给了驱力的 NPC 经 cast.policy_for 套上 Driven，时间窗打开即唤醒（cast.wakes，不改调度器）；
+       驱力标记在 annotate 的副本上推进（只记兑现成功的），与调度标记同一事务落库。
        CLI、测试、未来的 Web 前端都只和它打交道
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -39,7 +42,7 @@ from dataclasses import dataclass, field, replace
 
 from tianlong.agents.npc_graph import NpcContext
 from tianlong.agents.orchestrator import Deliberation, Orchestrator
-from tianlong.agents.policies import Policy, ScriptedPolicy
+from tianlong.agents.policies import Policy
 from tianlong.agents.port import AgentPort
 from tianlong.agents.predictors import HeuristicPredictor, OutcomePredictor
 from tianlong.agents.scheduler import Scheduler
@@ -81,7 +84,7 @@ from tianlong.persistence import (
     WorldRef,
     WorldStore,
 )
-from tianlong.runtime import gm, talk
+from tianlong.runtime import cast, gm, talk
 from tianlong.runtime.aside import ENDED, AsideMixin
 from tianlong.runtime.authority import Settlement, WorldAuthority
 from tianlong.runtime.endings import EndingMixin
@@ -242,6 +245,7 @@ class GameSession(AsideMixin, EndingMixin):
         self._recent: list[str] = []        # 最近几段正文（派生数据：叙述之后更新，随下一次提交落库）
         self._hint = 0                      # 已给出的逐级提示条数
         self._told: dict[str, set[int]] = {}   # 谈资账本：每个 NPC 已经出现在正文里的谈资条目（派生数据，随下一次提交落库）
+        self._marks: dict[str, dict[str, list[int]]] = {}   # 驱力标记：角色 → 驱力 → 兑现成功的时刻（随世界同一事务落库）
         self._asides: dict[str, tuple[str, TurnReport]] = {}   # 带 request_id 的不推进回合：ID → (原文摘要, 报告)
         self._restore(session_state)
         self.llm = llm
@@ -279,12 +283,14 @@ class GameSession(AsideMixin, EndingMixin):
         return clock_label(self.authority.head().clock)
 
     def session_state(self) -> dict:
-        """会话运行态：随每次世界提交一起落库的那一份（调度标记 + 已描写实体 + 最近几段正文 + 提示进度）。"""
+        """会话运行态：随每次世界提交一起落库的那一份（调度标记 + 已描写实体 + 最近几段正文 + 提示进度 + 驱力标记）。"""
         return self._state(self.scheduler, self._described)
 
-    def _state(self, sched: Scheduler, described: set[str]) -> dict:
+    def _state(self, sched: Scheduler, described: set[str], marks: cast.Cast | None = None) -> dict:
+        marks = self._marks if marks is None else marks
         return {"scheduler": sched.to_state(), "described": sorted(described), "recent": list(self._recent),
-                "hint": self._hint, "told": {k: sorted(v) for k, v in sorted(self._told.items()) if v}}
+                "hint": self._hint, "told": {k: sorted(v) for k, v in sorted(self._told.items()) if v},
+                "drives": {a: {k: list(v) for k, v in sorted(m.items())} for a, m in sorted(marks.items()) if m}}
 
     def _restore(self, state: Mapping | None) -> None:
         """会话运行态以落库的那一份为准：读档时，以及一次请求被同一请求的另一次投递越过之后。"""
@@ -294,6 +300,8 @@ class GameSession(AsideMixin, EndingMixin):
         self._recent = [str(x) for x in state.get("recent", ())][-RECENT_KEEP:]
         self._hint = int(state.get("hint", 0))
         self._told = {str(k): {int(i) for i in v} for k, v in (state.get("told") or {}).items()}
+        self._marks = {str(a): {str(k): [int(t) for t in v] for k, v in m.items()}
+                       for a, m in (state.get("drives") or {}).items()}
 
     def _opening_keys(self) -> list[str]:
         """开场讲的初始认知里应当描写外观的实体：新游戏的 intro() 描写它们，建档后尚无提交就读档时据此补回“已描写”。"""
@@ -563,15 +571,16 @@ class GameSession(AsideMixin, EndingMixin):
             progressed = replace(plan, versions=(*env.versions, s.state.version), ticks=(*env.ticks, s.state.clock),
                                  percepts=_compact(env.percepts + mine), fresh=env.fresh + fresh, done=done)
             described = self._described | set(fresh)
-            after.update(env=progressed, described=described)
-            return (progressed if persist else None), self._state(sched, described)
+            marks = cast.advance_marks(self._marks, deliberations, s)     # 驱力标记：只记兑现成功的
+            after.update(env=progressed, described=described, marks=marks)
+            return (progressed if persist else None), self._state(sched, described, marks)
 
         settlement = self.authority.settle(intents, annotate)
         if "env" not in after:
             if persist:     # 带请求：多半是同一请求的另一次投递抢先结算了这一 tick，交由 _advance 按“被越过”处理
                 raise VersionConflict(f"版本 {head.version} 的意图早已由别的写入者结算")
             raise RuntimeError(f"版本 {head.version} 的意图早已结算过：会话与存储不一致")
-        self.scheduler, self._described = sched, after["described"]
+        self.scheduler, self._described, self._marks = sched, after["described"], after["marks"]
         clock.lap("settle")
         self.indexer.drain()
         clock.lap("index")
@@ -605,8 +614,10 @@ class GameSession(AsideMixin, EndingMixin):
 
     def _npc_split(self, now: int) -> tuple[list[str], list[str]]:
         due, routine = [], []
+        last = self.scheduler.to_state()
         for a in self.scenario.npcs:
-            (due if self.scheduler.due(a, self.beliefs(a), now, self.scenario.profiles[a]) else routine).append(a)
+            woke = cast.wakes(self.scenario.drives.get(a, ()), last[a][0] if a in last else None, now)  # 驱力的时间窗到了
+            (due if woke or self.scheduler.due(a, self.beliefs(a), now, self.scenario.profiles[a]) else routine).append(a)
         return due, routine
 
     def _memory_view(self, agent: str, now: int) -> MemoryView:
@@ -633,7 +644,7 @@ class GameSession(AsideMixin, EndingMixin):
                 recall=lambda q, scope=scope: self.recall.recall(scope, q),
                 memory=lambda a=a, now=now: self._memory_view(a, now),
             )
-            policy = self.policies.get(a) or ScriptedPolicy()
+            policy = cast.policy_for(a, self.scenario, self.policies.get(a), self._marks.get(a, {}))   # 有驱力就套上
             # 向量回忆只为读 Situation.memories 的策略而跑（策略以 reads_memories = True 声明）；现有策略都不读
             out[a] = NpcContext(port, policy, self.predictor, self.speaker, self.max_candidates,
                                 player=self.player, recall=bool(getattr(policy, "reads_memories", False)))

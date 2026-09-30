@@ -1,7 +1,7 @@
 """
-[INPUT]: 依赖 core 的 WorldState / Percept / Profile
+[INPUT]: 依赖 core 的 WorldState / Percept / Profile / Drive
 [OUTPUT]: 对外提供 Scenario（初始世界 + 角色设定 + 初始认知 + 文风/外观描写/别称（common_words 只供解析）+ 逐级提示 guide（guide_at 按所在处定起点）
-          + 结局 endings + 秘密词表 secrets）、Ending
+          + 结局 endings + 秘密词表 secrets + 各角色的驱力 drives）、Ending
 [POS]: scenarios 的容器类型；初始认知以“过去的感知”给出，于是信念从第一刻起就只有一个来源——感知，没有“直接注入信念”的后门
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from tianlong.core import Percept, WorldState
+from tianlong.core import Drive, Percept, WorldState
 from tianlong.core.profiles import Profile
 
 
@@ -42,6 +42,8 @@ class Scenario:
     secrets: tuple[str, ...] = ()      # 剧情秘密的说法（正则片段，如“私奔”）：只交给叙述闸门，玩家没听说过就不许写进正文
     guide_at: Mapping[str, int] = field(default_factory=dict)   # 玩家身在某地时提示至少从第几条说起（走过的路不再提）
     common_words: frozenset[str] = frozenset()  # 别称里同时是普通名词的（“石壁”）：只供解析，闸门不据此拒绝
+    drives: Mapping[str, tuple[Drive, ...]] = field(default_factory=dict)   # 角色 → 驱力（性情，按表序）：会话把它套在策略外面；
+                                                                            # 没有驱力的角色（及仓库、程序化世界、旧版）一切照旧
 
     @property
     def gate_aliases(self) -> dict[str, tuple[str, ...]]:

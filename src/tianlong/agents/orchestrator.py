@@ -1,11 +1,12 @@
 """
 [INPUT]: 依赖 langgraph 的 StateGraph / Send / Runtime，agents/npc_graph 的 build_npc_graph / NpcContext / checkpoint_serde，
          agents/policies 的 hush_chatter，cognition 的 Candidate，core 的 Intent / Op
-[OUTPUT]: 对外提供 Deliberation（一次决策的可解释轨迹，带策略标签）、Orchestrator（一个 tick 内多个 NPC 的并行决策；
+[OUTPUT]: 对外提供 Deliberation（一次决策的可解释轨迹，带策略标签与驱力出处 drive）、Orchestrator（一个 tick 内多个 NPC 的并行决策；
           每处每 tick 至多一句闲谈；决策轨迹检查点须显式开启，开启后按条数修剪）
 [POS]: agents 的多智能体编排：基于同一版本观察，把需要决策的角色扇出（Send）并行运行各自的决策流程，汇总结构化意图。
        汇总时裁决话头（hush_chatter）：同处几个人同时想闲谈只留一句、已有人正经开口则闲谈让出——地点取各人自己认为的所在，
-       按捺住的改为原地等待（同一意图 ID），与扇出顺序无关、确定性可重算。
+       按捺住的改为原地等待（同一意图 ID），与扇出顺序无关、确定性可重算。驱力的选择从不让出话头（按正经开口 SPEAK 算），
+       改写成等待时也不丢驱力的原话。
        它只产出意图，从不写世界——提交与冲突结算归 WorldAuthority。
        检查点默认关闭：剖析显示它占 NPC 决策耗时的 65~75%，而会话从不读它（重试靠意图 ID 去重，不靠恢复轨迹）；
        要看决策轨迹（调试、测试）就显式传 checkpoint=True
@@ -27,7 +28,7 @@ from langgraph.types import Send
 
 from tianlong.agents.npc_graph import NpcContext, build_npc_graph, checkpoint_serde
 from tianlong.agents.policies import hush_chatter
-from tianlong.agents.policy_kit import CHATTER
+from tianlong.agents.policy_kit import CHATTER, SPEAK
 from tianlong.cognition import Candidate
 from tianlong.core import Intent, Op
 
@@ -40,6 +41,7 @@ class Deliberation:
     recalled: tuple[str, ...]
     considered: int
     tag: str = ""        # 策略的结构化标签（等待原因、explore、speak、chatter）
+    drive: str = ""      # 这一步出自哪条驱力（空 = 不是驱力）：会话据此只给兑现成功的驱力记标记
 
 
 class _TickState(TypedDict, total=False):
@@ -81,7 +83,7 @@ class Orchestrator:
             out = npc_graph.invoke({"agent": port.agent}, config=config, context=ctx)
             d = Deliberation(port.agent, out["intent"], out["rationale"],
                              tuple(out.get("recent", [])) + tuple(out.get("related", [])),
-                             len(out["candidates"]), out.get("tag", ""))
+                             len(out["candidates"]), out.get("tag", ""), out.get("drive") or "")
             return {"deliberations": [d]}
 
         g = StateGraph(_TickState, context_schema=_TickContext)
@@ -105,13 +107,16 @@ class Orchestrator:
 
     @staticmethod
     def _share_the_floor(delibs: list[Deliberation], npcs: Mapping[str, NpcContext]) -> list[Deliberation]:
-        """每处每 tick 至多一句闲谈：只有开口的人参与裁决，地点取各人自己认为的所在；按捺住的原地等待。"""
+        """每处每 tick 至多一句闲谈：只有开口的人参与裁决，地点取各人自己认为的所在；按捺住的原地等待。
+        驱力的选择从不让出话头（按正经开口算），万一被改写成等待也带着它的原话。"""
         talking = [d for d in delibs if d.intent.op in (Op.TELL, Op.ASK)]
-        if not any(d.tag == CHATTER for d in talking):
+        if not any(d.tag == CHATTER and not d.drive for d in talking):
             return delibs
         port = npcs[talking[0].agent].port
-        hushed = hush_chatter(port.now, {d.agent: (npcs[d.agent].port.beliefs().location_of(d.agent), d.tag,
-                                                   Candidate.of(d.intent)) for d in talking})
-        return [replace(d, intent=Intent(d.intent.id, d.agent, Op.WAIT, based_on=d.intent.based_on),
+        hushed = hush_chatter(port.now, {d.agent: (npcs[d.agent].port.beliefs().location_of(d.agent),
+                                                   SPEAK if d.drive else d.tag, Candidate.of(d.intent))
+                                         for d in talking})
+        return [replace(d, intent=Intent(d.intent.id, d.agent, Op.WAIT, based_on=d.intent.based_on,
+                                         utterance=d.intent.utterance if d.drive else None),
                         rationale=f"{d.rationale}（旁人正说着，没插上嘴）", tag="idle") if d.agent in hushed else d
                 for d in delibs]
