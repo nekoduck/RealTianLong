@@ -1,17 +1,18 @@
 """
-[INPUT]: 依赖 tianlong.runtime.session 的 GameSession（懒加载：核心零依赖套件只用得到指标函数），tianlong.scenarios 的 build_wuliang / Scenario，
+[INPUT]: 依赖 tianlong.runtime.session 的 GameSession（懒加载：核心零依赖套件只用得到指标函数），tianlong.scenarios 的 SCENARIOS / Scenario，
          tianlong.kernel 的 violations 与 kernel/space 的 is_subdued（真相读者），tianlong.language.llm 的 llm_from_env / fast_llm_from_env / GeminiClient（GEMINI_JUDGE_MODEL 另选评审型号），
-         tianlong.core 的 Op / Outcome / Rel / Modality / SKILLS / digest，同目录 bench_rival 的对照组、评审与脚本模型，scripts/bench_probes.json
-[OUTPUT]: 命令行 python scripts/bench_gm.py --out DIR [--llm auto|scripted|none] [--baseline] [--judge] [--turns N]，也是可导入的库：
-          load_probes / validate_probes，percentile / ngrams / overlap / kind_of / classify / asserts_claim / puppet_hits，
-          claim_met / player_acted，timed_turn / engine_turn / run_engine，run_baseline / run_judges，engine_metrics / baseline_metrics，
-          write_report，run / main；并再导出 bench_rival 的 world_bible / PureLLMGM / premise_prompt / pairwise_prompt / parse_verdict /
-          pairwise_order / scripted_llms
-[POS]: scripts 的主持层评测（设计 §7 与“评测细则”）。不属于引擎本体：只把 GameSession 当黑盒一回合一回合地跑，按 TurnReport 与世界真相计分
-       （走到结局时连同终章一并记下、交给整局盲评——玩家落幕时读得到它）；
-       会话新加的字段（on_text、first_text_ms、kind、ending、render.violations / dropped）一律 getattr 取、缺了就退化。
-       每条探针从全新会话出发、先走 setup，异常逐条记下、绝不中断整轮。对照组（纯模型主持人）没有内核可查，
-       C2/R1 只能交给独立评审调用（--judge，严格 JSON）或词法启发式。--llm scripted 的报告开头注明它不是真模型，不作验收依据
+         tianlong.core 的 Op / Outcome / Rel / Modality / SKILLS / digest，同目录 bench_rival（对照组、评审、脚本模型）、bench_metrics（新指标与逐回合记录）、
+         bench_latency（延迟模拟），scripts/bench_probes.json（v2 普通人版；旧版 bench_probes_duanyu.json）
+[OUTPUT]: 命令行 python scripts/bench_gm.py --out DIR [--llm auto|scripted|none] [--baseline] [--judge] [--turns N] [--probes FILE] [--latency-sim]，
+          也是可导入的库：load_probes / validate_probes / world_of / scenario_of，percentile / ngrams / overlap / kind_of / classify / asserts_claim /
+          puppet_hits，claim_met / player_acted，timed_turn / engine_turn / play / run_engine，run_baseline / run_judges，engine_metrics / baseline_metrics，
+          write_report，run / main；并再导出 bench_rival 的 world_bible / PureLLMGM / premise_prompt / pairwise_prompt / parse_verdict / pairwise_order / scripted_llms
+[POS]: scripts 的主持层评测（设计 §7 与“评测细则”，M4 起加 plan §8.3 的 B1 / E1 / NAME / SEAM / FPD / R5 / F3 / TOK / END）。不属于引擎本体：
+       只把 GameSession 当黑盒一回合一回合地跑，按 TurnReport 与世界真相计分（走到结局时连同终章一并记下、交给整局盲评）；探针文件的 variant
+       决定场景（没写的是旧版：--probes scripts/bench_probes_duanyu.json 即 run1–6 的评测），不进盲评的整局（留守型、夜遁型）只量 END / E1 / B1。
+       会话新加的字段（on_text、first_text_ms、kind、ending、beats、render.violations / dropped、相识账本）一律 getattr 取、缺了就退化。
+       每条探针从全新会话出发、先走 setup，异常逐条记下、绝不中断整轮。对照组没有内核可查，C2/R1 只能交给独立评审（--judge，严格 JSON）或词法启发式。
+       --llm scripted 的报告开头注明它不是真模型；--latency-sim 按公开分布模拟延迟、报告标注“模拟”
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -33,17 +34,22 @@ from tianlong.core import SKILLS, Modality, Op, Outcome, Rel, digest
 from tianlong.kernel import violations as kernel_violations
 from tianlong.kernel.space import is_subdued
 from tianlong.language.llm import GeminiClient, fast_llm_from_env, llm_from_env
-from tianlong.scenarios import Scenario, build_wuliang
+from tianlong.scenarios import SCENARIOS, Scenario
 
 if str(Path(__file__).resolve().parent) not in sys.path:     # 按文件路径当库加载时（测试），也找得到同目录的 bench_rival
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from bench_latency import sim_llms  # noqa: E402
+from bench_metrics import Metered, baseline_extra, engine_extra, observe, snapshot, tokens  # noqa: E402
+from bench_metrics import metric as _metric  # noqa: E402
+from bench_metrics import rate as _rate  # noqa: E402
 from bench_rival import (  # noqa: E402
     PAIR_KEYS,
     PAIR_SCHEMA,
     PREMISE_SCHEMA,
     PureLLMGM,
     ask_judge,
+    pair_note,
     pairwise_order,
     pairwise_prompt,
     parse_verdict,
@@ -53,12 +59,15 @@ from bench_rival import (  # noqa: E402
 )
 
 __all__ = ["PureLLMGM", "pairwise_order", "pairwise_prompt", "parse_verdict", "premise_prompt", "scripted_llms",
-           "world_bible", "load_probes", "validate_probes", "percentile", "ngrams", "overlap", "kind_of", "classify",
-           "asserts_claim", "puppet_hits", "claim_met", "player_acted", "timed_turn", "engine_turn", "run_engine",
-           "run_baseline", "run_judges", "engine_metrics", "baseline_metrics", "write_report", "run", "main"]
+           "world_bible", "load_probes", "validate_probes", "world_of", "scenario_of", "percentile", "ngrams", "overlap",
+           "kind_of", "classify", "asserts_claim", "puppet_hits", "claim_met", "player_acted", "timed_turn", "engine_turn",
+           "play", "run_engine", "run_baseline", "run_judges", "engine_metrics", "baseline_metrics", "write_report", "run",
+           "main"]
 
-PROBES = Path(__file__).with_name("bench_probes.json")
+PROBES = Path(__file__).with_name("bench_probes.json")           # v2：普通人版（variant "wuliang"）
+LEGACY = "wuliang-duanyu"                                        # 没写 variant 的探针（v1 与钉住的输入）是旧版
 GROUPS = ("open_actions", "gaslight", "sycophancy")
+EXTRAS = ("playthrough_hall", "playthrough_flee")                # 不进盲评的整局：只量 END、E1、B1 的分布
 CLAIM_KEYS = frozenset({"holds", "skill", "at", "gave", "to", "subdued", "wounded"})
 KINDS = ("act", "say", "gesture", "ask_gm", "meta", "unclear")
 CAUGHT = frozenset({"advanced", "ask_gm", "meta"})        # R4：推进了世界，或当作问主持人/元指令作答
@@ -73,6 +82,15 @@ def load_probes(path: Path | str = PROBES) -> dict[str, Any]:
     return json.loads(Path(path).read_text("utf-8"))
 
 
+def world_of(probes: Mapping[str, Any]) -> str:
+    """探针文件的 variant 决定用哪个场景（SCENARIOS 注册表）；没写的是旧版。"""
+    return str(probes.get("variant") or LEGACY)
+
+
+def scenario_of(probes: Mapping[str, Any], seed: int) -> Scenario:
+    return SCENARIOS[world_of(probes)](seed)
+
+
 def _as_list(v: Any) -> list[Any]:
     return list(v) if isinstance(v, (list, tuple)) else [v]
 
@@ -80,9 +98,12 @@ def _as_list(v: Any) -> list[Any]:
 def validate_probes(data: Mapping[str, Any], scenario: Scenario | None = None) -> list[str]:
     """结构校验；给了场景就再核对 claim/require 里的实体 ID 与技能名。返回错误说明（空 = 合格）。"""
     errs: list[str] = []
-    pt = data.get("playthrough")
-    if not isinstance(pt, list) or not pt or not all(isinstance(x, str) and x.strip() for x in pt):
-        errs.append("playthrough 须是非空字符串列表")
+    if world_of(data) not in SCENARIOS:
+        errs.append(f"variant 不认识 {world_of(data)!r}")
+    for key in ("playthrough", *(k for k in EXTRAS if k in data)):
+        pt = data.get(key)
+        if not isinstance(pt, list) or not pt or not all(isinstance(x, str) and x.strip() for x in pt):
+            errs.append(f"{key} 须是非空字符串列表")
     ents = scenario.state.entities if scenario is not None else None
     seen: set[str] = set()
     for g in GROUPS:
@@ -255,11 +276,15 @@ def player_acted(events: Iterable[Any], player: str) -> bool:
 def _session(scenario: Scenario, voice: Any, fast: Any) -> Any:
     from tianlong.runtime.session import GameSession
     params = inspect.signature(GameSession.__init__).parameters
-    kw: dict[str, Any] = {"llm": voice}
+    kw: dict[str, Any] = {"llm": Metered(voice) if voice is not None else None}      # 记下叙述调用：TOK 与 SEAM
     extra = next((n for n in ("fast_llm", "fast") if n in params), None)
     if extra and fast is not None:
         kw[extra] = fast
-    return GameSession(scenario, **kw)
+    s = GameSession(scenario, **kw)
+    scale = getattr(voice, "lead_scale", None)                   # 延迟模拟缩放了时间：先声的时限同比缩放
+    if scale is not None and getattr(s.narrator, "lead_after", None):
+        s.narrator.lead_after *= scale
+    return s
 
 
 def timed_turn(session: Any, text: str) -> tuple[Any, float, float, bool, str | None]:
@@ -308,7 +333,8 @@ def _status(render: Any) -> str | None:
 def engine_turn(session: Any, text: str, group: str, probe: str | None = None) -> tuple[dict, Any, Any, Any]:
     """跑一回合并记下计分所需的一切 → (记录, TurnReport, 回合前真相, 回合后真相)。"""
     player, npcs = session.player, session.scenario.npcs
-    before = session.authority.head()
+    snap = snapshot(session)
+    before = snap["head"]
     report, first, total, streamed, err = timed_turn(session, text)
     after = session.authority.head()
     rec: dict[str, Any] = {"group": group, "probe": probe, "text": text, "first_ms": round(first, 1),
@@ -327,15 +353,15 @@ def engine_turn(session: Any, text: str, group: str, probe: str | None = None) -
                dropped=getattr(render, "dropped", None),
                npc_present=_present(before, player, npcs) or _present(after, player, npcs),
                npc_spoke=_spoke(report, player, frozenset(npcs), places),
-               ending=None if ending is None else str(getattr(ending, "key", ending)))
+               ending=None if ending is None else str(getattr(ending, "key", ending)), **observe(session, report, snap, text))
     return rec, report, before, after
 
 
-def _engine_probe(p: Mapping[str, Any], group: str, seed: int, voice: Any, fast: Any) -> dict[str, Any]:
+def _engine_probe(p: Mapping[str, Any], group: str, seed: int, voice: Any, fast: Any, world: str = LEGACY) -> dict[str, Any]:
     rec: dict[str, Any] = {"id": p["id"], "group": group, "text": p["text"], "expect": list(p.get("expect", ())),
                            "setup_ok": True, "setup": [], "c1_setup": 0}
     try:
-        s = _session(build_wuliang(seed), voice, fast)
+        s = _session(SCENARIOS[world](seed), voice, fast)
         s.intro()
         for text in p.get("setup", ()):
             srec, *_ = engine_turn(s, text, "setup", p["id"])
@@ -360,27 +386,41 @@ def _echo_turn(echo: Echo, rec: Mapping[str, Any]) -> None:
          + (f"  !! {rec['error']}" if rec.get("error") else ""))
 
 
-def run_engine(probes: Mapping[str, Any], seed: int = 7, voice: Any = None, fast: Any = None, turns: int | None = None,
-               limit: int | None = None, groups: Sequence[str] = GROUPS, echo: Echo = print) -> dict[str, Any]:
-    out: dict[str, Any] = {"intro": "", "playthrough": [], "probes": [], "errors": [], "ending": None, "final_place": None}
+def play(scenario: Scenario, inputs: Sequence[str], voice: Any, fast: Any, group: str = "playthrough",
+         echo: Echo = print, before_epilogue: Callable[[], None] | None = None) -> dict[str, Any]:
+    """一整局：开场、逐句推进，落幕即记下终章并停下。"""
+    out: dict[str, Any] = {"intro": "", "playthrough": [], "errors": [], "ending": None, "final_place": None}
     try:
-        s = _session(build_wuliang(seed), voice, fast)
+        s = _session(scenario, voice, fast)
         out["intro"] = s.intro()
-        for text in probes["playthrough"][:turns]:
-            rec, *_ = engine_turn(s, text, "playthrough")
+        for text in inputs:
+            rec, *_ = engine_turn(s, text, group)
             out["playthrough"].append(rec)
             _echo_turn(echo, rec)
             if rec.get("ending"):
                 out["ending"] = rec["ending"]
+                if before_epilogue is not None:
+                    before_epilogue()
                 out["epilogue"] = s.epilogue()      # 玩家在网页与命令行里落幕时读到的终章（收束 + 真相揭晓）
                 break                               # 落幕：本幕到此为止
         head = s.authority.head()
         out["final_place"] = head.entity(head.target(s.player, Rel.AT)).name   # 整局走到了哪里（真相）
     except Exception as e:  # noqa: BLE001
-        out["errors"].append(f"playthrough: {type(e).__name__}: {e}")
+        out["errors"].append(f"{group}: {type(e).__name__}: {e}")
+    return out
+
+
+def run_engine(probes: Mapping[str, Any], seed: int = 7, voice: Any = None, fast: Any = None, turns: int | None = None,
+               limit: int | None = None, groups: Sequence[str] = GROUPS, echo: Echo = print) -> dict[str, Any]:
+    world = world_of(probes)
+    out = dict(play(SCENARIOS[world](seed), probes["playthrough"][:turns], voice, fast, echo=echo), probes=[])
+    extras = {k: play(SCENARIOS[world](seed), probes[k][:turns], voice, fast, k, echo) for k in EXTRAS if k in probes}
+    if extras:
+        out["extras"] = extras
+        out["errors"] += [e for x in extras.values() for e in x["errors"]]
     for g in groups:
         for p in probes.get(g, [])[:limit]:
-            rec = _engine_probe(p, g, seed, voice, fast)
+            rec = _engine_probe(p, g, seed, voice, fast, world)
             out["probes"].append(rec)
             if "turn" in rec:
                 _echo_turn(echo, rec["turn"])
@@ -413,12 +453,16 @@ def _gm_record(rec: dict[str, Any], group: str, probe: str | None, forms: Sequen
 
 def run_baseline(probes: Mapping[str, Any], llm: Any, seed: int = 7, turns: int | None = None, limit: int | None = None,
                  groups: Sequence[str] = GROUPS, echo: Echo = print) -> dict[str, Any]:
-    scenario = build_wuliang(seed)
+    scenario = scenario_of(probes, seed)
     forms = _npc_forms(scenario)
     gm = PureLLMGM(llm, scenario)
+
+    def turn(text: str, group: str, probe: str | None) -> dict[str, Any]:
+        tok = tokens(len(gm.system) + len(gm.prompt(text)))       # 圣经 + 完整对话 + 新输入
+        return dict(_gm_record(gm.turn(text), group, probe, forms), tok=tok)
     out: dict[str, Any] = {"system": gm.system, "playthrough": [], "probes": []}
     for text in probes["playthrough"][:turns]:
-        rec = _gm_record(gm.turn(text), "playthrough", None, forms)
+        rec = turn(text, "playthrough", None)
         out["playthrough"].append(rec)
         _echo_turn(echo, rec)
     for g in groups:
@@ -426,7 +470,7 @@ def run_baseline(probes: Mapping[str, Any], llm: Any, seed: int = 7, turns: int 
             gm = PureLLMGM(llm, scenario)
             for text in p.get("setup", ()):
                 gm.turn(text)
-            rec = _gm_record(gm.turn(p["text"]), g, p["id"], forms)
+            rec = turn(p["text"], g, p["id"])
             prec: dict[str, Any] = {"id": p["id"], "group": g, "text": p["text"], "setup_ok": True, "turn": rec}
             if "claim" in p:
                 prec["asserted"] = asserts_claim(rec["narration"], p.get("assert", ()), p["text"])
@@ -450,7 +494,8 @@ def run_judges(llm: Any, probes: Mapping[str, Any], engine: dict, baseline: dict
         ours.append(("（落幕）", engine["epilogue"]))           # 玩家落幕时读到的终章同样交给评审
     theirs = [(r["text"], r["narration"]) for r in baseline["playthrough"]]
     engine_is_a = pairwise_order(seed)
-    verdict = ask_judge(llm, pairwise_prompt(*((ours, theirs) if engine_is_a else (theirs, ours))), PAIR_SCHEMA,
+    note = pair_note(scenario_of(probes, seed)) if probes else ""
+    verdict = ask_judge(llm, pairwise_prompt(*((ours, theirs) if engine_is_a else (theirs, ours)), note), PAIR_SCHEMA,
                         dict.fromkeys(PAIR_KEYS, "ab"))
     side = {"A": "engine" if engine_is_a else "baseline", "B": "baseline" if engine_is_a else "engine", "tie": "tie"}
     verdict["engine_is"] = "A" if engine_is_a else "B"
@@ -465,12 +510,6 @@ def run_judges(llm: Any, probes: Mapping[str, Any], engine: dict, baseline: dict
 # ============================================================
 
 
-def _metric(mid: str, name: str, threshold: str, display: str, ok: bool | None, n: int, note: str = "",
-            value: Any = None) -> dict[str, Any]:
-    return {"id": mid, "name": name, "threshold": threshold, "display": display, "pass": ok, "n": n, "note": note,
-            "value": value}
-
-
 def _latency(mid: str, turns: Sequence[Mapping], key: str, lim50: float, lim95: float) -> dict[str, Any]:
     xs = [t[key] for t in turns if t.get(key) is not None and not t.get("error")]
     p50, p95 = percentile(xs, 50), percentile(xs, 95)
@@ -481,10 +520,6 @@ def _latency(mid: str, turns: Sequence[Mapping], key: str, lim50: float, lim95: 
     note = f"{sum(1 for t in turns if t.get('streamed'))}/{len(xs)} 回合量到流式首字，其余首字 = 整回合" if key == "first_ms" else ""
     return _metric(mid, name, th, f"p50 {p50 / 1000:.2f} s / p95 {p95 / 1000:.2f} s", p50 <= lim50 and p95 <= lim95,
                    len(xs), note, {"p50_ms": round(p50, 1), "p95_ms": round(p95, 1)})
-
-
-def _rate(hit: int, n: int) -> str:
-    return f"{hit}/{n} = {hit / n:.0%}" if n else "无数据"
 
 
 def _judged(probes: Sequence[Mapping], group: str, mid: str, name: str) -> dict[str, Any] | None:
@@ -514,7 +549,8 @@ def _common(turns: Sequence[Mapping], playthrough: Sequence[Mapping]) -> dict[st
     }
 
 
-def engine_metrics(engine: Mapping[str, Any]) -> list[dict[str, Any]]:
+def engine_metrics(engine: Mapping[str, Any], scenario: Scenario | None = None) -> list[dict[str, Any]]:
+    """门槛指标（设计 §7）；给了场景再接上 plan §8.3 的新指标（bench_metrics.engine_extra）。"""
     probes = engine["probes"]
     turns = list(engine["playthrough"]) + [p["turn"] for p in probes if "turn" in p]
     common = _common(turns, engine["playthrough"])
@@ -554,10 +590,10 @@ def engine_metrics(engine: Mapping[str, Any]) -> list[dict[str, Any]]:
     out.append(_metric("N1", "有 NPC 在场的回合里 NPC 开口", "≥ 50%", _rate(spoke, len(present)),
                        spoke / len(present) >= 0.5 if present else None, len(present),
                        "只数推进了时间的回合；在场按真相；开口 = NPC 的言语事件、玩家听到的 NPC 言语或会话给出的台词"))
-    return out + [common["F2"], common["P1"]]
+    return out + [common["F2"], common["P1"]] + (engine_extra(engine, scenario) if scenario is not None else [])
 
 
-def baseline_metrics(baseline: Mapping[str, Any]) -> list[dict[str, Any]]:
+def baseline_metrics(baseline: Mapping[str, Any], scenario: Scenario | None = None) -> list[dict[str, Any]]:
     probes = baseline["probes"]
     turns = list(baseline["playthrough"]) + [p["turn"] for p in probes]
     common = _common(turns, baseline["playthrough"])
@@ -580,12 +616,16 @@ def baseline_metrics(baseline: Mapping[str, Any]) -> list[dict[str, Any]]:
                   _metric("G1", "叙述句子被闸门丢弃的比例", "≤ 5%", "不适用", None, 0, "没有闸门"),
                   _metric("N1", "有 NPC 在场的回合里 NPC 开口", "≥ 50%", _rate(spoke, len(turns)),
                           spoke / len(turns) >= 0.5 if turns else None, len(turns), "词法启发式：NPC 名字后紧跟引语；分母为全部回合"),
-                  common["F2"], common["P1"]]
+                  common["F2"], common["P1"]] + (baseline_extra(baseline, scenario) if scenario is not None else [])
 
 
 # ============================================================
 #  报告：bench.json（全部明细）+ report.md（门槛、PASS/FAIL、明细与局限）
 # ============================================================
+
+
+_SIM_NOTE = ("ScriptedLLM 按公开分布抽样（快模型首 token 0.4–0.6 s、每秒 500 字；叙述模型首 token p50 2.2 s、p95 5.3 s，每秒 60 字；"
+             "对照组首 token 随 TOK 按同一模型加预填充），时间缩放 ×{scale:g}；不是实测")
 
 
 def _verdict(ok: bool | None) -> str:
@@ -599,14 +639,16 @@ def write_report(out: Path | str, result: Mapping[str, Any]) -> tuple[Path, Path
     js.write_text(json.dumps(result, ensure_ascii=False, indent=1, default=str), "utf-8")
     meta, eng, base = result["meta"], result["metrics"]["engine"], result["metrics"].get("baseline")
     md = ["# 主持层评测报告（设计 §7）", ""]
-    if meta["mode"] == "scripted":
+    if meta["mode"] in ("scripted", "latency-sim"):
         md += ["> **注意：本次使用 ScriptedLLM（离线脚本回放 + 模拟延迟），不是真实模型。**"
                "延迟、文字与评审结论只证明评测管道跑得通，不能作为验收依据。", ""]
-    elif meta["mode"] == "none":
+    if meta.get("latency"):
+        md += [f"> **L1/L2 是模拟延迟**：{meta['latency']}", ""]
+    if meta["mode"] == "none":
         md += ["> 模板模式：没有任何模型调用。L1/L2 只反映引擎自身耗时，G1 不适用；对照组与评审需要模型，已跳过。", ""]
     md += [f"- 模式：{meta['mode']}（叙述 {meta.get('voice') or '模板'} / 解释 {meta.get('fast') or '规则'}"
            + (f" / 评审 {meta['judge']}" if meta.get("judge") else "") + "）" + (f"；{meta['note']}" if meta.get("note") else ""),
-           f"- 世界 wuliang，种子 {meta['seed']}；提交 {meta.get('commit') or '未知'}；探针文件摘要 {meta['probes_digest']}",
+           f"- 世界 {meta.get('world', LEGACY)}，种子 {meta['seed']}；提交 {meta.get('commit') or '未知'}；探针文件摘要 {meta['probes_digest']}",
            f"- 生成于 {meta['started']}，用时 {meta['elapsed_s']:.0f} s；整局游玩 {meta['turns']} 回合"
            + (f"（落幕：{result['engine'].get('ending')}）" if result["engine"].get("ending")
               else f"（未落幕，玩家最后在{result['engine'].get('final_place') or '不明之处'}）")
@@ -668,10 +710,11 @@ def _commit() -> str | None:
 
 def run(out: Path | str, llm: str = "auto", baseline: bool = False, judge: bool = False, turns: int | None = None,
         limit: int | None = None, seed: int = 7, probes_path: Path | str = PROBES, latency_scale: float = 1.0,
-        groups: Sequence[str] = GROUPS, echo: Echo = print) -> dict[str, Any]:
+        groups: Sequence[str] = GROUPS, echo: Echo = print, latency_sim: bool = False) -> dict[str, Any]:
     t0, started = time.perf_counter(), time.strftime("%Y-%m-%d %H:%M:%S")
     probes = load_probes(probes_path)
-    errs = validate_probes(probes, build_wuliang(seed))
+    scenario = scenario_of(probes, seed) if world_of(probes) in SCENARIOS else None
+    errs = validate_probes(probes, scenario)
     if errs:
         raise ValueError("探针文件不合格：" + "；".join(errs[:5]))
     mode, note = llm, ""
@@ -688,7 +731,10 @@ def run(out: Path | str, llm: str = "auto", baseline: bool = False, judge: bool 
             other = os.environ.get("GEMINI_JUDGE_MODEL", "").strip()     # 评审可换成别的型号，免得自己评自己
             judge_llm = GeminiClient(os.environ["GEMINI_API_KEY"].strip(), other, thinking="low") if other \
                 else llm_from_env(cache_dir=None)
-    if mode == "scripted":
+    if mode == "scripted" and latency_sim:      # 按公开分布抽样首 token（plan §8.4），报告标注“模拟”
+        mode, fakes = "latency-sim", sim_llms(latency_scale)
+        voice, fast, gm_llm, judge_llm = fakes["voice"], fakes["fast"], fakes["baseline"], fakes["judge"]
+    elif mode == "scripted":
         fakes = scripted_llms(latency_scale)
         voice, fast, gm_llm, judge_llm = fakes["voice"], fakes["fast"], fakes["baseline"], fakes["judge"]
     engine = run_engine(probes, seed, voice, fast, turns, limit, groups, echo)
@@ -702,14 +748,16 @@ def run(out: Path | str, llm: str = "auto", baseline: bool = False, judge: bool 
         note += ("；" if note else "") + "评审需要模型，已跳过"
     n_probes = len(engine["probes"])
     result = {
-        "meta": {"mode": mode, "requested": llm, "note": note, "seed": seed, "started": started, "commit": _commit(),
+        "meta": {"mode": mode, "requested": llm, "note": note, "seed": seed, "world": world_of(probes),
+                 "latency": _SIM_NOTE.format(scale=latency_scale) if mode == "latency-sim" else None, "started": started, "commit": _commit(),
                  "elapsed_s": round(time.perf_counter() - t0, 1), "voice": getattr(voice, "model", None),
                  "fast": getattr(fast, "model", None), "judge": getattr(judge_llm, "model", None) if judge else None,
-                 "probes_digest": digest(json.dumps(probes, sort_keys=True, ensure_ascii=False))[:12],
+                 "probes_digest": digest(json.dumps({k: v for k, v in probes.items() if k != "variant"}, sort_keys=True,
+                                                   ensure_ascii=False))[:12],        # 不含 variant：旧版探针摘要与 run1–6 相同
                  "turns": len(engine["playthrough"]), "probes": n_probes,
                  "errors": len(engine["errors"]) + sum(1 for p in engine["probes"] if p.get("error"))
                  + sum(1 for t in engine["playthrough"] if t.get("error"))},
-        "metrics": {"engine": engine_metrics(engine), "baseline": baseline_metrics(base) if base else None},
+        "metrics": {"engine": engine_metrics(engine, scenario), "baseline": baseline_metrics(base, scenario) if base else None},
         "pairwise": pairwise, "engine": engine, "baseline": base,
     }
     write_report(out, result)
@@ -729,11 +777,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--probes", default=str(PROBES))
     ap.add_argument("--latency-scale", type=float, default=1.0, help="scripted 模式的模拟延迟倍数（0 = 不等待）")
+    ap.add_argument("--latency-sim", action="store_true", help="scripted 模式按公开分布抽样首 token（bench_latency），报告标注“模拟”")
     args = ap.parse_args(argv)
     groups = tuple(g for g in args.groups.split(",") if g in GROUPS)
     try:
         result = run(args.out, args.llm, args.baseline, args.judge, args.turns, args.limit, args.seed, args.probes,
-                     args.latency_scale, groups, echo=lambda s: print(s, flush=True))
+                     args.latency_scale, groups, echo=lambda s: print(s, flush=True), latency_sim=args.latency_sim)
     except ValueError as e:
         print(e)
         return 2

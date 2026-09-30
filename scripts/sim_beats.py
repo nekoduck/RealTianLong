@@ -1,16 +1,19 @@
 """
 [INPUT]: 依赖 tianlong.runtime.session 的 GameSession（模板模式，不接模型），tianlong.scenarios 的 build_wuliang_commoner，
          tianlong.scenarios.tianlong.stagecraft 的 BEAT_KEYS，tianlong.scenarios.tianlong.drives_c 的时刻，cognition/navigation 的 believed_place，
-         core 的 Op / Outcome / SetAttr / clock_label
-[OUTPUT]: 命令行 python scripts/sim_beats.py [--seeds 1-20] [--players passive,follower,...] [--json FILE] [--check] [--jobs N]，
-          打印 Markdown 结果表（并行与否逐项相同）；
-          也是可导入的库：PLAYERS（五种脚本化玩家）、play(seed, player) -> Run、summarize(runs) -> dict、pooled_e1(runs)、table(runs) -> str、GATES
+         scenarios/tianlong/wuliang 的 NIGHTFALL，core 的 Op / Outcome / Rel / SetAttr / WorldState / clock_label
+[OUTPUT]: 命令行 python scripts/sim_beats.py [--seeds 1-20|7,11] [--players passive,follower,...] [--json FILE] [--check] [--jobs N]
+          [--walk PROBES]，打印 Markdown 结果表（并行与否逐项相同）；
+          也是可导入的库：PLAYERS（五种脚本化玩家）、play(seed, player) -> Run、summarize(runs) -> dict、pooled_e1(runs)、table(runs) -> str、GATES，
+          走查核对 CANON / WHEN / WALKED / walk(seed, inputs, key) -> Walk
 [POS]: scripts 的普通人版调参台（plan §7 M2）：种子 × 脚本化玩家逐回合跑真实会话，报告
        B1（玩家目击的看点数，按场景的识别器、只算玩家自己的感知）、段誉到达琅嬛福地 / 澜沧江畔的种子数、到达的结局、钟灵是否被制、
        讨价还价是否成立、各驱力的兑现次数、E1（空转的推进回合所占比例：这一回合玩家没感知到任何 NPC 的动作或言语、没有新认识的东西、
        没有看点）。脚本化玩家只凭玩家自己的认知与时钟行事（和真人一样看不到真相）；真相只用于统计。
        --check 按 GATES 判定出口条件（跟随型 ≥16/20 个种子目击 ≥8/11 个看点、跟随型与全体合计的 E1 各 ≤ 10%（逐脚本不设门槛）、
-       被动玩家下段誉 ≥12/20 到琅嬛且 ≥8/20 到澜沧江、讨价还价 ≥16/20），不达标以非零码退出
+       被动玩家下段誉 ≥12/20 到琅嬛且 ≥8/20 到澜沧江、讨价还价 ≥16/20），不达标以非零码退出。
+       --walk 核对评测探针里的整局（plan §8.1，进 run7 之前）：模板会话逐句走（CANON 是代理解释器会怎样理解那一句的规则说法），
+       每句在回合开始时的真相上按 WHEN 求值（“跟上段公子”时他不在眼前、“查看蒲团”时身在琅嬛……），落空或没接住的句子逐条列出、以非零码退出
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -25,11 +28,12 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
 
 from tianlong.cognition.navigation import believed_place
-from tianlong.core import Op, Outcome, Proposition, SetAttr, clock_label
+from tianlong.core import Op, Outcome, Proposition, Rel, SetAttr, WorldState, clock_label
 from tianlong.runtime.session import GameSession
 from tianlong.scenarios import build_wuliang_commoner
-from tianlong.scenarios.tianlong.drives_c import HUNT, SUPPER, TRYST
+from tianlong.scenarios.tianlong.drives_c import HUNT, MOONRISE, SUPPER, SUPPER_END, TRYST
 from tianlong.scenarios.tianlong.stagecraft import BEAT_KEYS
+from tianlong.scenarios.tianlong.wuliang import NIGHTFALL
 
 PLAYER, DUANYU = "ashun", "duanyu"
 MAX_TURNS = 400
@@ -257,7 +261,146 @@ def check(runs: list[Run]) -> list[str]:
     return bad
 
 
+# ============================================================
+#  走查核对（plan §8.1）：评测探针里的整局，每一句都要落在有意义的状态上
+#  （“跟上段公子”时他确实不在眼前、“查看蒲团”时确实身在琅嬛）。模板会话只认规则解析的说法：
+#  CANON 是代理解释器会怎样理解这一句的规则说法；WHEN 按关键词（先中先用）在回合开始时的世界真相上求值
+# ============================================================
+
+CANON: dict[str, str] = {
+    "扯了扯段公子的袖子，低声道：公子，快别笑了": "悄悄对段公子说：公子，快别笑了",
+    "向龚光杰赔笑道：这位爷息怒，我家公子是读书人": "向龚光杰赔不是",
+    "对那姑娘说：多谢姑娘替我家公子出头": "对钟灵说：多谢姑娘替我家公子出头",
+    "问段公子：伤得重不重？": "问段公子伤得重不重",
+    "陪段公子在井边歇一会儿": "等一会儿",
+    "在林边找块石头坐下，歇一会儿": "等一会儿",
+    "我回后院取些水来": "去后院",
+    "回后山": "去后山",
+    "守着段公子，等下去": "等下去",
+    "警觉地四下张望": "环顾四周",
+    "探头往崖下望了望": "环顾四周",
+    "攀着藤萝往下爬": "跳下断崖",
+    "晃亮火折子，生堆火取暖": "叹了口气",
+    "对那姑娘说：你怎么也跟下来了？": "对钟灵说：你怎么也跟下来了",
+    "跟着段公子钻进石缝": "钻进石缝",
+    "看段公子在做什么": "看看段公子",
+    "拿起那卷凌波微步": "拿凌波微步",
+    "问段公子：那帛卷上写的什么？": "问段公子那帛卷上写的什么",
+    "长长舒了一口气": "叹了口气",
+    "问马五爷：这可怎么是好？": "问马五爷这可怎么是好",
+    "问马五爷：段公子跑去哪儿了？": "问马五爷段公子在哪",
+    "给马五爷续茶": "叹了口气",
+    "问马五爷：这山上可有什么稀奇的传闻？": "问马五爷这山上有什么传闻",
+    "把茶饼献给左掌门": "把茶饼给左子穆",
+    "向辛掌门作了个揖": "向辛双清作揖",
+    "找个角落坐下，歇半个时辰": "等半个时辰",
+    "再坐一盏茶的工夫": "等一盏茶",
+    "把茶担挑去后院厨下": "去后院",
+    "在厨下坐着，一直等到天黑": "等到天黑",
+    "埋头收拾茶担，等到天黑": "等到天黑",
+    "对龚光杰说：段公子往山道去了": "告诉龚光杰段公子在山道",
+    "回大殿去": "去大殿",
+    "靠着柱子打个盹，等下去": "等下去",
+    "往后缩了缩，躲到东家身后": "叹了口气",
+    "问马五爷：神农帮为什么围着山？": "问马五爷神农帮为什么围山",
+    "问马五爷：咱们怎么下山？": "问马五爷怎么下山",
+    "找个不起眼的角落坐下": "叹了口气",
+    "向辛掌门打听：山道上的关卡几时换班？": "问辛双清关卡几时换班",
+    "在角落里等到天黑": "等到天黑",
+    "在角落里一直等到天黑": "等到天黑",
+    "再等一个时辰": "等一个时辰",
+    "接着再等半个时辰": "等半个时辰",
+    "悄悄溜出大殿，去山道": "悄悄溜去山道",
+    "看看关卡上的栅门": "查看山道关卡",
+    "悄悄溜去山脚": "去山脚",
+    "回头望了望无量山": "叹了口气",
+}
+Check = Callable[[WorldState, GameSession], bool]
+
+
+def _at(st: WorldState, e: str) -> str | None:
+    return st.target(e, Rel.AT)
+
+
+def _here(who: str) -> Check:
+    return lambda st, s: _at(st, who) == _at(st, PLAYER)
+
+
+def _in(*places: str) -> Check:
+    return lambda st, s: _at(st, PLAYER) in places
+
+
+def _both(*checks: Check) -> Check:
+    return lambda st, s: all(c(st, s) for c in checks)
+
+
+WHEN: tuple[tuple[tuple[str, ...], Check], ...] = (
+    (("跟上段公子",), lambda st, s: not _here(DUANYU)(st, s)),
+    (("跟着段公子钻进石缝",), _both(_in("jianhu"), lambda st, s: s.beliefs(PLAYER).knows("d_cave"),
+                                    lambda st, s: _at(st, DUANYU) in ("jianhu", "shidong"))),
+    (("研读凌波微步",), lambda st, s: _at(st, "scroll_lb") == PLAYER),
+    (("拿起那卷凌波微步",), _both(_in("langhuan"), lambda st, s: s.beliefs(PLAYER).knows("scroll_lb"))),
+    (("隧道",), _both(_in("langhuan"), lambda st, s: s.beliefs(PLAYER).knows("d_tunnel"))),
+    (("玉像", "蒲团"), _in("langhuan")),
+    (("问段公子", "扯了扯段公子", "看段公子", "陪段公子", "守着段公子"), _here(DUANYU)),
+    (("对那姑娘", "梁上那少女"), _here("zhongling")),
+    (("对龚光杰", "向龚光杰", "警觉"), _here("gongguangjie")),
+    (("左掌门",), _here("zuozimu")),
+    (("辛掌门",), _here("xinshuangqing")),
+    (("马五爷", "东家"), _here("mawude")),
+    (("后院取些水",), _both(_in("houshan"), lambda st, s: _at(st, "ganguanghao") == _at(st, "geguangpei") == "houyuan")),
+    (("后院厨下",), _in("hall")),
+    (("回后山",), _in("houyuan")),
+    (("回大殿",), lambda st, s: _at(st, PLAYER) != "hall"),
+    (("禁地", "林边"), _in("houshan")),
+    (("崖下", "藤萝"), _in("yading")),
+    (("玉璧", "火折子"), _in("jianhu")),
+    (("石门",), _in("shidong")),
+    (("月亮出来",), lambda st, s: st.clock < MOONRISE),
+    (("等到天黑",), lambda st, s: st.clock < NIGHTFALL),
+    (("去山道",), _both(_in("hall"), lambda st, s: SUPPER <= st.clock < SUPPER_END)),
+    (("关卡", "山脚"), _both(_in("shandao"), lambda st, s: not st.attr("d_downhill", "locked", False))),
+)
+
+
+WALKED = ("playthrough", "playthrough_hall", "playthrough_flee")
+
+
+@dataclass
+class Walk:
+    seed: int
+    key: str
+    problems: list[str] = field(default_factory=list)
+    beats: list[str] = field(default_factory=list)
+    ending: str | None = None
+    turns: int = 0
+
+
+def walk(seed: int, inputs: Iterable[str], key: str = "playthrough") -> Walk:
+    """模板会话逐句走一局（每句按 CANON 换成规则解析认得的说法）：回合开始时 WHEN 不成立、或该推进却没推进的句子记为问题。"""
+    s = GameSession(build_wuliang_commoner(seed), pipeline=False)
+    s.intro()
+    out, seen = Walk(seed, key), set()
+    for i, text in enumerate(inputs, 1):
+        st = s.authority.head()
+        check = next((c for words, c in WHEN if any(w in text for w in words)), None)
+        if check is not None and not check(st, s):
+            out.problems.append(f"{i}「{text}」落空（{clock_label(st.clock)}，你在{_at(st, PLAYER)}）")
+        r = s.turn(CANON.get(text, text))
+        out.turns = i
+        if not r.advanced and r.kind.value != "ask_gm":
+            out.problems.append(f"{i}「{text}」没接住：{r.narration[:40]}")
+        seen |= set(r.beats)
+        if r.ending is not None:
+            out.ending = r.ending.key
+            break
+    out.beats = [k for k in BEAT_KEYS if k in seen]
+    return out
+
+
 def _seeds(text: str) -> list[int]:
+    if "," in text:
+        return [int(x) for x in text.split(",")]
     lo, _, hi = text.partition("-")
     return list(range(int(lo), int(hi or lo) + 1))
 
@@ -269,7 +412,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", help="逐局结果写到这个文件")
     ap.add_argument("--check", action="store_true", help="按出口条件判定，不达标以非零码退出")
     ap.add_argument("--jobs", type=int, default=1, help="并行的进程数（每局各自确定，并行与否结果逐项相同）")
+    ap.add_argument("--walk", metavar="PROBES", help="走查核对：探针文件里的每条整局在各种子上逐句落在有意义的状态上"
+                                                    "（配 --seeds 7,11），有落空的句子以非零码退出")
     args = ap.parse_args(argv)
+    if args.walk:
+        with open(args.walk, encoding="utf-8") as f:
+            probes = json.load(f)
+        walks = [walk(seed, probes[k], k) for k in WALKED if k in probes for seed in _seeds(args.seeds)]
+        for w in walks:
+            print(f"{w.key} 种子 {w.seed}：{w.turns} 句，结局 {w.ending or '（未落幕）'}，看点 {len(w.beats)}/{len(BEAT_KEYS)}"
+                  f"（{'、'.join(w.beats)}）" + "".join(f"\n  {p}" for p in w.problems))
+        return 1 if any(w.problems for w in walks) else 0
     jobs = [(seed, p) for p in args.players.split(",") for seed in _seeds(args.seeds)]
     if args.jobs > 1:
         with ProcessPoolExecutor(args.jobs) as pool:

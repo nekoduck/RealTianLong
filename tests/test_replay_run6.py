@@ -8,7 +8,7 @@
           打定主意捱到天黑、回忆里的玉像，都已修掉），月下舞剑与蒲团绣字交付给了玩家；
           命令行的 --inputs 确实取代了探针文件里的整局游玩（不重放、不慢）
 [POS]: tests 的闸门精度基线（重放为 slow：默认不跑）。M1 已达出口条件“重放 run6 误杀 0 句”；丢句变多即是回归。
-       那五句逐句的判定由 test_gate_precision（不慢、核心零依赖）钉住；出口条件的命令（replay_drops --inputs 指向同一份输入文件）
+       那五句逐句的判定由 test_gate_precision（不慢、核心零依赖）钉住；出口条件的命令（replay_drops --probes scripts/bench_probes_duanyu.json --inputs 指向同一份输入文件）
        与本测试重放的是同一份输入
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """

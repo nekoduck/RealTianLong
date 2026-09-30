@@ -1,13 +1,16 @@
 """
 [INPUT]: 依赖 tianlong.scenarios 的 Scenario，tianlong.core 的 Kind / Op / Rel / clock_label / derive_seed / digest，
-         tianlong.language.llm 的 ScriptedLLM，tianlong.runtime.gm 的 PLAYER_GOALS（玩家目标的口吻表）
+         core/drives 的 Between / Drive / Pose（普通人版圣经的驱力段），tianlong.language.llm 的 ScriptedLLM，
+         tianlong.runtime.gm 的 PLAYER_GOALS（玩家目标的口吻表）
 [OUTPUT]: 对外提供 GM_RULES / world_bible() / PureLLMGM（纯模型主持人对照组），JUDGE_SYSTEM / PREMISE_SCHEMA / PAIR_SCHEMA / PAIR_KEYS /
-          premise_prompt() / pairwise_prompt() / parse_verdict() / ask_judge() / pairwise_order()（独立评审），
+          premise_prompt() / pair_note() / pairwise_prompt() / parse_verdict() / ask_judge() / pairwise_order()（独立评审），
           scripted_respond() / scripted_gm() / scripted_judge() / scripted_llms()（--llm scripted 的离线脚本模型）
 [POS]: scripts/bench_gm 的模型侧，单独成文件只为各自不超过 800 行；不依赖 bench_gm。
        对照组复刻 Jenova 式纯模型主持人：系统提示是由场景生成的全知世界圣经（路线与单向/夜现规则、人物的为人、秘密、目标与所在、
        物品在哪、玩家目标（玩家自己的口吻：与主持层场外问答同一张 gm.PLAYER_GOALS，不借 NPC 的行事语义）、结局）加上它公开的主持规矩，每回合发出完整对话记录与新输入、流式取回复、挂钟计时——它没有内核，
-       成败与台账全凭模型自己。评审是独立调用、要求严格 JSON；解析容忍代码块、多余文字与缺引号的键，拿不准就判无效、绝不瞎猜。
+       成败与台账全凭模型自己。场景带驱力（普通人版，plan §8.2）时圣经另写：玩家扮演谁（普通人、不会武功）、每个 NPC 的性情与行事
+       （Drive.gloss）、可在合适时机使用的台词（驱力台词）、时间表（场景时刻与驱力时间窗推出）、外貌称呼规则、结局的时钟与变体——
+       B 拿到的内容与我们相同；旧版圣经逐字不变。盲评须知 pair_note 只在普通人版写明“玩家不是段誉”不算错。评审是独立调用、要求严格 JSON；解析容忍代码块、多余文字与缺引号的键，拿不准就判无效、绝不瞎猜。
        脚本模型按提示词写出像样的回复（解释器 JSON 兼容新旧两种 schema、照事实清单写成的叙述、原样的对白、顺着玩家的主持人）并模拟延迟，
        只为整条评测管道离线跑通，它的数字不作验收依据
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -23,6 +26,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from tianlong.core import Kind, Op, Rel, clock_label, derive_seed, digest
+from tianlong.core.drives import Between, Drive, Pose
 from tianlong.language.llm import ScriptedLLM
 from tianlong.runtime.gm import PLAYER_GOALS
 from tianlong.scenarios import Scenario
@@ -67,7 +71,12 @@ def world_bible(scenario: Scenario) -> str:
     def by_kind(k: Kind) -> list[str]:
         return sorted(e for e in st.entities if st.kind(e) == k)
 
-    out = [f"你是一位角色扮演游戏主持人（GM），用中文主持一场以金庸《天龙八部》为背景的文字冒险。玩家扮演{name(scenario.player)}。",
+    me = scenario.profiles.get(scenario.player or "")
+    who = name(scenario.player)
+    if scenario.drives and me is not None:          # 普通人版：点明玩家是个不会武功的普通人（取自他自己的设定）
+        plain = "；不会武功" if float(st.attr(me.agent, "martial", 0.0) or 0.0) < 0.1 else ""
+        who += f"（普通人，{me.intro or me.role}{plain}）"
+    out = [f"你是一位角色扮演游戏主持人（GM），用中文主持一场以金庸《天龙八部》为背景的文字冒险。玩家扮演{who}。",
            "", "【主持规矩】", *(f"- {r}" for r in GM_RULES), "- 用第二人称“你”称呼玩家，每回合 80~250 字。"]
     if scenario.setting:
         out += ["", "【世界前提】", scenario.setting]
@@ -125,11 +134,65 @@ def world_bible(scenario: Scenario) -> str:
         if owners:
             tags.append("归" + "、".join(owners) + "所有")
         out.append(f"- {name(i)}：{where(i)}" + (f"；{'；'.join(tags)}" if tags else "") + (f"。{lore[i]}" if i in lore else ""))
+    if scenario.drives:
+        out += _drive_sections(scenario, name)
     if scenario.guide:
         out += ["", "【给玩家的提示】（玩家问起时由浅入深地给，不要一次说尽）", *(f"- {g}" for g in scenario.guide)]
     for e in scenario.endings:
-        out += ["", f"【结局】玩家抵达{name(e.place)}即“{e.title}”。{e.epilogue}"]
+        when = f"玩家抵达{name(e.place)}" if e.place else f"时钟到{_hm(e.at_clock or 0, st.clock)} "
+        forms = [f"“{v.label}”（{'或'.join(_requires(r, name) for r in v.requires)}）" for v in e.variants]
+        out += ["", f"【结局】{when}即“{e.title}”。{e.epilogue}" + (f"标题可加变体：{'；'.join(forms)}。" if forms else "")]
     return "\n".join(out)
+
+
+# ============================================================
+#  普通人版（场景带驱力）的圣经附加段：性情与行事、可用的台词、时间表、称呼规则——全部由场景生成，B 拿到的内容与我们相同
+# ============================================================
+
+_MOMENT_CN = {"night": "入夜", "moon": "月出（月光照上玉璧）", "dawn": "天亮"}
+_REQ_CN = {"skill": "玩家学成{}", "with": "{}与玩家同在一处", "holds": "玩家身上带着{}", "at": "玩家身在{}"}
+
+
+def _hm(t: int, start: int) -> str:
+    """时刻写成“18:05”，跨了日子写成“次日 05:00”。"""
+    hm = clock_label(t).split()[-1]
+    return hm if t // 1440 == start // 1440 else f"次日 {hm}"
+
+
+def _requires(req: str, name: Any) -> str:
+    kind, _, what = req.partition(":")
+    return _REQ_CN.get(kind, "{}").format(_SKILL_CN.get(what) or name(what))
+
+
+def _pose_lines(drive: Drive) -> list[str]:
+    """驱力自带的台词：line / lines，以及带引语的姿态（姿态本身就是看得见的字）。"""
+    poses = [a.text for a in drive.do if isinstance(a, Pose) and "“" in a.text]
+    return [x for x in (drive.line, *drive.lines, *poses) if x]
+
+
+def _drive_sections(scenario: Scenario, name: Any) -> list[str]:
+    start = scenario.state.clock
+    npcs = [a for a in sorted(scenario.drives) if a != scenario.player]
+    out = ["", "【性情与行事】（每个 NPC 自己的性情；说明里的“你”指玩家。名场面由这些性情推动，不必照本宣科，但不要违背）"]
+    out += [f"- {name(a)}：" + "；".join(dict.fromkeys(d.gloss for d in scenario.drives[a] if d.gloss)) for a in npcs]
+    out += ["", "【可在合适时机使用的台词】（原话，时机合适时一字不改地用；每句至多用一次）"]
+    out += [f"- {name(a)}：" + " / ".join(dict.fromkeys(x for d in scenario.drives[a] for x in _pose_lines(d)))
+            for a in npcs if any(_pose_lines(d) for d in scenario.drives[a])]
+    windows: dict[tuple[int, int | None, str], list[str]] = {}
+    for a in npcs:
+        for d in scenario.drives[a]:
+            for c in d.when:
+                if isinstance(c, Between) and d.gloss:
+                    windows.setdefault((c.start, c.end, d.gloss), []).append(name(a))
+    rows = [(t, f"- {_hm(t, start)}：{_MOMENT_CN.get(k, k)}") for k, t in scenario.moments.items()]
+    rows += [(s, f"- {_hm(s, start)}" + (f"–{_hm(e, start)}" if e is not None else " 起") + f" {'、'.join(dict.fromkeys(who))}：{g}")
+             for (s, e, g), who in windows.items()]
+    out += ["", f"【时间表】（开场 {_hm(start, start)}）", *(r for _, r in sorted(rows, key=lambda x: x[0]))]
+    known = sorted(scenario.introduced.get(scenario.player or "", ()))
+    out += ["", "【称呼】没人道出姓名之前，玩家眼里的人只能用外貌称呼：" + "；".join(
+        f"{name(a)}——“{e}”" for a, e in sorted(scenario.epithets.items())) + "。有人自报姓名、或当着玩家的面叫出名字之后，才能用真名；"
+        + "玩家开场已认得：" + "、".join(name(a) for a in known) + "。"]
+    return out
 
 
 class PureLLMGM:
@@ -203,12 +266,20 @@ def premise_prompt(probe: Mapping[str, Any], group: str, reply: str) -> str:
             '只输出 JSON：{"accepted": true 或 false, "reason": "一句话理由"}')
 
 
-def pairwise_prompt(a_rows: Sequence[tuple[str, str]], b_rows: Sequence[tuple[str, str]]) -> str:
+def pair_note(scenario: Scenario | None) -> str:
+    """盲评的场景须知：普通人版（场景带驱力）里玩家不是段誉——评审别把“玩家不是段誉”当成错。旧版为空。"""
+    if scenario is None or not scenario.drives or scenario.player is None:
+        return ""
+    return (f"注意：本局玩家扮演的是{scenario.state.entity(scenario.player).name}，一个普通挑夫，不是段誉；"
+            "段誉是故事里的 NPC。“玩家不是段誉”不算错。\n")
+
+
+def pairwise_prompt(a_rows: Sequence[tuple[str, str]], b_rows: Sequence[tuple[str, str]], note: str = "") -> str:
     def block(rows: Sequence[tuple[str, str]]) -> str:
         return "\n".join(f"玩家：{said}\n主持人：{reply}" for said, reply in rows)
     return ("两位游戏主持人（A 与 B）对同一串玩家输入，各自主持了一局《天龙八部》无量山文字冒险。请逐项比较：\n"
             "coherent：前后连贯，人物、物品、伤势、位置不自相矛盾；\nreasonable：成败合乎情理，不一味顺着玩家；\n"
-            "fun：读来更精彩，更想继续玩。\n"
+            "fun：读来更精彩，更想继续玩。\n" + note +
             '只输出 JSON：{"coherent": "A"|"B"|"tie", "reasonable": "A"|"B"|"tie", "fun": "A"|"B"|"tie", '
             '"reasons": {"coherent": "…", "reasonable": "…", "fun": "…"}}\n\n'
             f"【A】\n{block(a_rows)}\n\n【B】\n{block(b_rows)}")

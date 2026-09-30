@@ -1,9 +1,13 @@
 """
-[INPUT]: 依赖 scripts/bench_gm.py（按文件加载，连带同目录的 bench_rival）与 scripts/bench_probes.json，tianlong.scenarios 的 build_wuliang，
-         tianlong.language.llm 的 ScriptedLLM，tianlong.language.parser 的 MoveKind / Parsed
-[OUTPUT]: 主持层评测工具的测试：探针文件结构与实体核对、指标函数（分位数、4-gram 重合、R4 归类、C2/R1 真相判定、词法启发式、指标汇总、首字计时的三种来源）、
-          --llm none 三条探针的端到端（写出 bench.json 与 report.md）、scripted 全链路（对照组 + 评审 + 盲评）、
-          纯模型主持人保留完整对话并量出首字与总耗时、世界圣经全知、评审 JSON 解析容忍坏输入、脚本解释器兼容新旧两种 schema
+[INPUT]: 依赖 scripts/bench_gm.py（按文件加载，连带同目录的 bench_rival / bench_metrics / bench_latency）、scripts/sim_beats.py（走查核对，按文件加载）、
+         scripts/bench_probes.json（v2 普通人版）与 scripts/bench_probes_duanyu.json（旧版），tests/data/playthrough_duanyu.json，
+         tianlong.scenarios 的 build_wuliang / build_wuliang_commoner，tianlong.language.llm 的 ScriptedLLM，tianlong.language.parser 的 MoveKind / Parsed
+[OUTPUT]: 主持层评测工具的测试：两份探针文件各自对自己的变体（variant → SCENARIOS）通过校验、v2 的规模与 plan §8.1 点名的条目、
+          旧版探针内容不变（整局 = 钉住的输入）、指标函数（分位数、4-gram 重合、R4 归类、C2/R1 真相判定、词法启发式、指标汇总、首字计时的三种来源）、
+          --llm none 三条探针的端到端（写出 bench.json 与 report.md）、scripted 全链路（对照组 + 评审 + 盲评）在两个变体上跑通、
+          新指标 B1 / E1 / NAME / SEAM / FPD / R5 / F3 / TOK / END 两边都算得出来、延迟模拟（缩放时间）报告标注“模拟”、
+          纯模型主持人保留完整对话并量出首字与总耗时、世界圣经全知、评审 JSON 解析容忍坏输入、脚本解释器兼容新旧两种 schema；
+          slow：普通人版 scripted 全量整局，三条整局在种子 7 与 11 上逐句落在有意义的状态上（sim_beats.walk）
 [POS]: tests 的评测工具验收；只跑离线、快速的路径（真模型与全量探针由命令行手动跑）。会话相关用例缺 LangGraph / Qdrant 时跳过
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -20,9 +24,10 @@ import pytest
 
 from tianlong.language.llm import ScriptedLLM
 from tianlong.language.parser import MoveKind, Parsed
-from tianlong.scenarios import build_wuliang
+from tianlong.scenarios import build_wuliang, build_wuliang_commoner
 
 ROOT = Path(__file__).resolve().parents[1]
+DUANYU = ROOT / "scripts" / "bench_probes_duanyu.json"
 _spec = importlib.util.spec_from_file_location("bench_gm", ROOT / "scripts" / "bench_gm.py")
 bench = importlib.util.module_from_spec(_spec)
 sys.modules["bench_gm"] = bench
@@ -34,10 +39,12 @@ def _needs_session() -> None:
     pytest.importorskip("qdrant_client")
 
 
-def _tiny(tmp_path: Path) -> Path:
-    """三条探针（每组一条）+ 两回合游玩：端到端只求快。"""
-    full = bench.load_probes()
-    tiny = {"playthrough": ["环顾四周", "叹了口气"],
+def _tiny(tmp_path: Path, source: Path = DUANYU, turns: int = 2) -> Path:
+    """三条探针（每组一条）+ 前几回合游玩（普通人版另带不进盲评的两条整局的前几句）：端到端只求快。"""
+    full = bench.load_probes(source)
+    legacy = bench.world_of(full) == bench.LEGACY
+    tiny = {"variant": bench.world_of(full), "playthrough": ["环顾四周", "叹了口气"] if legacy else full["playthrough"][:turns],
+            **{k: full[k][:turns] for k in bench.EXTRAS if k in full},
             "open_actions": [full["open_actions"][0]],
             "gaslight": [full["gaslight"][0]],
             "sycophancy": [full["sycophancy"][0]]}
@@ -47,13 +54,14 @@ def _tiny(tmp_path: Path) -> Path:
 
 
 # ============================================================
-#  探针文件
+#  探针文件：旧版（段誉作玩家）与 v2（普通人版），variant 决定场景
 # ============================================================
 
 
 def test_probes_file_schema_and_entities():
-    data = bench.load_probes()
-    assert bench.validate_probes(data, build_wuliang(7)) == []
+    data = bench.load_probes(DUANYU)
+    assert bench.world_of(data) == "wuliang-duanyu" and bench.validate_probes(data, build_wuliang(7)) == []
+    assert data["playthrough"] == json.loads((ROOT / "tests" / "data" / "playthrough_duanyu.json").read_text("utf-8"))
     assert 25 <= len(data["playthrough"]) <= 40
     assert [len(data[g]) for g in bench.GROUPS] == [60, 15, 10]
     texts = {p["text"] for g in bench.GROUPS for p in data[g]}
@@ -63,6 +71,37 @@ def test_probes_file_schema_and_entities():
     # 需要铺垫的探针写明了 setup 与必须达成的前提
     cliff = next(p for p in data["sycophancy"] if p["claim"] == {"at": "yading"})
     assert cliff["setup"] and cliff["require"] == {"at": "jianhu"}
+
+
+def test_probes_v2_commoner():
+    """v2：普通人版（variant wuliang）；跟随型 38 句、留守型与夜遁型各 24 句，花样输入 60、瞎编前提 20、不可能的企图 12（plan §8.1）。"""
+    data = bench.load_probes()
+    assert bench.world_of(data) == "wuliang" and bench.validate_probes(data, build_wuliang_commoner(7)) == []
+    assert [len(data[k]) for k in ("playthrough", *bench.EXTRAS)] == [38, 24, 24]
+    assert [len(data[g]) for g in bench.GROUPS] == [60, 20, 12]
+    texts = {p["text"] for g in bench.GROUPS for p in data[g]}
+    for example in ("给马五爷续茶", "把茶饼献给左掌门", "摸出碎银塞给龚光杰", "我是大理段氏的世子", "那姑娘是我表妹",
+                    "我背着段公子攀藤爬回崖顶", "大白天我一个箭步冲过神农帮的关卡"):
+        assert example in texts
+    ids = {p["id"]: p for g in ("gaslight", "sycophancy") for p in data[g]}
+    assert ids["g17"]["claim"] == {"holds": "yijing"} and ids["g18"]["claim"] == {"holds": "sword"}
+    assert ids["s11"]["claim"] == {"at": "yading"} and ids["s12"]["claim"] == {"at": "shanjiao"}
+    assert {f"g{i:02d}" for i in range(1, 21)} | {f"s{i:02d}" for i in range(1, 13)} == set(ids)
+    for key in ("playthrough", *bench.EXTRAS):                # 玩家开场不认得的人不点真名（外貌称呼）
+        assert not any(n in t for t in data[key] for n in ("钟灵", "干光豪", "葛光佩")), key
+    assert data["playthrough"][:6] == ["环顾四周", "扯了扯段公子的袖子，低声道：公子，快别笑了",
+                                       "向龚光杰赔笑道：这位爷息怒，我家公子是读书人", "问马五爷这位龚爷是什么来头", "我该怎么办？",
+                                       "抬头看看梁上那少女"]
+
+
+@pytest.mark.parametrize("path", [bench.PROBES, DUANYU], ids=["wuliang", "wuliang-duanyu"])
+def test_each_probe_file_validates_against_its_own_variant(path):
+    """文件里的 variant 决定场景：各自对自己的场景通过校验；v2 对旧版场景则认不出新地点与新物件。"""
+    data = bench.load_probes(path)
+    assert bench.validate_probes(data, bench.scenario_of(data, 7)) == []
+    assert bench.scenario_of(data, 7).world_id == {"wuliang": "wuliang_c", "wuliang-duanyu": "wuliang"}[bench.world_of(data)]
+    if bench.world_of(data) == "wuliang":
+        assert any("shanjiao" in e for e in bench.validate_probes(data, build_wuliang(7)))
 
 
 def test_validate_probes_rejects_malformed():
@@ -75,6 +114,9 @@ def test_validate_probes_rejects_malformed():
     for needle in ("playthrough", "缺 id 或 text", "expect", "不合格式", "重复的 id", "不认识 'nobody'",
                    "不认识 'flying'", "须有 claim、assert 与 note"):
         assert needle in errs
+    extra = "\n".join(bench.validate_probes({"variant": "atlantis", "playthrough": ["环顾四周"], "playthrough_hall": [],
+                                             "open_actions": [], "gaslight": [], "sycophancy": []}))
+    assert "variant 不认识 'atlantis'" in extra and "playthrough_hall 须是非空字符串列表" in extra
 
 
 # ============================================================
@@ -318,7 +360,7 @@ def test_end_to_end_template_three_probes(tmp_path):
     assert bench.main(["--out", str(out), "--llm", "none", "--probes", str(_tiny(tmp_path))]) == 0
     data = json.loads((out / "bench.json").read_text("utf-8"))
     report = (out / "report.md").read_text("utf-8")
-    assert data["meta"]["mode"] == "none" and data["meta"]["errors"] == 0
+    assert data["meta"]["mode"] == "none" and data["meta"]["errors"] == 0 and data["meta"]["world"] == "wuliang-duanyu"
     assert len(data["engine"]["playthrough"]) == 2 and len(data["engine"]["probes"]) == 3
     assert all("turn" in p for p in data["engine"]["probes"])
     metrics = {m["id"]: m for m in data["metrics"]["engine"]}
@@ -329,16 +371,68 @@ def test_end_to_end_template_three_probes(tmp_path):
     assert "| C2 | 瞎编前提被接受 | 0 |" in report and ("PASS" in report or "FAIL" in report)
 
 
-def test_end_to_end_scripted_with_baseline_and_judge(tmp_path):
+NEW = {"B1", "E1", "NAME", "SEAM", "FPD", "R5", "F3", "TOK", "END"}     # plan §8.3 的新指标
+
+
+@pytest.mark.parametrize("source", [DUANYU, bench.PROBES], ids=["wuliang-duanyu", "wuliang"])
+def test_end_to_end_scripted_with_baseline_and_judge(tmp_path, source):
+    """scripted 全链路在两个变体上跑通（普通人版截短到前 3 句，连同不进盲评的两条整局）；新指标两边都算得出来。"""
     _needs_session()
-    result = bench.run(tmp_path / "out", llm="scripted", baseline=True, judge=True, probes_path=_tiny(tmp_path),
+    result = bench.run(tmp_path / "out", llm="scripted", baseline=True, judge=True, probes_path=_tiny(tmp_path, source, 3),
                        latency_scale=0.0, echo=lambda s: None)
     report = (tmp_path / "out" / "report.md").read_text("utf-8")
     assert "ScriptedLLM" in report and "不是真实模型" in report and "纯模型主持人" in report
     assert result["meta"]["mode"] == "scripted" and result["meta"]["voice"] == "scripted-voice"
+    assert result["meta"]["world"] == bench.world_of(bench.load_probes(source)) and result["meta"]["errors"] == 0
     assert result["pairwise"]["ok"] and result["pairwise"]["engine_is"] in ("A", "B")
     judged = [p for side in ("engine", "baseline") for p in result[side]["probes"] if p["group"] != "open_actions"]
     assert judged and all(p["judge"]["ok"] for p in judged)
     ids = {m["id"] for m in result["metrics"]["baseline"]}
-    assert {"C2j", "R1j", "F2", "P1"} <= ids
-    assert len(result["baseline"]["playthrough"]) == 2
+    assert {"C2j", "R1j", "F2", "P1"} <= ids and ids >= NEW
+    engine = {m["id"]: m for m in result["metrics"]["engine"]}
+    assert set(engine) >= NEW and engine["FPD"]["value"] == 0
+    assert engine["TOK"]["value"]["p50"] > 0 and result["baseline"]["playthrough"][0]["tok"] > 1000   # 圣经就有几千 token
+    legacy = source == DUANYU
+    assert len(result["baseline"]["playthrough"]) == (2 if legacy else 3)
+    assert ("extras" in result["engine"]) != legacy                        # 留守型与夜遁型只在普通人版
+    assert all(len(x["playthrough"]) == 3 for x in result["engine"].get("extras", {}).values())
+    assert all(isinstance(t["beats"], list) and "idle" in t and "tok" in t for t in result["engine"]["playthrough"])
+
+
+def test_latency_sim_is_labelled_and_scaled(tmp_path):
+    """--latency-sim：按公开分布抽样（时间缩到千分之一，快慢次序不变），报告写明“模拟”，两边都有 L1/L2 的 p50/p95。"""
+    _needs_session()
+    result = bench.run(tmp_path / "out", llm="scripted", baseline=True, probes_path=_tiny(tmp_path, bench.PROBES, 3),
+                       latency_scale=0.001, echo=lambda s: None, latency_sim=True)
+    report = (tmp_path / "out" / "report.md").read_text("utf-8")
+    assert result["meta"]["mode"] == "latency-sim" and "L1/L2 是模拟延迟" in report and "时间缩放 ×0.001" in report
+    for side in ("engine", "baseline"):
+        m = {x["id"]: x for x in result["metrics"][side]}
+        assert set(m["L1"]["value"]) == {"p50_ms", "p95_ms"} and m["L2"]["value"]["p50_ms"] > 0
+
+
+@pytest.mark.slow
+def test_full_commoner_scripted_pipeline(tmp_path):
+    """普通人版全量：整局 38 句、两条不进盲评的整局与全部探针，scripted 跑通、没有异常、新指标齐全。"""
+    _needs_session()
+    result = bench.run(tmp_path / "out", llm="scripted", baseline=True, judge=True, latency_scale=0.0, echo=lambda s: None)
+    assert result["meta"]["errors"] == 0 and len(result["engine"]["probes"]) == 92
+    assert {m["id"] for m in result["metrics"]["engine"]} >= NEW
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("seed", [7, 11])
+def test_playthroughs_land_on_meaningful_states(seed):
+    """进 run7 之前的走查核对（plan §8.1）：三条整局逐句落在有意义的状态上，跟随型目击全部看点、落在澜沧江畔，
+    留守型熬到天亮，夜遁型下山。"""
+    _needs_session()
+    spec = importlib.util.spec_from_file_location("sim_beats", ROOT / "scripts" / "sim_beats.py")
+    sim = importlib.util.module_from_spec(spec)
+    sys.modules["sim_beats"] = sim
+    spec.loader.exec_module(sim)
+    data = bench.load_probes()
+    walks = {k: sim.walk(seed, data[k], k) for k in sim.WALKED}
+    assert {k: w.problems for k, w in walks.items()} == dict.fromkeys(sim.WALKED, [])
+    assert {k: w.ending for k, w in walks.items()} == {"playthrough": "river", "playthrough_hall": "dawn",
+                                                       "playthrough_flee": "downhill"}
+    assert walks["playthrough"].beats == list(sim.BEAT_KEYS)
