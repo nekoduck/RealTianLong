@@ -384,7 +384,8 @@ class GameSession:
 
     def _plan(self, parsed: Parsed, me: BeliefStore, now: int) -> tuple[tuple[Candidate, ...], int, bool]:
         """(计划步骤, 计划 tick 数, 是否追加反应 tick)。普通等待照旧按时长；其余按计划的步数，
-        对人说了话、做了姿态、或冲着（玩家以为）在场的人动手/递物/施用/说话，再加一个反应 tick 让在场的人当场回应。"""
+        对人说了话、做了姿态、或冲着（玩家以为）在场的人动手/递物/施用/说话，再加一个反应 tick 让在场的人当场回应；
+        同伴在身边时走开也加一个，让跟着你的人当场跟上。"""
         assert parsed.candidate is not None
         steps = (parsed.candidate, *parsed.followups)
         if parsed.kind != MoveKind.GESTURE and len(steps) == 1 and steps[0].op == Op.WAIT:
@@ -396,7 +397,11 @@ class GameSession:
             return (c.op in _ENGAGE and sk is not None and sk.kind == Kind.PERSON and here is not None
                     and believed_place(me, sk.id) == here)
 
-        reaction = parsed.kind in (MoveKind.SAY, MoveKind.GESTURE) or any(engages(c) for c in steps)
+        # 身边有同伴（自己人、要护着的人）时走开：多给一个 tick，让跟着你的人当场跟上，而不是晚一回合才冒出来
+        friends = gm.companions(self.scenario.profiles[self.player]) if self.player in self.scenario.profiles else ()
+        follow = any(c.op == Op.MOVE for c in steps) and here is not None and any(
+            believed_place(me, f) == here for f in friends)
+        reaction = parsed.kind in (MoveKind.SAY, MoveKind.GESTURE) or any(engages(c) for c in steps) or follow
         return steps, len(steps) + reaction, reaction
 
     def _ticks_for(self, parsed: Parsed, now: int) -> int:

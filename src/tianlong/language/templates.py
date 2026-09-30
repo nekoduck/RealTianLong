@@ -197,14 +197,23 @@ def _scene(p: Percept, names: Names, viewer: str, me: str) -> str:
     """所见清单按所在处归拢：“干光豪、葛光佩都在剑湖宫大殿；长剑在兵器架上”，而不是一人一句“某某在剑湖宫大殿”。
     自己在哪、身上带着什么不必每回念叨；归拢只改措辞，每条“在”的事实照旧都在。"""
     groups: dict[str, list[str]] = {}
+    here = next((str(f.prop.value) for f in p.facts
+                 if f.holds and f.prop.predicate == Rel.AT.value and f.prop.subject == viewer), None)
+    ends: dict[str, list[str]] = {}
     for f in p.facts:
         prop = f.prop
         if f.holds and prop.predicate == Rel.AT.value and viewer not in (prop.subject, prop.value):
             groups.setdefault(str(prop.value), []).append(_n(names, prop.subject, viewer, me))
-    if not groups:
+        elif f.holds and prop.predicate == Rel.CONNECTS.value:
+            ends.setdefault(prop.subject, []).append(str(prop.value))
+    # 看得见的通道与它连着的地方（“回廊连着剑湖宫后院”）：四下看看，路也是看得见的东西；不说能不能走（断崖只能下，试过才知道）
+    ways = [f"{_n(names, d, viewer, me)}连着{_n(names, o, viewer, me)}" for d, places in ends.items()
+            if here in places for o in places if o != here]
+    rows = [f"{'、'.join(who)}{'都' if len(who) > 1 else ''}在{_where(names, where, viewer, me)}"
+            for where, who in groups.items()]
+    if not rows and not ways:
         return "四下空无一物"
-    return "；".join(f"{'、'.join(who)}{'都' if len(who) > 1 else ''}在{_where(names, where, viewer, me)}"
-                    for where, who in groups.items())
+    return "；".join(rows + ways)
 
 
 def consequences(p: Percept, names: Names, viewer: str, me: str, familiar: Container[str] = ()) -> list[str]:

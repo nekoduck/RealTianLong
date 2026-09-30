@@ -31,6 +31,7 @@ from tianlong.language.render import (
     STATUS_LEXICON,
     RenderPlan,
     Violation,
+    _asserted,
     _attributed,
     _clause_after,
     _clauses,
@@ -177,8 +178,8 @@ def _judge(words: str, voices: Sequence[_Voice], who: str, universe: Iterable[st
         sourced = {n for _, n in _mentions(v.source, universe)}
         out += [Violation("quote_entity", f"{who}:{n}") for _, n in _mentions(words, universe)
                 if n not in v.names and n not in sourced]
-        for status, lexicon in STATUS_LEXICON.items():
-            if status not in statuses:
+        for status, lexicon in STATUS_LEXICON.items():   # 他的出处里说过这个状态（“我被点了穴道”），换个说法照样许
+            if status not in statuses and not _asserted(v.source, lexicon, STATUS_EXCLUSIONS):
                 out += [Violation("quote_status", f"{who}:{status}:{w}")
                         for w in _unsourced(words, v.source, lexicon, STATUS_EXCLUSIONS)]
     return out

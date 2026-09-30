@@ -57,6 +57,8 @@ from tianlong.runtime.talk import fresh
 from tianlong.scenarios import Scenario
 
 TALK = frozenset({Op.TELL.value, Op.ASK.value})
+# 叫阵、讥讽、辱骂、威胁、喝令、回绝时不交谈资：龚光杰当面挑衅时背一段“东西二宗五年一比剑”，读来是在念设定
+_NO_SMALLTALK = frozenset({Social.CHALLENGE, Social.TAUNT, Social.INSULT, Social.THREATEN, Social.COMMAND, Social.REFUSE})
 META_HELP = "可用的指令：/hint 提示、/recap 前情回顾、/beliefs 你所知道的；场外提问请以“GM：”开头。"
 _META_WORDS = {"hint": ("hint", "提示"), "recap": ("recap", "回顾", "前情"), "beliefs": ("beliefs", "认知", "所知")}
 _GM_PREFIX = re.compile(r"^\s*(?:gm|ooc)\s*[:：]\s*", re.IGNORECASE)
@@ -244,7 +246,8 @@ def _voice(ev: PerceivedEvent, me: BeliefStore, scenario: Scenario, mind: Belief
     may |= {a for eid in mind.entities for a in scenario.aliases.get(eid, ())}
     sk = me.sketch(who)
     return VoiceLine(who, sk.name if sk else scenario.state.entity(who).name, listener, ev.kind, ev.social, claim,
-                     ev.utterance, prof.voice, fresh(prof.knows, told), frozenset(may), answering, lately_text,
+                     ev.utterance, prof.voice, "" if ev.social in _NO_SMALLTALK else fresh(prof.knows, told),
+                     frozenset(may), answering, lately_text,
                      _about(answering, who, mind, scenario))
 
 

@@ -93,7 +93,9 @@ def _nearby(me: BeliefStore, here: str | None) -> tuple[str, ...]:
         return ()
     out: dict[str, None] = {}
     for eid, sk in sorted(me.entities.items()):
-        if sk.kind in (Kind.ITEM, Kind.SURFACE) and believed_place(me, eid) == here:
+        if sk.kind == Kind.PLACE and sk.seen:
+            out.setdefault(sk.name)             # 亲眼到过、看过的地方：说“身后剑湖宫的喧嚷”不是凭空点名（说“到了那里”照样算瞬移）
+        elif sk.kind in (Kind.ITEM, Kind.SURFACE) and believed_place(me, eid) == here:
             out.setdefault(sk.name)
         elif sk.kind == Kind.DOOR:
             ends = {str(b.prop.value) for b in me.positives(eid, Rel.CONNECTS.value)}
@@ -150,6 +152,11 @@ def continuity(env: TurnEnvelope, me: BeliefStore, before: BeliefStore | None, f
         if ails and _name(me, p):
             hurt.append(_name(me, p) + "，".join(ATTR_WORDS[a][0] for a in ails))
             others += [(str(_name(me, p)), a) for a in ails]
+            statuses.update(ails)
+    for f in sorted(set(friends) - set(around)):   # 不在身边的同伴：玩家惦记着的伤毒被制（“钟灵还被点着穴道留在殿上”）说出来不算错
+        ails = _ails(me, f)
+        if ails and _name(me, f):
+            others += [(str(_name(me, f)), a) for a in ails]
             statuses.update(ails)
     arrived = {ep.event.actor for ep in me.episodes
                if ep.event.kind == Op.MOVE.value and ep.event.outcome == Outcome.SUCCESS and ep.event.actor

@@ -326,8 +326,9 @@ def test_fallback_template_lines_read_as_sentences(view):
     r, _ = _run(view, _script(B_ENTITY))
     rows = r.text.splitlines()
     assert rows[0] == render_voice(GONG), "以收引号收尾的台词不再补标点"
-    assert rows[1].startswith("你看到：") and rows[1].endswith("长剑在兵器架上。"), "清单行补上句号"
-    assert _template(view).splitlines()[1].endswith("长剑在兵器架上"), "没有模型时的模板照旧"
+    assert rows[1].startswith("你看到：") and rows[1].endswith("剑湖宫宫门连着无量山山道。"), "清单行补上句号"
+    assert "长剑在兵器架上；回廊连着剑湖宫后院" in rows[1], "看得见的通道也在所见里"
+    assert _template(view).splitlines()[1].endswith("剑湖宫宫门连着无量山山道"), "没有模型时的模板照旧"
 
 
 def test_fallback_tail_skips_voiced_lines_and_tells_the_time_in_words(view):
@@ -753,3 +754,14 @@ def test_looking_around_needs_no_stray_template_line():
     scene = "满殿宾客或坐或立，龚光杰按剑而立，满殿的目光都在等你开口。"
     r, _ = _run(view, _script(scene), SceneBrief())
     assert "仔细查看" not in r.text and "omitted" not in {v.kind for v in r.violations}, r.text
+
+
+def test_idle_chatter_left_out_is_not_patched_in_and_endings_are_not_a_menu():
+    """没有原话、没有说法、也不是回应玩家的闲话，模型没写就算了：不在钩子后面补一句“钟灵笑嘻嘻地打趣你”。
+    系统提示不再要模型每回合都把“你是……还是……？”摆到玩家面前。"""
+    view = _settle(("duanyu", Op.WAIT, None, None, Manner.NORMAL))
+    joke = VoiceLine("zhongling", "钟灵", "你", Op.TELL.value, Social.JOKE, None, None, may_name=frozenset({"钟灵"}))
+    calm = "殿中一时静了下来，只听得檐下风铃叮当。"
+    r, _ = _run(view, _script(calm), SceneBrief(lines=(joke,), present=("剑湖宫大殿",)))
+    assert r.text == calm and r.status == RenderStatus.LLM
+    assert "你是……还是……？" in _narrator()._system() and "不要替玩家列选项" in _narrator()._system()

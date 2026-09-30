@@ -55,7 +55,8 @@ STATUS_LEXICON: dict[str, tuple[str, ...]] = {
                  r"(?:神功|功夫|武功|步法|心法).{0,2}已成"),
 }
 # 只收不含糊的武侠说法：“气得脸色发青”“头皮发麻”“一动不动”“僵住”“已成定局”“血丝”说的都不是伤毒被制学成，不收
-STATUS_EXCLUSIONS: tuple[str, ...] = ("控制住", "克制住", "抑制住", "林中毒", "其中毒", r"贯通(?:前后|南北|东西)", "呕心沥血")
+STATUS_EXCLUSIONS: tuple[str, ...] = ("控制住", "克制住", "抑制住", "林中毒", "其中毒", r"贯通(?:前后|南北|东西)", "呕心沥血",
+                                     r"穴道(?:脉络|经络|图)", r"经脉穴道", "穴位")
 # 否认一个确有的状态（“你却毫发无损”）：与“并未受伤”同罪
 DENIALS: tuple[str, ...] = ("毫发无损", "毫发无伤", "毫发未伤", "毫发不伤", "安然无恙", "分毫未损", "毫无损伤", "丝毫无损",
                             "完好无损")
@@ -415,8 +416,8 @@ def check(text: str, plan: RenderPlan, known_names: Iterable[str] = (),
         out.append(Violation("entity", n))
 
     # ---- 2. 状态升级：本回合没有的状态不许出现（有台词时引语里的状态词归台词闸门按说话者查）----
-    for status, words in STATUS_LEXICON.items():
-        if status not in plan.statuses:
+    for status, words in STATUS_LEXICON.items():       # 出处里肯定说过这个状态（换个说法也算）：不是升级，落在谁身上归人事闸门
+        if status not in plan.statuses and not _asserted(plan.source, words, STATUS_EXCLUSIONS):
             out += [Violation("status", f"{status}:{w}")
                     for w in _unsourced(narration, plan.source, words, STATUS_EXCLUSIONS)]
 

@@ -8,7 +8,8 @@
           无事发生时有模型就写眼前的光景与身边的人，没有模型才是“时间悄悄过去”；第二轮评审回归——问到的人附上说话者所知的来历、
           谈资说过一回就不再给（账本随会话运行态落库、读档恢复）、没人接的话照实记下、等待被打断照实说、提醒写明是谁制住的且许说“被制”、
           被制住的同伴不说“没跟来”、近来的经历留着挨的那一下、提示从玩家所在之处说起；第三轮回归——故事里的自问不标场外、
-          谁制住的与挨过的那一下从经历记录里找、身边人的伤、同一时辰里说过了多久、干等时的钩子、换了说法的谈资也记账
+          谁制住的与挨过的那一下从经历记录里找、身边人的伤、同一时辰里说过了多久、干等时的钩子、换了说法的谈资也记账；
+          第四轮回归——同一刻的寒暄答不了同一刻的问话、同伴当场跟上、所见里有路、闸门按状态算出处
 [POS]: tests 的前后照应：证伪“人被点了穴，下一幕毫发无伤地走来却没人觉得奇怪”“挨了一掌此后再没人提”“NPC 每开口就背一遍设定”
        “问了人没人答却像答了”“身在崖底还提开场的事”
        “等到天黑被闲聊打断得原地打转”“到了结局还问要不要回头”
@@ -26,7 +27,7 @@ pytest.importorskip("qdrant_client")
 
 from tianlong.cognition import BeliefStore, Candidate  # noqa: E402
 from tianlong.cognition.beliefs import Episode  # noqa: E402
-from tianlong.core import Modality, Op, Outcome, PerceivedEvent, Percept, Proposition, Social  # noqa: E402
+from tianlong.core import Modality, Op, Outcome, PerceivedEvent, Percept, Proposition, Rel, Social  # noqa: E402
 from tianlong.language.llm import ScriptedLLM  # noqa: E402
 from tianlong.language.narrator import Narrator  # noqa: E402
 from tianlong.language.parser import MoveKind, Parsed  # noqa: E402
@@ -277,3 +278,54 @@ def test_a_plain_wait_offers_hooks_and_a_paraphrased_topic_counts_as_told():
     said = "钟灵道：“你瞧见我那貂儿没有？咬人可是有毒的，最听我的话啦！”"
     assert told(knows, said) == frozenset(), "三字片段认不出换了说法的"
     assert told(knows, said, offered="养着一只闪电貂，咬人有毒，最听她的话") == {1}, "交给了叙述者、她也开了口：认得出"
+
+
+# ============================================================
+#  第四轮评审回归：同一刻的寒暄答不了同一刻的问话、同伴当场跟上、所见里有路、闸门按状态算出处
+# ============================================================
+
+
+def test_a_greeting_made_the_same_moment_does_not_answer_a_question():
+    """马五德见礼的同一刻段誉问他话：这一问仍欠着，下一刻他照样回话（不能被同一刻的寒暄勾销）。"""
+    from tianlong.cognition.agenda import fold_agenda
+
+    asked = Percept(T0, Modality.SPEECH, PerceivedEvent(Op.ASK.value, "hall", HERO, "ma", outcome=Outcome.SUCCESS,
+                                                        utterance="龚师兄是什么来头？"))
+    greet = Percept(T0, Modality.SELF, PerceivedEvent(Op.TELL.value, "hall", "ma", HERO, outcome=Outcome.SUCCESS,
+                                                      social=Social.GREET))
+    for order in ((asked, greet), (greet, asked)):
+        obligations, said = (), ()
+        for p in order:
+            obligations, said = fold_agenda("ma", obligations, said, p)
+        assert [o.kind for o in obligations] == ["reply"], order
+    later = replace(greet, tick=T0 + 1)
+    assert fold_agenda("ma", obligations, said, later)[0] == (), "下一刻开口才算回了话"
+
+
+def test_a_companion_at_your_side_follows_within_the_turn():
+    """同伴在身边时走开，多走一个 tick：跟着你的人当场跟上，而不是晚一回合才冒出来。"""
+    sc = scenario()
+    sc = replace(sc, profiles={**sc.profiles, HERO: replace(sc.profiles[HERO], allies=("ling",))})
+    s = GameSession(sc, policies={**{a: Script() for a in sc.npcs}, "ling": Script(plan={T0 + 1: (Op.MOVE, "yard")})})
+    s.turn("去后院", request_id="walk")
+    env = s.store.request(s.ref, "walk")
+    assert env.reaction and env.planned_ticks == 2
+    assert s.authority.head().target("ling", Rel.AT) == "yard"
+
+
+def test_looking_around_shows_the_way_out_and_a_status_said_otherwise_is_still_sourced():
+    from tianlong.language.render import RenderPlan, check
+
+    s = session()
+    s.turn("去后院", request_id="walk")
+    env = s.store.request(s.ref, "walk")
+    seen = [p for p in env.percepts if p.modality == Modality.SCENE]
+    from tianlong.language.templates import render_percept
+    text = render_percept(seen[-1], s.beliefs(HERO).entities, HERO, "你")
+    assert "回廊连着大殿" in text and "小门连着山道" in text, text
+    def plan(source: str = "") -> RenderPlan:
+        return RenderPlan(HERO, (), frozenset({"钟灵"}), frozenset(), frozenset(), frozenset(), (), (), source=source)
+    held = plan("你原以为钟灵被制住了")
+    assert not [v for v in check("她明明被点了穴道，怎地到了这里？", held) if v.kind == "status"], "出处说过“被制”，换个说法也算"
+    assert [v for v in check("钟灵受了伤。", held) if v.kind == "status"], "出处没说过的状态照旧拦"
+    assert not check("卷上画着人身上的穴道脉络。", plan()), "穴道脉络是图，不是被制"

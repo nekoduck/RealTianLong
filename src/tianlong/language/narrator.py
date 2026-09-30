@@ -27,7 +27,8 @@
        前后照应（SceneBrief：玩家的身体状况、出乎他意料之处、眼前的地点与人、说话者近来的经历）写进提示词且算出处；闲话只可说谈资、近来的经历与眼前的事；
        无事发生时有模型就写眼前的光景；到了结局收在余韵上；玩家的话没人接就照实写出没人接（不替他编答案）；
        回话先接住玩家的话头，谈资只给没说过的（会话记账），被问到的人附上说话者所知的来历；此地叫得出名字的东西（nearby）可以点名；
-       四下看看而什么也没翻出来不是必讲之事（写出眼前的光景就是交代了）；等待还在同一个时辰里说过了多久（_when）
+       四下看看而什么也没翻出来不是必讲之事（写出眼前的光景就是交代了）；等待还在同一个时辰里说过了多久（_when）；
+       没有原话、没有说法、也不是回应玩家的闲话漏写了不补；近旁东西的别称同样可点名；结尾不替玩家列选项
        先声之后，别的必讲之事讲到没有只看模型自己交付的正文；有台词时引语里的名字与状态词交给台词闸门按说话者查。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -91,7 +92,8 @@ _GM = (
     "5. 绝不替玩家说新的话、生新的念头或做任何决定；玩家本回合的原话可以照引，一字不改。\n"
     "6. 换着说法写：不要重复最近几段正文的开头与句式，不要用“你按兵不动”“静观其变”之类的套话。\n"
     "7. 不写数字钟点，时辰与天色一律用文字描述。\n"
-    "8. 结尾停在一个钩子上——某人的问话、一个显露出来的代价、或一个摆在玩家面前的选择——停在那里，不替玩家选。"
+    "8. 结尾自然收住，停在一个钩子上：某人的问话或动作、一声响动、一个显露出来的代价、一处引人注意的细节。"
+    "不要替玩家列选项，不要用“你是……还是……？”这种句式（最近几段正文用过的收尾方式就换一种），不替玩家选。"
 )
 
 # 言语行为的中文说法（交给模型）与模板措辞（无模型时的台词引子；{to} 是听者，没有听者时是“众人”）
@@ -207,17 +209,18 @@ def render_voice(line: VoiceLine, salt: str = "") -> str:
     return f"{line.speaker_name}{phrase}：“{words}”" if words else f"{line.speaker_name}{phrase}。"
 
 
-def _with_lines(plan: RenderPlan, brief: SceneBrief) -> RenderPlan:
+def _with_lines(plan: RenderPlan, brief: SceneBrief, forms: Mapping[str, Sequence[str]] | None = None) -> RenderPlan:
     """会话交来的上下文本身有出处：台词的说话者与听者可以点名，原话、说法与说话者近来的经历算出处；
-    前后照应（玩家的身体状况、本回合的意外与变化、眼前的地点与人）同样算出处，其中的状态说出来不算升级，
-    玩家自己身上的伤毒被制算落在对的人身上。"""
+    前后照应（玩家的身体状况、本回合的意外与变化、眼前的地点与人、近旁叫得出名字的东西）同样算出处，其中的状态说出来不算升级，
+    玩家自己与他以为身边的人身上的伤毒被制算落在对的人身上。forms 是名字 → 别称：近旁的东西说别称（“北冥神功”）同样可以。"""
     names = {n for vl in brief.lines for n in (vl.speaker_name, vl.listener_name) if n and n != "你"}
     names |= set(brief.present) | set(brief.nearby)
+    also = frozenset(a for n in names for a in (forms or {}).get(n, ()))
     said = [x for vl in brief.lines for x in (vl.template, vl.claim) if x]   # 谈资、近来经历与来历只在他自己的引语里算数（台词闸门）
     said += [x for x in (brief.condition, *brief.notes, "、".join(brief.present)) if x]
     if not said and not names and not brief.statuses:
         return plan
-    return replace(plan, names=plan.names | names, source="\n".join([plan.source, *said]),
+    return replace(plan, names=plan.names | names, aliases=plan.aliases | also, source="\n".join([plan.source, *said]),
                    statuses=plan.statuses | brief.statuses, afflicted=(*plan.afflicted, *brief.afflicted))
 
 
@@ -325,7 +328,8 @@ def _missing(rows: Sequence[_Row], text: str, plan: RenderPlan, brief: SceneBrie
     out: list[_Row] = []
     for r in rows:
         if r.voice is not None:
-            ok = _spoken(r, text, said)
+            vl = r.voice                    # 没有原话、没有说法、也不是回应玩家的闲话：漏写了就算了，不补一句空洞的“某某打趣你”
+            ok = _spoken(r, text, said) or not (vl.template or vl.claim or vl.answering)
         elif r.must or (strict and r.keys):
             ok = (_named(text, r.keys) if r.keys else dropped == 0) or _echoes(r.said, text)
         else:
@@ -535,8 +539,9 @@ class Narrator:
         known, familiar = frozenset(known), frozenset(familiar)
         looks = [self.lore[k] for k in fresh if k in self.lore]
         passed = [f"（不觉已是{lapse}）"] if lapse else []
+        forms = {sk.name: tuple(self.aliases.get(eid, ())) for eid, sk in names.items()}
         plan = _with_lines(build_plan(viewer, percepts, names, show_scene, looks, "".join(passed), self.aliases,
-                                      self.secrets, familiar), brief)
+                                      self.secrets, familiar), brief, forms)
         rows, covered = _scene_lines(plan, viewer, percepts, names, brief, brief.recent[-1] if brief.recent else "",
                                      self.aliases, familiar)
         scene = [r.text for r in rows]
@@ -656,7 +661,8 @@ class Narrator:
             parts.append(f"玩家自己的身体状况（记在心里，不要写得像没事人，也不要加重；只在这一步吃力——走动攀爬、出手、挨打——"
                          f"或刚受伤时带一笔，别每回合都写疼）：{brief.condition}")
         if brief.hurt:
-            parts.append("身边的人（玩家以为的伤势；写他们的举动时别像没事人，也不要加重）：" + "；".join(brief.hurt))
+            parts.append("身边的人（玩家以为的伤势；写他们的举动时别像没事人，也不要加重；不必每回合都写到伤）："
+                         + "；".join(brief.hurt))
         if brief.hooks:
             parts.append("玩家在等，眼前却有可做的事（" + " / ".join(brief.hooks) + "）：可以把他的目光引向其中一处，"
                          "只写看得见的样子，不点破会有什么结果，不替他决定")

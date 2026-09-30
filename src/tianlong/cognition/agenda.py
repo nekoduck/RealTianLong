@@ -6,6 +6,7 @@
 [POS]: cognition 的持久任务状态与社交状态：短期经历缓冲（episodes，容量 12）会被环顾、响动挤掉，“有人问过我”“我已经告诉过他”不能跟着消失。
        这里把它们从感知折叠成独立的、有界的记录：被人问到 → 记一笔待答；被人当面搭话（不带命题的言语）→ 记一笔待回话；
        自己把答案说给了他 → 这一笔勾销，并记下“说过”；回了话（或以拳脚作答）→ 待回话勾销；说“不知道/不肯说”→ 待答也勾销。
+       只有晚于那句问话的开口才算回话：同一刻说出口的寒暄（马五德见礼的同时段誉问他话）答不了同一刻才听见的问题，与折叠顺序无关。
        “说过”只对说的那一刻的认知有效：自己对那个槽位的认知后来变了（钥匙追回来了、又被偷了），或对方就同一件事又问了一遍，
        这一笔“说过”随即作废——变了的消息是新消息，再问一遍就是还想听；待回话过了 REPLY_TTL 还没回，时机已过即作废。
        社交状态（fold_social）：别人对我或当众的言语行为记为有界的 SocialCue（溢出时先丢别人之间的闲谈，冲着我或当众的留得更久）；
@@ -106,7 +107,9 @@ def fold_agenda(owner: str, obligations: tuple[Obligation, ...], said: tuple[Sai
             said = (*(s for s in said if not (s.listener == ev.target and s.fact is None and s.social == ev.social)),
                     Said(ev.target, None, p.tick, ev.social))[-MAX_SAID:]
             closes = ("reply", "answer") if ev.social in _CLOSES_QUESTION else ("reply",)
-            obligations = tuple(o for o in obligations if not (o.counterpart == ev.target and o.kind in closes))
+            # 同一刻说出口的话答不了同一刻才听见的问题（马五德见礼的同时段誉问他话：这一问仍欠着）
+            obligations = tuple(o for o in obligations
+                                if not (o.counterpart == ev.target and o.kind in closes and o.since < p.tick))
         elif ev.kind == Op.TELL.value:
             said = (*(s for s in said if not (s.listener == ev.target and s.fact == ev.topic)),
                     Said(ev.target, ev.topic, p.tick))[-MAX_SAID:]
@@ -115,7 +118,8 @@ def fold_agenda(owner: str, obligations: tuple[Obligation, ...], said: tuple[Sai
                                         and _answers(ev.topic, o.topic)))
     elif p.modality == Modality.SELF and ev.kind == Op.ATTACK.value and ev.target:
         # 以拳脚作答：这一句不必再回
-        obligations = tuple(o for o in obligations if not (o.kind == "reply" and o.counterpart == ev.target))
+        obligations = tuple(o for o in obligations
+                            if not (o.kind == "reply" and o.counterpart == ev.target and o.since < p.tick))
     return obligations, said
 
 
