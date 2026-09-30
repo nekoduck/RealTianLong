@@ -709,7 +709,7 @@ class StreamingNarrator(Narrator):
         self.briefs = []
 
     def narrate_scene(self, viewer, percepts, names, *, brief, show_scene=False, fresh=(), command="", lapse="",
-                      known=(), on_text=None, familiar=(), since=""):
+                      known=(), on_text=None, familiar=(), since="", deadline=None):
         self.briefs.append(brief)
         text = super().narrate_scene(viewer, percepts, names, brief=brief, show_scene=show_scene, fresh=fresh,
                                      command=command, lapse=lapse, known=known, familiar=familiar).text   # 模板正文（不经 on_text）

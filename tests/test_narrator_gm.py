@@ -5,7 +5,7 @@
           NPC 台词点名许可之外的人、凭空多出的说话者、台词里的状态升级各被拦下；丢满两句或一句未过即补模板；模型不可用（含中途失败）
           保留已交付的并补模板；模板把 NPC 言语写成带言语行为的台词；提示词带最近正文与台词要素且没有钟点数字；首句交付早于整段完成；
           分句器处理引号（含错配的收引号）、省略号、较长的后置归属与流的边界；合法的道谢、挑衅与如实的位置说法不被误伤；
-          漏掉的台词与内核结果补上模板行、传闻说成事实在流出前就丢、只看见的耳语不算开口、场景秘密被拦、写够长即停、回退的模板行以句号收尾；
+          漏掉的台词与内核结果补上（看见的事写成人话补句）、传闻说成事实在流出前就丢、只看见的耳语不算开口、场景秘密被拦、写够长即停、回退的模板行以句号收尾；
           讲到了就不补（写到翻出的帛卷、照着写出玩家的姿态），回退也只补正文没讲到的；闸门不再误杀照应句——NPC 讲自己的来路不是瞬移、
           刻在门上的字不是谁的话、“被左子穆制住”写进提醒就许说、近旁的地方与普通名词的别称（石壁）不算凭空点名；叩拜写成磕头、下断崖有经过
 [POS]: tests 的主持层叙述；证伪“流式叙述会把没过闸门的句子交给玩家”“主持人替玩家说话”“NPC 说出他不该知道的名字”
@@ -589,14 +589,14 @@ def test_a_quiet_turn_still_says_something_when_the_model_fails():
 
 
 def test_the_lead_never_vouches_for_what_the_model_left_out():
-    """先声点过龚光杰的名字，不等于龚光杰的反击讲过了：漏掉的照样补上模板行。"""
+    """先声点过龚光杰的名字，不等于龚光杰的反击讲过了：漏掉的照样补上（补句是人话：去掉“看见”）。"""
     view = _settle(("duanyu", Op.ATTACK, "gongguangjie", None, Manner.NORMAL),
                    ("gongguangjie", Op.ATTACK, "duanyu", None, Manner.NORMAL))
     lead = lead_line(view[0], view[1], "duanyu")
     counter = [x for x in build_plan("duanyu", view[0], view[1]).lines if x.startswith("看见龚光杰")]
     assert lead and counter
     r, got = _lead_run(view, _script("满堂哗然，众人面面相觑。"), 0)
-    assert got[0] == lead and counter[0] in r.text and r.status == RenderStatus.GATED_FALLBACK
+    assert got[0] == lead and counter[0].removeprefix("看见") in r.text and r.status == RenderStatus.GATED_FALLBACK
 
 
 @pytest.mark.parametrize("sentence, echo", [
