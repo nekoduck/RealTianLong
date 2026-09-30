@@ -39,7 +39,7 @@ language/narrator：只把玩家本回合的感知写成文字，过语义闸门
 uv venv .venv && . .venv/bin/activate
 uv pip install -e ".[all,dev]"
 
-# 离线游玩（默认天龙八部·无量山；--world warehouse 为设计验收用例）
+# 离线游玩（默认天龙八部·无量山普通人版——你是挑茶的伙计阿顺；--world wuliang-duanyu 是段誉作主角的旧版，--world warehouse 为设计验收用例）
 python -m tianlong --llm none --debug
 
 # 录制一局“玩家所见 vs 世界真相”到 docs/demo/
@@ -85,7 +85,9 @@ python -m tianlong --store neo4j --save 我的存档
 - **原著路线可玩**：后山崖顶断崖只能下不能上；无量玉璧白日只是石壁，**入夜查看**才见石缝；琅嬛福地蒲团里藏着两卷帛书，研读三次学成凌波微步（闪避），北冥神功吸走徒手者内力。技能以效果命名，书名只是内容。
 - **认知分离**：玩家跳崖之后，入夜私奔、灭口与营地厮杀都在幕后发生；玩家的叙述只有“时间悄悄过去”，结局时段誉仍以为钟灵被制在大殿、干葛二人安然无恙。
 
-完整录像（Gemini 叙述，每回合并列世界真相与 NPC 理由）见 [`docs/demo/wuliang.md`](docs/demo/wuliang.md)。节选：
+**普通人版（默认，`--world wuliang`）**：玩家换成马五德茶号的挑茶伙计阿顺，段誉降为没有目标的 NPC。名场面由各角色**只读自己认知**的驱力（`scenarios/tianlong/drives_c.py`）生成、经内核结算：钟灵拿解药换人、左子穆“依你”，私奔那对在后院低声私语、有人进来就住口，龚光杰 18:40 举火搜人、把段誉逼上崖顶，段誉跳崖、月下看玉璧、进石缝叩首取帛卷、学成钻隧道；山道尽头神农帮的关卡锁着，夜饭换班或塞了碎银才放行。结局有三种（澜沧江畔 / 下山 / 天亮，各带变体），终章是江湖传闻口吻的纪事“那一夜你没看见的事”。`python scripts/sim_beats.py --check` 不接模型跑 20 个种子 × 5 种脚本化玩家，结果表见 [`docs/results/sim_beats.md`](docs/results/sim_beats.md)。
+
+完整录像（旧版，Gemini 叙述，每回合并列世界真相与 NPC 理由）见 [`docs/demo/wuliang.md`](docs/demo/wuliang.md)。节选：
 
 > **> 跳下断崖**【第1日 17:48】你落至断崖之下，但见四面峭壁环抱，幽谷中只闻水声，身旁便是一座碧绿如玉的剑湖……
 >

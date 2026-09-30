@@ -8,7 +8,9 @@
           认知相同即驱力选择相同；每类条件的求值、每种行动的落地；优先级（URGENT 先于脚本、IDLE 只在脚本闲着时、VETO 把关）；
           once / cooldown 经 advance_marks 只认兑现成功的；时间窗打开即唤醒；驱力原话随任何行动落库、被在场的人感知；
           带驱力标记的会话读档接续与连续运行逐项相同；
-          Flee 不撞认为锁着的门；多一条单向捷径不让绕开它的 Go 放弃开锁；台词在长时间窗里一直轮换
+          Flee 不撞认为锁着的门；多一条单向捷径不让绕开它的 Go 放弃开锁；台词在长时间窗里一直轮换；
+          Saw(here=True) 只认此处发生的事、Unlock/Lock 只在会改变什么时才转钥匙；
+          lint（普通人版）：台词与姿态不命中 SECRETS_C、每条有 gloss，一夜里 once 的驱力至多兑现一次
 [POS]: tests 的驱力层：“驱力只读自己的认知、只是意图、由内核裁定”被写成可证伪的断言
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -18,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 from dataclasses import replace
@@ -60,6 +63,7 @@ from tianlong.core import (
     Kind,
     Knows,
     Level,
+    Lock,
     Lost,
     Manner,
     Menaced,
@@ -79,7 +83,9 @@ from tianlong.core import (
     Status,
     Study,
     Take,
+    Unlock,
     Use,
+    at,
     derive_seed,
 )
 from tianlong.learning.task import TaskConfig
@@ -397,6 +403,26 @@ def test_realize_items_and_inspection():
     assert realize(Take("ledger"), s) is None
 
 
+def test_saw_here_counts_only_what_happened_where_i_stand():
+    walk = _ep(START - 1, Op.MOVE, "captain", "entrance", target="harbor", obj="path")
+    there = _guard(episodes=(walk,))
+    away = _guard(_at("guard", "warehouse"), episodes=(walk,))
+    assert holds(Saw(Op.MOVE, actor="captain", here=True), there, {})
+    assert not holds(Saw(Op.MOVE, actor="captain", here=True), away, {}), "他走开的地方不是我此刻所在之处"
+    assert holds(Saw(Op.MOVE, actor="captain"), away, {})
+
+
+def test_unlock_and_lock_turn_the_key_only_when_it_changes_something():
+    shut = _guard(_at("guard", "warehouse"), _at("key", "guard"), _attr("door_store", "locked"))
+    opened = _guard(_at("guard", "warehouse"), _at("key", "guard"), ("door_store", "attr.locked", True, False))
+    got = _cand(shut, realize(Unlock("door_store"), shut))
+    assert (got.op, got.target, got.obj) == (Op.UNLOCK, "door_store", "key")
+    assert realize(Lock("door_store"), shut) is None, "以为锁着就不必再锁"
+    assert realize(Unlock("door_store"), opened) is None, "以为没锁就不去开"
+    assert _cand(opened, realize(Lock("door_store"), opened)).op == Op.LOCK
+    assert realize(Unlock("door_store"), _guard(_attr("door_store", "locked"))) is None, "门不在身边、手里也没钥匙"
+
+
 def test_realize_speech_pose_hold_and_ask():
     s = _guard(_at("player", "entrance"))
     say = realize(Say("player", Social.COMMAND), s)
@@ -602,3 +628,39 @@ def test_resume_with_marks_equals_continuous_play():
     assert json.loads(json.dumps(continuous[2])) == continuous[2], "会话运行态 JSON 往返不变"
     for split in (3, 5):
         assert _play(sc, split) == continuous
+
+
+# ============================================================
+#  普通人版驱力表的体检（lint）：台词不说破秘密；once 的驱力兑现后不再触发
+# ============================================================
+
+
+def _texts(d: Drive) -> tuple[str, ...]:
+    return (d.line, *d.lines, *(a.text for a in d.do if isinstance(a, Pose)))
+
+
+def test_lint_lines_never_say_a_secret():
+    from tianlong.scenarios.tianlong.commoner import SECRETS_C
+    from tianlong.scenarios.tianlong.drives_c import DRIVES_C
+    said = [t for ds in DRIVES_C.values() for d in ds for t in _texts(d) if t]
+    assert len(said) >= 30
+    leaks = [(t, pat) for t in said for pat in SECRETS_C if re.search(pat, t)]
+    assert not leaks, leaks
+    glossed = [d.key for ds in DRIVES_C.values() for d in ds if not d.gloss]
+    assert not glossed, f"每条驱力都要有给对照组圣经的 gloss：{glossed}"
+
+
+def test_lint_once_drives_never_fire_again():
+    pytest.importorskip("langgraph")
+    pytest.importorskip("qdrant_client")
+    from tianlong.runtime.session import GameSession
+    from tianlong.scenarios import build_wuliang_commoner
+    from tianlong.scenarios.tianlong.drives_c import DRIVES_C
+    once = {(a, d.key) for a, ds in DRIVES_C.items() for d in ds if d.once}
+    s = GameSession(build_wuliang_commoner(7), pipeline=False)
+    while s.authority.head().clock < at(1, 22, 0):          # 从开场一直等到换班之后：一夜的名场面都已上演
+        s.turn("等下去")
+    marks = s.session_state()["drives"]
+    fired = {(a, k): v for a, m in marks.items() for k, v in m.items() if (a, k) in once}
+    assert len(fired) >= 10, "这一夜确有十多条一次性的驱力兑现"
+    assert all(len(v) == 1 for v in fired.values()), {k: v for k, v in fired.items() if len(v) > 1}

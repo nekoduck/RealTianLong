@@ -2,6 +2,7 @@
 [INPUT]: 依赖 runtime/authority 的 WorldAuthority / Settlement，runtime/versions 的 current_versions / check_save，runtime/talk 的谈资账本，
          runtime/gm 的主持层纯函数（gm_command / companions / salient / build_brief），runtime/aside 的 AsideMixin / ENDED（不推进的回合），
          runtime/endings 的 EndingMixin（落幕与终章），runtime/cast 的 policy_for / wakes / advance_marks（驱力），
+         runtime/staging 的 recognize / stops_wait（看点：只读玩家自己的感知），runtime/suggest 的 suggestions，
          agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
          memory 的 QdrantMemoryIndex / Recall / MemoryIndexer / MemoryScope，language 的 IntentParser / MoveKind / Parsed / Narrator /
          TemplateSpeaker / LLMClient，language/scene 的 SceneBrief / TextSink，
@@ -9,12 +10,14 @@
          RequestConflict / VersionConflict，scenarios 的 Scenario / Ending，cognition 的 Candidate / believed_place，
          language/templates 的 render_fact，memory/view 的 MemoryView（NPC 的长期记忆摘要，增量汇总——水位含边界、按记录 ID 去重，与读档后重建逐项相同）
 [OUTPUT]: 对外提供 GameSession（可玩会话：turn() 一回合、intro()/epilogue() 开场与终章、belief_lines() 玩家自己的认知；
-          读档接续并恢复调度标记、已描写实体、最近几段正文、提示进度、谈资账本与驱力标记；请求幂等、存档版本闸门）、
-          TurnReport（一回合的全部产物：世界侧与文字侧分开记录，含这句话的类别、结局、首字耗时、分阶段耗时与叙述上下文）、
+          读档接续并恢复调度标记、已描写实体、最近几段正文、提示进度、谈资账本、驱力标记与看点账本；请求幂等、存档版本闸门）、
+          TurnReport（一回合的全部产物：世界侧与文字侧分开记录，含这句话的类别、结局、首字耗时、分阶段耗时、叙述上下文与玩家感知到的看点 beats）、
           ENDED（再导出自 runtime/aside）
 [POS]: runtime 的装配中心（主持层的回合循环）：一回合 = 解释玩家输入（后台同时算好本 tick 的 NPC 决策；元指令与“GM：”一眼认得，不算）→ 按类别推进：
-       ACT 走 1~3 步计划（失败即止）、SAY/GESTURE 与冲着在场之人的行动再加一个反应 tick、普通等待按时长且只被要紧的事打断
-       （当面动手、对同伴——自己人与 DEFEND 目标——动手都算）、
+       ACT 走 1~3 步计划（失败即止；多 tick 叩首的每一步都带着原话）、SAY/GESTURE 与冲着在场之人的行动再加一个反应 tick、
+       普通等待按时长（等到入夜/月出/天亮按场景的时刻换算，上限 MAX_WAIT）且只被要紧的事打断
+       （当面动手、对同伴——自己人与 DEFEND 目标——动手都算）或在玩家感知到看点的那个 tick 停下（一次性的看点只停一回），
+       时钟到了结局的时刻（天亮）也停、
        ASK_GM/META/追问不推进时间也不落库（AsideMixin：场外回答边生成边逐句过名字闸门；模型写的追问同样过闸门，玩家自己说出的名字不算）→
        权威结算（同一事务附上请求进度与会话运行态）→ 同步记忆索引 →
        主持人之声据玩家感知与 SceneBrief 流式叙述（过语义闸门；SceneBrief 带前后照应——拿本回合开始前玩家的认知比对，
@@ -28,7 +31,7 @@
        对方尚未走完时只给出目前为止的文字、不落库。建档后尚无提交就读档，开场已描写的实体按开场规则补回。
        NPC 决策图里从不调模型（台词由主持人之声一并写出，驱力的原话除外——它随意图落库），向量回忆只为声明 reads_memories 的策略而跑。
        场景给了驱力的 NPC 经 cast.policy_for 套上 Driven，时间窗打开即唤醒（cast.wakes，不改调度器）；
-       驱力标记在 annotate 的副本上推进（只记兑现成功的），与调度标记同一事务落库。
+       驱力标记与看点账本（staged：已让等待停过的一次性看点）在 annotate 的副本上推进（驱力只记兑现成功的），与调度标记同一事务落库。
        CLI、测试、未来的 Web 前端都只和它打交道
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -84,7 +87,7 @@ from tianlong.persistence import (
     WorldRef,
     WorldStore,
 )
-from tianlong.runtime import cast, gm, talk
+from tianlong.runtime import cast, gm, staging, talk
 from tianlong.runtime.aside import ENDED, AsideMixin
 from tianlong.runtime.authority import Settlement, WorldAuthority
 from tianlong.runtime.endings import EndingMixin
@@ -112,6 +115,7 @@ class TurnReport:
     ending: Ending | None = None                      # 本幕已落幕（玩家据世界真相身处结局地点）
     first_text_ms: float | None = None                # 回车到第一段文字交付的毫秒数；None = 没有交付任何文字
     brief: SceneBrief | None = field(default=None, repr=False)   # 交给叙述者的上下文（要说出口的话、最近正文、玩家原话）
+    beats: tuple[str, ...] = ()                       # 本回合玩家感知到的看点编号（B1；只读玩家自己的感知）
 
 
 MAX_WAIT = 240       # 一次最多等四个时辰（240 分钟）
@@ -138,6 +142,17 @@ def _compact(percepts: tuple[Percept, ...]) -> tuple[Percept, ...]:
     等上四个时辰也不让每次提交整份重写的进度随 tick 平方增长。正常叙述与崩溃后的重写用的是同一份。"""
     last = max((i for i, p in enumerate(percepts) if p.modality == Modality.SCENE), default=-1)
     return tuple(p for i, p in enumerate(percepts) if p.modality != Modality.SCENE or i == last)
+
+
+def _next_dawn(now: int) -> int:
+    """场景没给天亮的时刻：下一个卯时（05:00）。"""
+    dawn = now - now % 1440 + 5 * 60
+    return dawn if dawn > now else dawn + 1440
+
+
+def _dawned(scenario: Scenario, st: WorldState) -> bool:
+    """时钟到了某个结局的时刻（天亮）：再长的等待也在这一 tick 停下。只看时钟结局，地点结局由走到那里的那一步定。"""
+    return any(e.at_clock is not None and st.clock >= e.at_clock for e in scenario.endings)
 
 
 def _interruptible(env: TurnEnvelope) -> bool:
@@ -246,12 +261,14 @@ class GameSession(AsideMixin, EndingMixin):
         self._hint = 0                      # 已给出的逐级提示条数
         self._told: dict[str, set[int]] = {}   # 谈资账本：每个 NPC 已经出现在正文里的谈资条目（派生数据，随下一次提交落库）
         self._marks: dict[str, dict[str, list[int]]] = {}   # 驱力标记：角色 → 驱力 → 兑现成功的时刻（随世界同一事务落库）
+        self._staged: set[str] = set()      # 已让等待停过的一次性看点（随世界同一事务落库）
         self._asides: dict[str, tuple[str, TurnReport]] = {}   # 带 request_id 的不推进回合：ID → (原文摘要, 报告)
         self._restore(session_state)
         self.llm = llm
         self.parser = IntentParser(fast_llm or llm, aliases=scenario.aliases)
         self.interpreter = interpreter or Interpreter(fast_llm or llm, aliases=scenario.aliases, fallback=self.parser,
-                                                      universe=(e.name for e in scenario.state.entities.values()))
+                                                      universe=(e.name for e in scenario.state.entities.values()),
+                                                      kowtow_ticks=scenario.kowtow_ticks)
         self.pipeline = pipeline
         # 开了磁盘缓存（评测、演示录像）就不用迟到的先声：它由网速决定出不出场，同一局重跑的文字就对不上了
         self.narrator = Narrator(llm, scenario.setting, scenario.lore, scenario.style, scenario.gate_aliases, scenario.secrets,
@@ -286,11 +303,14 @@ class GameSession(AsideMixin, EndingMixin):
         """会话运行态：随每次世界提交一起落库的那一份（调度标记 + 已描写实体 + 最近几段正文 + 提示进度 + 驱力标记）。"""
         return self._state(self.scheduler, self._described)
 
-    def _state(self, sched: Scheduler, described: set[str], marks: cast.Cast | None = None) -> dict:
+    def _state(self, sched: Scheduler, described: set[str], marks: cast.Cast | None = None,
+               staged: set[str] | None = None) -> dict:
         marks = self._marks if marks is None else marks
+        staged = self._staged if staged is None else staged
         return {"scheduler": sched.to_state(), "described": sorted(described), "recent": list(self._recent),
                 "hint": self._hint, "told": {k: sorted(v) for k, v in sorted(self._told.items()) if v},
-                "drives": {a: {k: list(v) for k, v in sorted(m.items())} for a, m in sorted(marks.items()) if m}}
+                "drives": {a: {k: list(v) for k, v in sorted(m.items())} for a, m in sorted(marks.items()) if m},
+                **({"staged": sorted(staged)} if staged else {})}
 
     def _restore(self, state: Mapping | None) -> None:
         """会话运行态以落库的那一份为准：读档时，以及一次请求被同一请求的另一次投递越过之后。"""
@@ -302,6 +322,7 @@ class GameSession(AsideMixin, EndingMixin):
         self._told = {str(k): {int(i) for i in v} for k, v in (state.get("told") or {}).items()}
         self._marks = {str(a): {str(k): [int(t) for t in v] for k, v in m.items()}
                        for a, m in (state.get("drives") or {}).items()}
+        self._staged = {str(k) for k in state.get("staged", ())}
 
     def _opening_keys(self) -> list[str]:
         """开场讲的初始认知里应当描写外观的实体：新游戏的 intro() 描写它们，建档后尚无提交就读档时据此补回“已描写”。"""
@@ -364,8 +385,10 @@ class GameSession(AsideMixin, EndingMixin):
             return self._aside(parsed, text, head, me, clock, sink, request_id)   # 后台的决策随之作废：它不写任何东西
         steps, planned, reaction = self._plan(parsed, me, head.clock)
         slot = next((i for i, c in enumerate(steps) if c.op in (Op.TELL, Op.ASK, Op.WAIT)), 0)   # 原话归属的那一步
+        # 重复的姿态步（一连几个叩首）每一步都带着原话：不带字的等待谁也看不见
         plan = [c.to_intent(self._intent_id(self.player, head.version), self.player, head.version,
-                            parsed.utterance if i == slot else None) for i, c in enumerate(steps)]
+                            parsed.utterance if i == slot or (c.op == Op.WAIT and c == steps[slot]) else None)
+                for i, c in enumerate(steps)]
         env = TurnEnvelope(request_id or "", payload, plan[0], planned, head.version, head.clock,
                            source=parsed.source, followups=tuple(plan[1:]), reaction=reaction)
         env, events, deliberations, settlement = self._advance(env, clock, request_id is not None, ahead)
@@ -380,7 +403,7 @@ class GameSession(AsideMixin, EndingMixin):
         self._remember(narration, brief)
         return TurnReport(clock_label(head.clock), parsed, narration, True, tuple(events), tuple(deliberations),
                           settlement, clock.laps, render, request_id, kind=parsed.kind, ending=self._reach_ending(),
-                          first_text_ms=sink.first_ms, brief=brief)
+                          first_text_ms=sink.first_ms, brief=brief, beats=self._beats(env))
 
     def _parse(self, text: str, me: BeliefStore) -> Parsed:
         """解释玩家输入：元指令先认（会话自己的命令表），其余交主持层解释器（带上最近几段正文消解“她/那人”）。"""
@@ -409,8 +432,22 @@ class GameSession(AsideMixin, EndingMixin):
         return steps, len(steps) + reaction, reaction
 
     def _ticks_for(self, parsed: Parsed, now: int) -> int:
-        wanted = minutes_until_night(now) if parsed.until == "night" else parsed.repeat
+        """等待的 tick 数：等到某个时刻（场景的 moments；没有月出按入夜，没有天亮按卯时）之前，上限 MAX_WAIT。"""
+        until, moments = parsed.until, self.scenario.moments
+        if until == "moon" and "moon" not in moments:
+            until = "night"
+        if until == "night":
+            wanted = minutes_until_night(now)
+        elif until in ("moon", "dawn"):
+            wanted = moments.get(until, _next_dawn(now)) - now
+        else:
+            wanted = parsed.repeat
         return max(1, min(wanted, MAX_WAIT))
+
+    def _beats(self, env: TurnEnvelope) -> tuple[str, ...]:
+        """本回合玩家感知到的看点编号（只读落库的请求进度里玩家自己的感知）。"""
+        found = staging.recognize(self.scenario.beats, env.percepts, self.player, moments=self.scenario.moments)
+        return tuple(b.key for b in found)
 
     def _resume_request(self, env: TurnEnvelope, text: str, clock: _Stopwatch, sink: _Sink, execute: bool = True,
                         committed: bool = False) -> TurnReport:
@@ -445,7 +482,7 @@ class GameSession(AsideMixin, EndingMixin):
         return TurnReport(clock_label(env.start_clock), parsed, narration, True, events, tuple(deliberations),
                           settlement, clock.laps, render, env.request_id,
                           replayed=not (committed or settlement is not None), kind=parsed.kind,
-                          ending=self._reach_ending(), first_text_ms=sink.first_ms, brief=brief)
+                          ending=self._reach_ending(), first_text_ms=sink.first_ms, brief=brief, beats=self._beats(env))
 
     @staticmethod
     def _parsed_of(env: TurnEnvelope) -> Parsed:
@@ -509,7 +546,7 @@ class GameSession(AsideMixin, EndingMixin):
         me = self.beliefs(self.player)
         lapse = clock_label(env.ticks[-1]) if _interruptible(env) and env.planned_ticks > 1 and env.ticks else ""
         brief = gm.build_brief(env, me, self.scenario, self.beliefs, self._recent, before, closing, self._told,
-                               lambda a: self.store.recent_memories(self.ref, a, 0), suggestions(me))
+                               lambda a: self.store.recent_memories(self.ref, a, 0), suggestions(me, friends=self._friends))
         # 此前已知下落的东西：再翻出来不算“发现”（重试补写时没有 before，照旧）
         familiar = frozenset(e for e in before.entities if before.location_of(e) is not None) if before else frozenset()
         scene = getattr(self.narrator, "narrate_scene", None)
@@ -566,14 +603,19 @@ class GameSession(AsideMixin, EndingMixin):
             if failed and n <= len(env.followups):
                 # 计划中的一步落空：后面的步骤不再走，反应 tick 照旧；截短的计划随这一 tick 落库，续跑据此只走剩下的
                 plan = replace(env, followups=env.followups[:n - 1], planned_ticks=n + env.reaction)
-            done = n >= plan.planned_ticks or (_interruptible(env) and gm.salient(
-                mine, self.player, self._friends, s.state.target(self.player, Rel.AT)))
+            sc = self.scenario
+            staged = self._staged | {b.key for b in staging.recognize(sc.beats, mine, self.player, moments=sc.moments)
+                                     if b.once}
+            # 普通等待被要紧的事、或玩家感知到的看点（一次性的只停一回）打断；时钟到了结局的时刻也停
+            done = n >= plan.planned_ticks or (_interruptible(env) and (gm.salient(
+                mine, self.player, self._friends, s.state.target(self.player, Rel.AT)) or staging.stops_wait(
+                sc.beats, mine, self.player, sc.moments, self._staged))) or _dawned(sc, s.state)
             progressed = replace(plan, versions=(*env.versions, s.state.version), ticks=(*env.ticks, s.state.clock),
                                  percepts=_compact(env.percepts + mine), fresh=env.fresh + fresh, done=done)
             described = self._described | set(fresh)
             marks = cast.advance_marks(self._marks, deliberations, s)     # 驱力标记：只记兑现成功的
-            after.update(env=progressed, described=described, marks=marks)
-            return (progressed if persist else None), self._state(sched, described, marks)
+            after.update(env=progressed, described=described, marks=marks, staged=staged)
+            return (progressed if persist else None), self._state(sched, described, marks, staged)
 
         settlement = self.authority.settle(intents, annotate)
         if "env" not in after:
@@ -581,6 +623,7 @@ class GameSession(AsideMixin, EndingMixin):
                 raise VersionConflict(f"版本 {head.version} 的意图早已由别的写入者结算")
             raise RuntimeError(f"版本 {head.version} 的意图早已结算过：会话与存储不一致")
         self.scheduler, self._described, self._marks = sched, after["described"], after["marks"]
+        self._staged = after["staged"]
         clock.lap("settle")
         self.indexer.drain()
         clock.lap("index")

@@ -6,7 +6,8 @@
 [OUTPUT]: 对外提供 Driven（Policy 装饰器：把角色的驱力套在任何策略外面）、holds()（条件求值）、realize()（行动落到候选集上）、
           oneway_doors()、Marks
 [POS]: agents 的驱力层：性情不是剧本。条件只读该角色自己的认知（Situation）与自己的驱力标记，行动只落到 PolicyKit 已有的积木上——
-       在候选集中挑、沿自己的地图走一步、对眼前的人开口、带字的姿态（等待 + 原话）、临时目标交给 MartialTactics 的寻仇/护人。
+       在候选集中挑、沿自己的地图走一步、对眼前的人开口、带字的姿态（等待 + 原话）、临时目标交给 MartialTactics 的寻仇/护人、
+       以为锁着才开锁、以为没锁才上锁（钥匙照 PolicyKit 的取舍）。
        驱力的原话挂在 Choice.line 上（chosen() 之后），随意图落库；实现不了就返回 None，退回里面那个策略的选择。
        优先级：一次性提议 → URGENT（表序第一条：成立、不在冷却、实现得了）→ 里面的策略 →
        它闲着（等待原因或闲谈；学得的策略选中等待时也标 "idle"）时试 IDLE → 对最终结果套 VETO。
@@ -53,6 +54,7 @@ from tianlong.core.drives import (
     Inspect,
     Knows,
     Level,
+    Lock,
     Lost,
     Menaced,
     Not,
@@ -64,6 +66,7 @@ from tianlong.core.drives import (
     Status,
     Study,
     Take,
+    Unlock,
     Use,
 )
 from tianlong.core.profiles import Goal, GoalKind
@@ -135,12 +138,13 @@ def _state(c: Status, sit: Situation, marks: Marks, target: str | None = None) -
 
 
 def _witnessed(sit: Situation, within: int, target: str | None, *, op=None, actor=None, obj=None, socials=(),
-               outcome=None, to=None, spoken: bool = False) -> bool:
+               outcome=None, to=None, spoken: bool = False, here: bool = False) -> bool:
     b, me = sit.beliefs, sit.agent
     actor, to = _who(actor, sit, target), _who(to, sit, target)
+    place = _KIT._here(b) if here else None
     for ep in b.episodes:
         ev = ep.event
-        if ev.actor in (None, me) or sit.now - ep.tick > within:
+        if ev.actor in (None, me) or sit.now - ep.tick > within or (here and ev.place != place):
             continue
         if spoken and ev.utterance is None and ev.social is None:
             continue
@@ -154,7 +158,7 @@ def _witnessed(sit: Situation, within: int, target: str | None, *, op=None, acto
 @holds.register(Saw)
 def _saw(c: Saw, sit: Situation, marks: Marks, target: str | None = None) -> bool:
     return _witnessed(sit, c.within, target, op=c.op, actor=c.actor, to=c.target, obj=c.obj, socials=c.socials,
-                      outcome=c.outcome)
+                      outcome=c.outcome, here=c.here)
 
 
 @holds.register(Heard)
@@ -346,6 +350,28 @@ def _use(a: Use, sit: Situation, key: str = "", target: str | None = None) -> Ch
 @realize.register(Give)
 def _give(a: Give, sit: Situation, key: str = "", target: str | None = None) -> Choice | None:
     return _KIT._pick(sit, f"把{_KIT._name(sit.beliefs, a.item)}递过去", Op.GIVE, _who(a.to, sit, target), a.item)
+
+
+def _turn_key(sit: Situation, door: str, op: Op) -> Choice | None:
+    """以为锁着才开、以为没锁才锁（免得白试一回）；钥匙照 PolicyKit 的取舍（认为配的在前）。"""
+    b = sit.beliefs
+    if _KIT._status(b, door, "locked") != (op == Op.UNLOCK):
+        return None
+    for key in _KIT._keys_for(b, door):
+        choice = _KIT._pick(sit, f"用{_KIT._name(b, key)}{'开' if op == Op.UNLOCK else '锁'}{_KIT._name(b, door)}", op, door, key)
+        if choice is not None:
+            return choice
+    return None
+
+
+@realize.register(Unlock)
+def _unlock(a: Unlock, sit: Situation, key: str = "", target: str | None = None) -> Choice | None:
+    return _turn_key(sit, a.door, Op.UNLOCK)
+
+
+@realize.register(Lock)
+def _lock(a: Lock, sit: Situation, key: str = "", target: str | None = None) -> Choice | None:
+    return _turn_key(sit, a.door, Op.LOCK)
 
 
 @realize.register(Pose)

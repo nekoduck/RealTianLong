@@ -1,16 +1,18 @@
 """
 [INPUT]: 依赖 cognition/beliefs 的 BeliefStore，cognition/candidates 的 candidates()，core 的 Kind / Op / Manner / HOSTILE_SOCIAL
-[OUTPUT]: 对外提供 suggestions(me, limit=3) -> tuple[str, ...]：此刻“可以这样做”的几句输入
+[OUTPUT]: 对外提供 suggestions(me, limit=3, friends=()) -> tuple[str, ...]：此刻“可以这样做”的几句输入
 [POS]: runtime 的行动建议：玩家面对空白输入框不知从何下手时，给两三句现成的话，点一下就能照做。
        只从玩家自己的认知与候选集生成（他以为在场的人、以为在这的东西、以为相邻的地方），从不参考真相，所以不剧透；
        措辞刻意落在解释器快路径的句式上（去 P、查看 S、拿起 S 上的 I、研读 I、环顾四周），点了不必等模型；
-       行礼与赔罪交给解释器（规则认得，有模型时一次快模型调用）。每族至多一条，按“有人冲我来（狠话或动手：赔罪、脱身）
-       > 没看清的 > 没试过的 > 没去过的”排序，研读过的不再提，
+       行礼与赔罪交给解释器（规则认得，有模型时一次快模型调用）。每族至多一条，按“同伴挨了打（向动手的人替他求情、拉着他逃）或刚走开（跟上他）
+       > 有人冲我来（狠话或动手：赔罪、脱身）> 没看清的 > 没试过的 > 没去过的”排序，研读过的不再提，
        同一局面给同样的建议（确定性）。被 web.py 在开场与每回合收尾时附上
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
 from __future__ import annotations
+
+from collections.abc import Collection
 
 from tianlong.cognition.beliefs import BeliefStore
 from tianlong.cognition.candidates import candidates
@@ -19,11 +21,12 @@ from tianlong.core import HOSTILE_SOCIAL, Kind, Manner, Op
 RECENT = 3        # 多少个 tick 内冲我来的话算“眼前的事”（与会话的反应 tick 同量级）
 
 # 族的次序：同优先级时谁先入选
-_FAMILIES = ("people", "look", "study", "take", "move", "wait")
+_FAMILIES = ("friend", "people", "flight", "look", "study", "take", "move", "wait")
 
 
-def suggestions(me: BeliefStore, limit: int = 3) -> tuple[str, ...]:
-    """按玩家此刻的认知给出至多 limit 句可以直接照做的输入；每族至多一句，优先级相同按族序与字面排序。"""
+def suggestions(me: BeliefStore, limit: int = 3, friends: Collection[str] = ()) -> tuple[str, ...]:
+    """按玩家此刻的认知给出至多 limit 句可以直接照做的输入；每族至多一句，优先级相同按族序与字面排序。
+    friends：玩家的同伴（自己人与要护着的人）——同伴挨了打先替他求情，同伴刚走开就跟上。"""
     player, now = me.owner, me.last_tick
     here = me.location_of(player)
     if here is None:
@@ -77,6 +80,22 @@ def suggestions(me: BeliefStore, limit: int = 3) -> tuple[str, ...]:
                 pool.append((1, "move", f"逃去{name(c.target)}"))
             else:
                 pool.append((3 if c.target not in me.surveyed else 5, "move", f"去{name(c.target)}"))
+
+    # ---- 同伴：挨了打就替他求情（或拉着他逃），刚从这里走开就跟上 ----
+    for f in sorted(friends):
+        who = name(f)
+        if who is None or f == player:
+            continue
+        if me.location_of(f) == here:
+            foe = next((e.actor for e in reversed(recent) if e.kind == Op.ATTACK.value and e.target == f
+                        and e.actor not in (None, player) and me.location_of(e.actor) == here and name(e.actor)), None)
+            if foe is not None:
+                pool.append((0, "friend", f"向{name(foe)}替{who}求情"))
+                way = next((c for c in cands if c.op == Op.MOVE and name(c.target)), None)
+                if way is not None:
+                    pool.append((1, "flight", f"拉着{who}逃去{name(way.target)}"))
+        elif any(e.kind == Op.MOVE.value and e.actor == f and e.place == here for e in recent) and me.location_of(f):
+            pool.append((0, "friend", f"跟上{who}"))
 
     pool.append((9, "wait", "等一会儿"))
 

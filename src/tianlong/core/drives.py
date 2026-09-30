@@ -2,12 +2,13 @@
 [INPUT]: 依赖 core/schema 的 Op / Social，core/events 的 Outcome
 [OUTPUT]: 对外提供 Level（URGENT / IDLE / VETO）、驱力条件（At / Between / Here / Status / Saw / Heard / Holds / HeldBy / Knows /
           Fond / Menaced / Alone / Arrived / Searched / Fired / Lost / Not / AnyOf，合称 Cond）、驱力行动（Go / Flee / Follow /
-          Pursue / Ask / Cross / Inspect / Take / Study / Use / Give / Pose / Say / Hold，合称 Act）、Drive、SELF / PLAYER / TARGET
+          Pursue / Ask / Cross / Inspect / Take / Study / Use / Give / Unlock / Lock / Pose / Say / Hold，合称 Act）、Drive、SELF / PLAYER / TARGET
 [POS]: core 的驱力词表：角色性情的类型化写法（与 Goal 同属角色设定），纯数据、冻结、可哈希，不带语义——
        条件怎样在角色自己的认知上求值、行动怎样落到候选集上，归 agents/drives；驱力只产出意图，事实仍只由内核裁定。
        who 取 "self"（自己）| "player"（主角）| "target"（只在 VETO 里：被否决那一步的对象）| 实体 ID。
        技能也是状态：Status("self", "evasion") 即“自己已会凌波微步”。
-       VETO 的时间窗一律以驱力自己的标记计（Fired），不看会被挤掉的线索与经历
+       VETO 的时间窗一律以驱力自己的标记计（Fired），不看会被挤掉的线索与经历；Saw(here=True) 只认发生在自己此刻所在之处的事；
+       Unlock / Lock 只在以为锁着 / 没锁时才转钥匙（关卡的放行与换班）
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -58,7 +59,7 @@ class Status:
 @dataclass(frozen=True, slots=True)
 class Saw:
     """近 within 个 tick 的经历里有别人的这样一次行动（亲眼看见、亲耳听见或身受）；字段为 None 即不限。
-    MOVE 的 obj 是所走的门。"""
+    MOVE 的 obj 是所走的门；here 只认发生在自己此刻所在之处的。"""
 
     op: Op | None = None
     actor: str | None = None
@@ -67,6 +68,7 @@ class Saw:
     socials: frozenset[Social] = frozenset()
     outcome: Outcome | None = None
     within: int = 3
+    here: bool = False               # 只认发生在自己此刻所在之处的（“他从这里走开”，不算他走到了我刚离开的地方）
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +220,16 @@ class Give:
 
 
 @dataclass(frozen=True, slots=True)
+class Unlock:
+    door: str                        # 以为锁着、手里又有配它的钥匙：开锁（关卡放行）
+
+
+@dataclass(frozen=True, slots=True)
+class Lock:
+    door: str                        # 以为没锁、手里有配它的钥匙：上锁
+
+
+@dataclass(frozen=True, slots=True)
 class Pose:
     text: str                        # 看得见的姿态：原地等待带上这句字，在场的人当 tick 就看得见
     social: Social | None = None
@@ -239,7 +251,7 @@ class Hold:
     """原地不动（不带字）。"""
 
 
-Act = Go | Flee | Follow | Pursue | Ask | Cross | Inspect | Take | Study | Use | Give | Pose | Say | Hold
+Act = Go | Flee | Follow | Pursue | Ask | Cross | Inspect | Take | Study | Use | Give | Unlock | Lock | Pose | Say | Hold
 
 
 # ============================================================

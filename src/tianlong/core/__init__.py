@@ -52,6 +52,7 @@ from tianlong.core.drives import (
     Inspect,
     Knows,
     Level,
+    Lock,
     Lost,
     Menaced,
     Not,
@@ -63,6 +64,7 @@ from tianlong.core.drives import (
     Status,
     Study,
     Take,
+    Unlock,
     Use,
 )
 from tianlong.core.entities import Entity, Relation, Scalar
@@ -108,7 +110,7 @@ __all__ = [
     "PLAYER", "SELF", "TARGET", "Act", "Cond", "Drive", "Level",
     "Alone", "AnyOf", "Arrived", "At", "Between", "Fired", "Fond", "Heard", "HeldBy", "Here", "Holds", "Knows", "Lost",
     "Menaced", "Not", "Saw", "Searched", "Status",
-    "Ask", "Cross", "Flee", "Follow", "Give", "Go", "Hold", "Inspect", "Pose", "Pursue", "Say", "Study", "Take", "Use",
+    "Ask", "Cross", "Flee", "Follow", "Give", "Go", "Hold", "Inspect", "Pose", "Pursue", "Say", "Study", "Take", "Use", "Unlock", "Lock",
     "Entity", "Relation", "Scalar",
     "EntitySketch", "Event", "Intent", "Modality", "Observation", "Outcome", "Percept", "PerceivedEvent",
     "ADMISSION_REASONS", "REASONS", "RULE_REASONS", "reason_key",
