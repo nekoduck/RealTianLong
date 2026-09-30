@@ -259,6 +259,10 @@ def _lack(op: Op | None, name: str | None, role: Kind | None = None) -> str:
     return f"你身上并没有{name}。" if name else "你身上并没有那样东西。"
 
 
+def _unable(name: str | None) -> str:
+    return f"你并不会{name}。" if name else "你并不会这样的功夫。"
+
+
 def _text(value: Any, limit: int) -> str:
     return value.strip()[:limit] if isinstance(value, str) else ""
 
@@ -495,7 +499,12 @@ class Interpreter:
         raw = data.get("steps")
         steps = [s for s in raw if isinstance(s, dict)][:3] if isinstance(raw, list) else []
         if missing:
-            return _unclear(_lack(self._hint(data, text), said), command, "llm")
+            op = self._hint(data, text)
+            aimed = [s.get("target") for s in steps if isinstance(s.get("target"), str)]
+            # 冲着认识的人使出不会的本事（“点了龚光杰的穴道”“用六脉神剑点倒他”）：缺的是功夫，不是人
+            means = op in (Op.ATTACK, Op.USE) and any(
+                me.sketch(t) is not None and me.sketch(t).kind == Kind.PERSON for t in aimed)
+            return _unclear(_unable(said) if means else _lack(op, said), command, "llm")
         plan, why = self._plan(steps, text, me)
         if not plan:
             return _unclear(why or _VAGUE, command, "llm")

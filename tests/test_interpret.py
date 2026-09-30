@@ -543,6 +543,16 @@ def test_model_named_premises_are_refused_without_echoing_the_name(world, duanyu
     assert p.candidate is None and p.clarification == said, "编造的前提照样拦下，但只回显玩家自己写过的名字"
 
 
+@pytest.mark.parametrize("text, missing, said", [
+    ("我点了龚光杰的穴道，让他动弹不得", "点穴", "你并不会这样的功夫。"),       # 功夫没写在原文里：不点名
+    ("我用六脉神剑点倒龚光杰", "六脉神剑", "你并不会六脉神剑。"),
+])
+def test_a_skill_the_player_lacks_is_refused_as_a_skill_not_a_person(world, duanyu, text, missing, said):
+    steps = [{"op": "attack", "target": "gongguangjie", "obj": None, "manner": "normal"}]
+    p = _interp(world, _llm(kind="act", steps=steps, missing=missing)).interpret(text, duanyu)
+    assert p.candidate is None and p.clarification == said, "冲着认识的人使出不会的本事：缺的是功夫，不是“不知道说的是谁”"
+
+
 @pytest.mark.parametrize("reply, universe, shown", [
     ("你是想去琅嬛福地找神仙姐姐吗？", (), False),         # 场景别称（琅嬛、神仙姐姐）
     ("你是想找司空玄问话吗？", ("司空玄",), False),          # 本名：会话交来的名字全集
