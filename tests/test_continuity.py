@@ -352,3 +352,16 @@ def test_someone_who_strikes_without_a_word_may_bark_once():
     barks = [vl for vl in r.brief.lines if vl.act] if r.brief else []
     assert barks and barks[0].speaker == "gong" and barks[0].act == "向钟灵出手" and not barks[0].knows
     assert "龚光杰" not in r.narration.split("看见龚光杰")[0] and "说了几句" not in r.narration, "模板里没有他没说的话"
+
+
+def test_someone_who_slipped_away_is_noticed_and_invented_takes_are_caught():
+    """原以为还在身边的人，环顾一看已经不在：说一声（评审挑出的“干光豪凭空消失”）；
+    钟灵“从你手里抽过那卷帛书”却什么也没拿：人事闸门拦下。"""
+    s = session({"gan": Script(plan={T0: (Op.MOVE, "camp")})})
+    before = s.beliefs(HERO)
+    s.turn("等一会")
+    s.turn("环顾四周", request_id="look")
+    ctx = continuity(s.store.request(s.ref, "look"), s.beliefs(HERO), before)
+    assert "干光豪不知何时已经不在这里了" in ctx.notes, ctx.notes
+    from tianlong.language.deeds import DEED_LEXICON
+    assert "抽过" in DEED_LEXICON["take"] and "拿走" in DEED_LEXICON["take"]

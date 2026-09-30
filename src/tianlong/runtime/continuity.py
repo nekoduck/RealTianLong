@@ -138,6 +138,12 @@ def continuity(env: TurnEnvelope, me: BeliefStore, before: BeliefStore | None, f
                 surprising.add(p)
             elif was_held:
                 notes.append(f"你原以为{name}{'被' + by + '制住、' if by else ''}动弹不得——此刻却已能动了")
+        if not moved and here is not None:       # 原以为还在身边的人，环顾一看已经不在：说一声，免得人凭空消失
+            left_seen = {p.event.actor for p in env.percepts if p.event is not None and p.event.kind == Op.MOVE.value}
+            for p, sk in sorted(before.entities.items()):
+                if sk.kind == Kind.PERSON and p != player and p not in left_seen and _name(me, p) \
+                        and believed_place(before, p) == here and believed_place(me, p) != here:
+                    notes.append(f"{_name(me, p)}不知何时已经不在这里了")
         if moved:
             for f in sorted(set(friends)):
                 if f in before.company and believed_place(me, f) != here and _name(me, f) \

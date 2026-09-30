@@ -691,8 +691,8 @@ class GameSession:
             return Rendered(plain, RenderStatus.TEMPLATE)
         prof = self.scenario.profiles[self.player]
         goals = [t for t in (gm.goal_text(g, me) for g in prof.goals) if t]
-        prompt = gm.aside_prompt(question, view, prof.persona, goals, guide[floor:level + 1] if guided else (),
-                                 self._recent)
+        prompt = gm.aside_prompt(question, view, prof.persona, goals if ooc else (),       # 元目标只在场外说
+                                 guide[floor:level + 1] if guided else (), self._recent)
         system = gm.ASIDE_SYSTEM if ooc else gm.ASIDE_INNER
         text, found, failed = gm.gated_stream(self._aside_pieces(prompt, system), lambda t: gm.leaked(t, me, self.scenario),
                                               sink, lead=lead)
