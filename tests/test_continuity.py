@@ -27,7 +27,16 @@ pytest.importorskip("qdrant_client")
 
 from tianlong.cognition import BeliefStore, Candidate  # noqa: E402
 from tianlong.cognition.beliefs import Episode  # noqa: E402
-from tianlong.core import Modality, Op, Outcome, PerceivedEvent, Percept, Proposition, Rel, Social  # noqa: E402
+from tianlong.core import (  # noqa: E402
+    Modality,
+    Op,
+    Outcome,
+    PerceivedEvent,
+    Percept,
+    Proposition,
+    Rel,
+    Social,
+)
 from tianlong.language.llm import ScriptedLLM  # noqa: E402
 from tianlong.language.narrator import Narrator  # noqa: E402
 from tianlong.language.parser import MoveKind, Parsed  # noqa: E402
