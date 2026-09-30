@@ -21,6 +21,7 @@
        数量只认“数词 + 量词 + 物品名”与“还有/另有/又……一 + 量词 + 物品名”的直接说法；秘密只认场景给出的词表；
        抵达动词的宾语只许本回合真的到达的地点或观察者此刻就在的地点；全角开引号遇半角收引号也算收，没收的引语到换行为止。
        出处优先：清单、外观描写与原话里本来就有的词、名字、数量与“抵达”说法，照搬不算违规
+       check(quoted=…)：有台词时引语里要说台词的人可点名的名字与引语里的状态词交给台词闸门，check 只管叙述者自己的口吻。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -395,22 +396,29 @@ def _unsourced(text: str, source: str, patterns: Iterable[str], exclusions: Iter
 # ============================================================
 
 
-def check(text: str, plan: RenderPlan, known_names: Iterable[str] = ()) -> tuple[Violation, ...]:
-    """known_names 是“可能被点名”的全集（玩家认识的 + 场景里所有实体），只用于拒绝：不在计划里的名字出现即违规。"""
+def check(text: str, plan: RenderPlan, known_names: Iterable[str] = (),
+          quoted: frozenset[str] | None = None) -> tuple[Violation, ...]:
+    """known_names 是“可能被点名”的全集（玩家认识的 + 场景里所有实体），只用于拒绝：不在计划里的名字出现即违规。
+    quoted：本回合有 NPC 台词时，交来要说台词的人可以点名的名字全集——引语里的这些名字与状态词交给台词闸门按说话者查
+    （他认识的、他那句说法与谈资里有的才许），这里只管叙述者自己的口吻；None 表示没有台词，引语同样由这里把关。"""
     out: list[Violation] = []
     allowed = plan.names | plan.aliases
     universe = set(known_names) | allowed | plan.hidden
     sourced = {n for _, n in _mentions(plan.source, universe)}
+    spans = [(q.start, q.end) for q in _quotes(text)] if quoted is not None else []
+    narration = _mask(text, _quotes(text)) if spans else text     # 叙述者自己的口吻：引语遮住
 
     # ---- 1. 点名：清单外的人与物（名或别称）----
-    for _, n in _mentions(text, universe):
-        if n not in allowed and n not in sourced:
-            out.append(Violation("entity", n))
+    for i, n in _mentions(text, universe):
+        if n in allowed or n in sourced or (quoted and n in quoted and any(a <= i < b for a, b in spans)):
+            continue
+        out.append(Violation("entity", n))
 
-    # ---- 2. 状态升级：本回合没有的状态不许出现 ----
+    # ---- 2. 状态升级：本回合没有的状态不许出现（有台词时引语里的状态词归台词闸门按说话者查）----
     for status, words in STATUS_LEXICON.items():
         if status not in plan.statuses:
-            out += [Violation("status", f"{status}:{w}") for w in _unsourced(text, plan.source, words, STATUS_EXCLUSIONS)]
+            out += [Violation("status", f"{status}:{w}")
+                    for w in _unsourced(narration, plan.source, words, STATUS_EXCLUSIONS)]
 
     # ---- 3. 编造承诺 ----
     if not plan.commitment:

@@ -435,6 +435,12 @@ def test_template_mode_glancing_idling_and_asking_the_way_are_understood(world, 
     assert called.kind == MoveKind.SAY and (called.candidate.op, called.candidate.target) == (Op.ASK, "zhongling")
     assert called.utterance == "你怎么也在这里？", "先叫人再说话：逗号后整句都是说给他的原话"
     assert it.interpret("喂，龚光杰，看招！", duanyu).candidate.target == "gongguangjie"
+    thanks = it.interpret("钟灵，多谢你", duanyu)
+    assert thanks.candidate.social == Social.THANK, "叫人之后的客套照样带上言语行为"
+    ask = it.interpret("钟灵，把解药给我", duanyu)
+    assert ask.kind == MoveKind.SAY and ask.utterance == "把解药给我", "玩家自己做不了的（要她给）仍是说给她听的话"
+    go = it.interpret("马五德，我们去后院吧", duanyu)
+    assert go.kind == MoveKind.ACT and go.candidate.op == Op.MOVE, "叫人之后自己动身：先按动作解"
 
 
 def test_template_mode_cries_and_covering_the_face_are_not_use(world, duanyu):
@@ -546,6 +552,7 @@ def test_model_named_premises_are_refused_without_echoing_the_name(world, duanyu
 @pytest.mark.parametrize("text, missing, said", [
     ("我点了龚光杰的穴道，让他动弹不得", "点穴", "你并不会这样的功夫。"),       # 功夫没写在原文里：不点名
     ("我用六脉神剑点倒龚光杰", "六脉神剑", "你并不会六脉神剑。"),
+    ("我拔出倚天剑刺向龚光杰", "倚天剑", "你身上并没有倚天剑。"),            # 缺的是兵刃：身上没有
 ])
 def test_a_skill_the_player_lacks_is_refused_as_a_skill_not_a_person(world, duanyu, text, missing, said):
     steps = [{"op": "attack", "target": "gongguangjie", "obj": None, "manner": "normal"}]

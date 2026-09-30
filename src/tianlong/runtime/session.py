@@ -62,8 +62,8 @@ from tianlong.core import (
 )
 from tianlong.language.command import clarify
 from tianlong.language.interpret import Interpreter
-from tianlong.language.llm import LLMClient, LLMUnavailable
-from tianlong.language.narrator import Narrator, lore_keys
+from tianlong.language.llm import CachedLLM, LLMClient, LLMUnavailable
+from tianlong.language.narrator import LEAD_AFTER, Narrator, lore_keys
 from tianlong.language.parser import IntentParser, MoveKind, Parsed
 from tianlong.language.render import Rendered, RenderStatus, Violation
 from tianlong.language.scene import SceneBrief, TextSink
@@ -246,7 +246,9 @@ class GameSession:
         self.interpreter = interpreter or Interpreter(fast_llm or llm, aliases=scenario.aliases, fallback=self.parser,
                                                       universe=(e.name for e in scenario.state.entities.values()))
         self.pipeline = pipeline
-        self.narrator = Narrator(llm, scenario.setting, scenario.lore, scenario.style, scenario.aliases, scenario.secrets)
+        # 开了磁盘缓存（评测、演示录像）就不用迟到的先声：它由网速决定出不出场，同一局重跑的文字就对不上了
+        self.narrator = Narrator(llm, scenario.setting, scenario.lore, scenario.style, scenario.aliases, scenario.secrets,
+                                 lead_after=None if isinstance(llm, CachedLLM) else LEAD_AFTER)
         self._universe = frozenset(e.name for e in scenario.state.entities.values())  # 闸门拒绝用的名字全集
         self._friends = gm.companions(scenario.profiles[self.player])   # 有人对他们动手即打断等待
         self.speaker: Speaker = TemplateSpeaker()     # 决策图里从不调模型：NPC 的台词由主持人之声一并写出

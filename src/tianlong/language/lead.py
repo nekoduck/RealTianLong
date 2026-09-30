@@ -13,7 +13,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import re
+from collections.abc import Container, Sequence
 
 from tianlong.core import Kind, Modality, Op, Outcome, PerceivedEvent, Percept, Social, derive_seed
 from tianlong.language.templates import REASONS, SOCIAL_VERBS, Names, consequences
@@ -84,7 +85,7 @@ def _say(ev: PerceivedEvent, t: str) -> str | None:
     return None
 
 
-def _sentence(p: Percept, names: Names, viewer: str) -> str | None:
+def _sentence(p: Percept, names: Names, viewer: str, familiar: Container[str] = ()) -> str | None:
     ev = p.event
     if ev is None or ev.kind == "noise":
         return None
@@ -113,19 +114,20 @@ def _sentence(p: Percept, names: Names, viewer: str) -> str | None:
         text = _pick(_DONE[op], ev, p.tick).format(t=t, o=o)
     if op == Op.STUDY and ev.reason in _STUDY_NOTE:
         text = text[:-1] + "，" + _STUDY_NOTE[ev.reason]
-    after = consequences(p, names, viewer, "你")
+    after = consequences(p, names, viewer, "你", familiar)
     if after:
         text = text[:-1] + "——" + "，".join(after) + "。"
     return text
 
 
-def lead_line(percepts: Sequence[Percept], names: Names, viewer: str) -> str:
-    """玩家本回合自己的行动（SELF 感知，按发生先后）写成的句子，至多 MAX_SENTENCES 句；没有可说的返回空串。"""
+def lead_line(percepts: Sequence[Percept], names: Names, viewer: str, familiar: Container[str] = ()) -> str:
+    """玩家本回合自己的行动（SELF 感知，按发生先后）写成的句子，至多 MAX_SENTENCES 句；没有可说的返回空串。
+    familiar：此前已知下落的东西，再翻出来只说“仍在”，不算发现。"""
     out: list[str] = []
     for p in percepts:
         if p.modality != Modality.SELF or p.event is None or p.event.actor != viewer:
             continue
-        s = _sentence(p, names, viewer)
+        s = _sentence(p, names, viewer, familiar)
         if s and s not in out:
             out.append(s)
         if len(out) >= MAX_SENTENCES:
@@ -136,6 +138,9 @@ def lead_line(percepts: Sequence[Percept], names: Names, viewer: str) -> str:
 # ============================================================
 #  复述：模型换个说法把玩家这一步再讲一遍——同一动作的动词 + 同一对象，或原话/姿态原样再现
 # ============================================================
+
+_LEAD_IN = re.compile(r"^(?:此时|此刻|随即|当下|于是|这时|登时|跟着|接着)[，,]?")
+ECHO_MAX = 36            # 比这更长的句子多半还写了别的：不当复述略过
 
 _VERBS: dict[Op, tuple[str, ...]] = {
     Op.MOVE: ("来到", "走到", "到了", "走进", "进了", "抵达", "踏进", "步入", "回到", "进入"),
@@ -152,16 +157,24 @@ _VERBS: dict[Op, tuple[str, ...]] = {
 
 
 def restates(sentence: str, percepts: Sequence[Percept], names: Names, viewer: str) -> bool:
-    """这一句是不是在复述玩家自己本回合的行动：原话或姿态原样再现，或者同一动作的动词与同一对象（名字）同句出现。
-    查看当前地点而没点地名的（“你环顾四周，只见……”）不算——那一句多半在写所见，丢了可惜。"""
+    """这一句是不是只在复述玩家自己本回合的行动：主语是“你”（句首或“此时/随即……”之后），原话在归到你的引语里原样再现，
+    或同一动作的动词与同一对象同句出现；句子一旦还写到了别的人（对手的反击、旁人的反应）或写得很长，就不算复述——那是新内容。
+    查看当前地点而没点地名的（“你环顾四周，只见……”）同样不算。"""
+    body = _LEAD_IN.sub("", sentence.strip())
+    if not body.startswith("你") or len(body) > ECHO_MAX:
+        return False
+    people = [sk.name for eid, sk in names.items() if sk.kind == Kind.PERSON and eid != viewer and sk.name]
     for p in percepts:
         ev = p.event
         if p.modality != Modality.SELF or ev is None or ev.actor != viewer or ev.kind == "noise":
             continue
-        if ev.utterance and len(ev.utterance) >= 2 and ev.utterance in sentence:
+        things = [n for n in (_name(names, ev.target, viewer), _name(names, ev.obj, viewer)) if n not in ("那里", "自己")]
+        others = [n for n in people if n in body and n not in things]
+        if others:
+            return False
+        if ev.utterance and len(ev.utterance) >= 2 and ev.utterance in body and body.find(ev.utterance) < 16:
             return True
         op = Op(ev.kind)
-        things = [n for n in (_name(names, ev.target, viewer), _name(names, ev.obj, viewer)) if n not in ("那里", "自己")]
-        if any(v in sentence for v in _VERBS.get(op, ())) and any(n in sentence for n in things):
+        if any(v in body for v in _VERBS.get(op, ())) and any(n in body for n in things):
             return True
     return False

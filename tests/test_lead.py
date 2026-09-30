@@ -117,5 +117,18 @@ def test_kowtow_reads_as_a_kowtow_and_discoveries_are_grouped():
     assert any(b[:-1] in lead for b in _BOW), lead
     found = [c for p in seen["p"] for c in consequences(p, names, s.player, "你") if c.startswith("发现")]
     assert all(c.count("发现") == 1 for c in found) and len(found) <= 1, found
+    before = s.beliefs(s.player)
+    familiar = {e for e in before.entities if before.location_of(e) is not None}
     again = s.turn("查看蒲团")
     assert "帛卷" in again.narration and "发现" not in again.narration, "已知下落的东西再翻出来，不算又“发现”一回"
+    assert "发现" not in lead_line(seen["p"], s.beliefs(s.player).entities, s.player, familiar), "先声同样只说“仍在”"
+
+
+def test_no_late_lead_when_the_voice_is_cached(tmp_path):
+    """开了磁盘缓存（评测、演示录像要逐字复现）就不用迟到的先声：它出不出场由网速决定。"""
+    from tianlong.language.llm import CachedLLM, ScriptedLLM
+
+    s = GameSession(build_wuliang(7), llm=CachedLLM(ScriptedLLM(lambda p, sy, sc: "好。"), tmp_path),
+                    fast_llm=ScriptedLLM(lambda p, sy, sc: ""))
+    assert s.narrator.lead_after is None
+    assert GameSession(build_wuliang(7), llm=ScriptedLLM(lambda p, sy, sc: "好。")).narrator.lead_after

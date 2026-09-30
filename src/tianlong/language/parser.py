@@ -321,7 +321,7 @@ def unsaid(text: str, line: str | None = None) -> str:
     return head.replace(core, "") if core else head
 
 
-_NAME_STOP = "，,。！!？?来去了着向对朝往给在上里 "
+_NAME_STOP = "，,。！!？?来去了着向对朝往给在上里刺砍劈斩挥戳扎 "     # 兵刃之后紧跟的出招动词也是词界（“拔出倚天剑刺向他”）
 
 
 def _unknown_name(rest: str) -> str | None:
@@ -376,13 +376,20 @@ def wield_problem(text: str, store: BeliefStore, aliases: Aliases | None = None)
 
 
 def rule_parse(text: str, store: BeliefStore, aliases: Aliases | None = None) -> Parsed:
+    """先叫人再说话（“钟灵，你怎么也来了？”）是说给他听的话；句里还带着别的动作（“钟灵，把解药给我”）就先交常规解析，
+    它解不出玩家自己的动作，才当作说给他听的话。其余交 _rule_parse。"""
+    called, mixed = _vocative(text.strip(), mentions(text.strip().lower(), store, aliases), store)
+    if called is not None and not mixed:
+        return called
+    parsed = _rule_parse(text, store, aliases)
+    return called if called is not None and parsed.candidate is None else parsed
+
+
+def _rule_parse(text: str, store: BeliefStore, aliases: Aliases | None = None) -> Parsed:
     """语态闸门：非即时语态不产生候选。即时指令按优先级尝试每个命中关键词的操作，返回第一个角色齐全的解析
     （“揣进兜里”的“进”不该赢过“揣”）；都不成时给出最具体的那句场内追问。"""
     t = text.strip().lower()
     ms = mentions(t, store, aliases)
-    called = _vocative(text.strip(), ms, store)
-    if called is not None:
-        return called
     command = analyze(text, ms, store.owner)
     only = {i for w in _MANNER_ONLY for a in _find_all(t, w) for i in range(a, a + len(w))}
     hits = [h for h in action_hits(t) if h[0] not in only]
@@ -407,23 +414,29 @@ _CALL = re.compile(r"^(?:喂|哎|嘿|诶|咳)?[，,\s]*")
 _ASKING = ("？", "?", "吗", "呢", "么", "吧？")
 
 
-def _vocative(text: str, ms: Sequence[Mention], store: BeliefStore) -> Parsed | None:
+def _vocative(text: str, ms: Sequence[Mention], store: BeliefStore) -> tuple[Parsed | None, bool]:
     """开口先叫人（“钟灵，你怎么也来了？”“喂，龚兄，看招！”）：句首的人名后紧跟逗号或冒号，后面整句都是说给他的原话。
-    只认玩家以为就在眼前的人；叫到的人不在眼前、或逗号后什么也没说，交回常规解析。"""
+    只认玩家以为就在眼前的人；叫到的人不在眼前、或逗号后什么也没说，返回 (None, False)。
+    第二项：后面那句里还有说话之外的动作词（“把解药给我”），交给调用方先试常规解析。"""
     lead = _CALL.match(text)
     at = lead.end() if lead else 0
     who = next((m for m in ms if m.pos == at and m.kind == Kind.PERSON and m.eid != store.owner), None)
     if who is None:
-        return None
+        return None, False
     rest = text[at + who.length:]
     if not rest or rest[0] not in "，,：:！!":
-        return None
+        return None, False
     line = rest[1:].strip()
     here = store.location_of(store.owner)
     if not line or here is None or store.location_of(who.eid) != here:
-        return None
+        return None, False
+    low = line.lower()
+    hits = action_hits(low)
+    social = next((_SOCIAL[low[a:b]] for a, b, _ in hits if low[a:b] in _SOCIAL), None)
     op = Op.ASK if line.endswith(_ASKING) else Op.TELL
-    return Parsed(Candidate(op, who.eid), line, source="rules", kind=MoveKind.SAY)
+    parsed = Parsed(Candidate(op, who.eid, social=social), line, source="rules", kind=MoveKind.SAY,
+                    command=analyze(text, ms, store.owner))
+    return parsed, bool({o for _, _, o in hits} - {Op.TELL, Op.ASK})
 
 
 def _find_all(t: str, w: str) -> list[int]:

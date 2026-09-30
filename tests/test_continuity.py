@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 pytest.importorskip("langgraph")
@@ -24,7 +26,7 @@ from tianlong.language.narrator import Narrator  # noqa: E402
 from tianlong.language.render import RenderStatus  # noqa: E402
 from tianlong.language.scene import SceneBrief  # noqa: E402
 from tianlong.runtime import gm  # noqa: E402
-from tianlong.runtime.continuity import continuity  # noqa: E402
+from tianlong.runtime.continuity import continuity, lately  # noqa: E402
 
 from .test_session_gm import HERO, OUT, T0, Script, session  # noqa: E402
 
@@ -88,3 +90,29 @@ def test_nothing_happening_still_gets_a_few_lines_about_the_scene():
     assert "玩家以为自己此刻在：后院，身边有钟灵" in llm.prompts[-1][1]
     quiet = Narrator(None).narrate_scene(HERO, (), {}, brief=brief)
     assert quiet.text.startswith("时间悄悄过去")
+
+
+def test_lately_tells_only_the_way_here_up_to_the_moment_he_speaks():
+    """lately 只给一路走到此地的那几步（到他开口那一刻为止），不给他之后的行踪，也不给他对别人的动手。"""
+    ling = Script(plan={T0 + 3: (Op.MOVE, "yard"), T0 + 4: (Op.MOVE, "road")}, busy="rack")
+    s = session({"ling": ling})
+    for text in ("去后院", "去山道", "等一会"):
+        s.turn(text)
+    mind = s.beliefs("ling")
+    assert lately(mind, "ling", mind.last_tick) == "我来到后院；我来到山道"
+    assert lately(mind, "ling", T0 + 3) == "我来到后院", "他开口之后才发生的事，不会跑进他的台词"
+    assert lately(mind, "ling", T0 + 2) == ""
+
+
+def test_a_recovery_in_the_same_room_is_not_an_arrival():
+    """同一处的人从被制到能动：说“他已能动了”，不说“此刻却在眼前”。"""
+    s = session()
+    me = s.beliefs(HERO)
+    from tianlong.core import Proposition
+    before = replace(me, beliefs={**me.beliefs, Proposition.attr("ling", "subdued", True):
+                                  replace(next(iter(me.beliefs.values())), prop=Proposition.attr("ling", "subdued", True))})
+    s.turn("环顾四周", request_id="look")
+    env = s.store.request(s.ref, "look")
+    ctx = continuity(env, s.beliefs(HERO), before)
+    assert any("钟灵动弹不得——此刻他已能动了" in n for n in ctx.notes), ctx.notes
+    assert not any("此刻却在眼前" in n for n in ctx.notes) and "ling" not in ctx.newcomers

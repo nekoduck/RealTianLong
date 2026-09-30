@@ -216,7 +216,7 @@ def test_say_turn_takes_a_reaction_tick_and_the_reply_is_voiced_in_the_same_turn
 
     bow = s.turn("拱手作揖")
     assert bow.kind == MoveKind.GESTURE and s.authority.head().version == 4, "姿态同样多走一个反应 tick"
-    assert bow.brief.player_line == "拱手作揖" and [vl.answering for vl in bow.brief.lines] == [None]
+    assert bow.brief.player_line == "拱手作揖" and [vl.answering for vl in bow.brief.lines] == ["（你拱手作揖）"], "姿态同样是回话的由头"
     assert s.interpreter.calls[-1] == ("拱手作揖", (r.narration,)), "解释器拿到最近几段正文"
 
 

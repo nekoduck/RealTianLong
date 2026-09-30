@@ -259,6 +259,11 @@ def _lack(op: Op | None, name: str | None, role: Kind | None = None) -> str:
     return f"你身上并没有{name}。" if name else "你身上并没有那样东西。"
 
 
+# 功夫的样子：神功、掌法、指法、步法、剑法、心法……；兵刃与物件的样子：剑、刀、枪、鞭、扇、药、镖……（功夫里的“剑法”先算功夫）
+_SKILLISH = re.compile(r"(?:功|掌|拳|指|步|法|诀|经|穴|神剑|剑气|内力)$")
+_GEARISH = re.compile(r"(?:剑|刀|枪|棍|鞭|扇|锤|斧|钩|镖|针|药|粉|瓶|索|弓|箭)$")
+
+
 def _unable(name: str | None) -> str:
     return f"你并不会{name}。" if name else "你并不会这样的功夫。"
 
@@ -501,10 +506,13 @@ class Interpreter:
         if missing:
             op = self._hint(data, text)
             aimed = [s.get("target") for s in steps if isinstance(s.get("target"), str)]
-            # 冲着认识的人使出不会的本事（“点了龚光杰的穴道”“用六脉神剑点倒他”）：缺的是功夫，不是人
-            means = op in (Op.ATTACK, Op.USE) and any(
-                me.sketch(t) is not None and me.sketch(t).kind == Kind.PERSON for t in aimed)
-            return _unclear(_unable(said) if means else _lack(op, said), command, "llm")
+            # 冲着认识的人使出不会的本事（“点了龚光杰的穴道”“用六脉神剑点倒他”）：缺的是功夫，不是人；
+            # 缺的若是兵刃（“用倚天剑刺他”）仍是身上没有
+            aims_known = any(me.sketch(t) is not None and me.sketch(t).kind == Kind.PERSON for t in aimed)
+            if op == Op.ATTACK and aims_known:
+                skill = not said or bool(_SKILLISH.search(said)) or not _GEARISH.search(said)
+                return _unclear(_unable(said) if skill else _lack(Op.USE, said), command, "llm")
+            return _unclear(_lack(op, said), command, "llm")
         plan, why = self._plan(steps, text, me)
         if not plan:
             return _unclear(why or _VAGUE, command, "llm")

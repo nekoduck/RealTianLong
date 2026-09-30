@@ -209,8 +209,8 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
     """台词闸门（与 check() 并用）：
     - 归到玩家（你/本名/别称）名下的引语与转述，去掉标点空白后须包含在玩家本回合的原话（brief.player_line 或 command）里，否则 puppet；
       引号之外替玩家起念头、拿主意（“你当即决定”“你心中暗想”）同样是 puppet，除非玩家自己的输入里就有这个词
-    - 归到要说台词的 NPC 名下的：点名只许 may_name ∪ {说话者, 听者, 玩家} 与他那句说法/原话里本就有的名字，否则 quote_entity；
-      状态词只许本回合计划里有的状态、或他那句说法/原话里本就肯定说出的，否则 quote_status
+    - 归到要说台词的 NPC 名下的：点名只许 may_name ∪ {说话者, 听者, 玩家} 与他那句说法/原话/谈资/近来经历里本就有的名字，否则 quote_entity；
+      状态词只许本回合计划里有的状态、或他那句说法/原话/谈资/近来经历里本就肯定说出的，否则 quote_status
     - 确凿归到一个本回合既没开口、也没有台词的人名下：凭空多出的一句话，voice（句首引语沿用上一句主语也算确凿）
     - 归属不明（他/她、没找到说话者、匾额与称谓）：须同时满足所有说话者的许可（交集）；本回合没有台词时由 check() 把关；
       转述找不到具名的说话者就不查
@@ -221,7 +221,7 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
     for vl in brief.lines:
         lines.setdefault(vl.speaker_name, []).append(vl)
     voices = {name: _Voice(frozenset({name, *selves, *(n for vl in vls for n in (*vl.may_name, vl.listener_name) if n)}),
-                           "\n".join(x for vl in vls for x in (vl.claim, vl.template) if x))
+                           "\n".join(x for vl in vls for x in (vl.claim, vl.template, vl.knows, vl.lately) if x))
               for name, vls in lines.items()}
     universe = (set(known_names) | plan.names | plan.aliases | plan.hidden | set(people) | set(voices)
                 | {n for v in voices.values() for n in v.names}) - {"你"}

@@ -3,7 +3,7 @@
          AddRelation / RemoveRelation / SetAttr / clock_label，core/attributes 的 true_value，core/profiles 的 Goal / GoalKind / Profile，
          cognition 的 BeliefStore / believed_place，kernel/perception 的 sketches_for，language/parser 的 MoveKind / Parsed，
          language/llm 的 LLMUnavailable，language/render 的 sentence_ends，
-         language/scene 的 SceneBrief / VoiceLine，language/templates 的 render_event / render_experience / render_fact，
+         language/scene 的 SceneBrief / VoiceLine，language/templates 的 SOCIAL_VERBS / render_event / render_experience / render_fact，
          persistence 的 TurnEnvelope，scenarios 的 Scenario，runtime/continuity 的 continuity / lately
 [OUTPUT]: 对外提供 gm_command()（元指令与“GM：”前缀）、companions()（玩家的同伴 = 自己人 + DEFEND 目标）、salient()（等待该不该被打断）、
           build_brief()（SceneBrief：要替 NPC 说出口的话 + 前后照应 + 是否收幕）、
@@ -48,7 +48,7 @@ from tianlong.language.llm import LLMUnavailable
 from tianlong.language.parser import MoveKind, Parsed
 from tianlong.language.render import sentence_ends
 from tianlong.language.scene import SceneBrief, VoiceLine
-from tianlong.language.templates import render_event, render_experience, render_fact
+from tianlong.language.templates import SOCIAL_VERBS, render_event, render_experience, render_fact
 from tianlong.persistence import TurnEnvelope
 from tianlong.runtime.continuity import continuity, lately
 from tianlong.scenarios import Scenario
@@ -139,16 +139,18 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
     """要替 NPC 说出口的话（本回合玩家听见的每一句 NPC 言语、看见的每一个 NPC 姿态）、最近几段正文、玩家原话，
     以及前后照应（continuity：玩家自己的身体状况、本回合的意外与变化、身在何处身边有谁；出人意料地出现的人带上他近来的经历）。
     耳语（只看见在交谈、没听见内容）不算：玩家没听见的话，叙述者也不该替它编出来。
-    answering：NPC 冲着玩家、且在玩家开口之后说的话，带上玩家的原话作回话的由头。
+    answering：NPC 冲着玩家、且在玩家开口（或冲他摆了姿态、赔了罪道了谢）之后说的话，带上玩家这一步作回话的由头。
     before 是本回合之前玩家的认知（重试补写时没有）；closing 表示这是这一幕的最后一段。"""
     player = me.owner
     prof = scenario.profiles.get(player)
     ctx = continuity(env, me, before, companions(prof) if prof else ())
     plan = (env.intent, *env.followups)
     mine = next((it for it in plan if it.utterance and it.op in (Op.TELL, Op.ASK, Op.WAIT)), None)
-    spoke_at = next((p.tick for p in env.percepts if p.modality == Modality.SELF and p.event is not None
-                     and p.event.kind in TALK), None)
-    said = mine.utterance if mine is not None and mine.op != Op.WAIT and spoke_at is not None else None
+    # 玩家本回合冲人说的话、做的姿态或只有言语行为的客套（赔罪、道谢）：之后冲着他来的话都是在回应它
+    acted = next((p for p in env.percepts if p.modality == Modality.SELF and p.event is not None
+                  and p.event.actor == player and (p.event.kind in TALK or (p.event.kind == Op.WAIT.value
+                                                                             and p.event.utterance))), None)
+    cue = _cue(acted.event, me) if acted is not None else None
     lines = []
     for p in env.percepts:
         ev = p.event
@@ -157,13 +159,23 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
         talk = ev.kind in TALK and p.modality == Modality.SPEECH
         pose = ev.kind == Op.WAIT.value and p.modality == Modality.SIGHT and bool(ev.utterance)
         if talk or pose:
-            answer = said if ev.target == player and spoke_at is not None and p.tick > spoke_at else None
+            answer = cue if ev.target == player and acted is not None and p.tick > acted.tick else None
             mind = beliefs_of(ev.actor)
             lines.append(_voice(ev, me, scenario, mind, answer,
                                 lately(mind, ev.actor, p.tick) if ev.actor in ctx.newcomers else ""))
     return SceneBrief(tuple(lines), tuple(recent), mine.utterance if mine is not None else None,
                       condition=ctx.condition, notes=ctx.notes, present=ctx.present, statuses=ctx.statuses,
                       afflicted=ctx.afflicted, closing=closing)
+
+
+def _cue(ev: PerceivedEvent, me: BeliefStore) -> str | None:
+    """玩家这一步给 NPC 的由头：说出口的原话；姿态写成“（你拱手作揖）”；只有言语行为的写成“（你向龚光杰赔不是）”。"""
+    if ev.utterance:
+        return ev.utterance if ev.kind in TALK else f"（你{ev.utterance}）"
+    if ev.social is not None and ev.kind in TALK:
+        who = me.sketch(ev.target).name if ev.target and me.sketch(ev.target) else "对方"
+        return f"（你{SOCIAL_VERBS[ev.social].format(t=who)}）"
+    return None
 
 
 def _voice(ev: PerceivedEvent, me: BeliefStore, scenario: Scenario, mind: BeliefStore,

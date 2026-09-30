@@ -19,7 +19,7 @@ import time
 import pytest
 
 from tianlong.core import Fact, Intent, Manner, Op, Proposition, Rel, Social
-from tianlong.language.lead import lead_line
+from tianlong.language.lead import lead_line, restates
 from tianlong.language.llm import LLMUnavailable, ScriptedLLM
 from tianlong.language.narrator import MAX_CHARS, SOCIAL_PHRASES, Narrator, render_voice
 from tianlong.language.quotes import check_quotes
@@ -555,3 +555,51 @@ def test_since_only_checks_new_quotes(plan):
     text = B_PUPPET + G2
     assert check_quotes(text, SceneBrief(lines=(GONG,)), plan, KNOWN)
     assert check_quotes(text, SceneBrief(lines=(GONG,)), plan, KNOWN, since=len(B_PUPPET)) == ()
+
+
+# ============================================================
+#  评审回归（先声与前后照应）
+# ============================================================
+
+
+def test_a_quiet_turn_still_says_something_when_the_model_fails():
+    """无事发生、身边有人：有模型就请它写眼前光景；它不可用或什么也没交出来，照旧是“时间悄悄过去”，不是一片空白。"""
+    brief = SceneBrief(present=("剑湖宫大殿", "钟灵"))
+    for llm in (_script(""), ScriptedLLM(lambda p, s, sc: (_ for _ in ()).throw(LLMUnavailable("503")))):
+        got: list[str] = []
+        r = _narrator(llm).narrate_scene("duanyu", (), {}, brief=brief, on_text=got.append)
+        assert r.text.startswith("时间悄悄过去") and got == [r.text]
+
+
+def test_the_lead_never_vouches_for_what_the_model_left_out():
+    """先声点过龚光杰的名字，不等于龚光杰的反击讲过了：漏掉的照样补上模板行。"""
+    view = _settle(("duanyu", Op.ATTACK, "gongguangjie", None, Manner.NORMAL),
+                   ("gongguangjie", Op.ATTACK, "duanyu", None, Manner.NORMAL))
+    lead = lead_line(view[0], view[1], "duanyu")
+    counter = [x for x in build_plan("duanyu", view[0], view[1]).lines if x.startswith("看见龚光杰")]
+    assert lead and counter
+    r, got = _lead_run(view, _script("满堂哗然，众人面面相觑。"), 0)
+    assert got[0] == lead and counter[0] in r.text and r.status == RenderStatus.GATED_FALLBACK
+
+
+@pytest.mark.parametrize("sentence, echo", [
+    ("你一掌拍向龚光杰，却被他挡了开去。", True),
+    ("龚光杰反手一掌，拍在你胸口。", False),                              # 主语不是你：是对手的反击
+    ("你一掌拍向龚光杰，钟灵在梁上拍手叫好。", False),                    # 还写到了别的人
+    ("你一掌拍向龚光杰，掌风呼呼，满堂宾客都看得呆了，连梁上的锦幡都晃了晃，谁也没想到一个书生竟敢出手。", False),   # 太长
+])
+def test_only_a_bare_retelling_of_the_players_step_counts_as_an_echo(sentence, echo):
+    view = _settle(("duanyu", Op.ATTACK, "gongguangjie", None, Manner.NORMAL))
+    assert restates(sentence, view[0], view[1], "duanyu") is echo
+
+
+def test_a_speakers_own_background_may_be_quoted_but_not_narrated():
+    """谈资里的名字（玩家没听说过的司空玄）：在说话者自己的引语里算数，叙述者自己的口吻里照样不许凭空点名。"""
+    view = _settle(("duanyu", Op.WAIT, None, None, Manner.NORMAL))
+    gong = VoiceLine("gongguangjie", "龚光杰", "你", Op.TELL.value, Social.REMARK, None, None,
+                     knows="神农帮的帮主司空玄，心狠手辣", may_name=frozenset({"龚光杰", "段誉", "司空玄"}))
+    quoted = "龚光杰道：“司空玄那老儿心狠手辣，你可别撞到他手里。”"
+    r, _ = _run(view, _script(quoted), SceneBrief(lines=(gong,)))
+    assert quoted in r.text and not any(v.kind == "entity" for v in r.violations)
+    r, _ = _run(view, _script("司空玄正带人在山下扎营。" + G3), SceneBrief(lines=(gong,)))
+    assert "司空玄" not in r.text, "叙述者的口吻不借谈资点名"

@@ -9,6 +9,7 @@
        意外出现、或刚走到眼前的人（玩家自己看见他进来不过半个时辰）开口时，另给他自己近来的经历（lately），
        好让他亲口说出怎么脱身、怎么找来的——意外往往在下一回合才被问起，所以不只看本回合。
        从不看世界真相：玩家不知道的变化不会出现在这里
+       lately 只到他开口那一刻为止、只给一路走到此地的几步与冲着他来的动手，只在他自己的引语里算出处。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -24,8 +25,7 @@ from tianlong.language.templates import ATTR_WORDS, render_experience
 from tianlong.persistence import TurnEnvelope
 
 AILMENTS = ("wounded", "poisoned", "subdued")
-_HEALED = {"wounded": "先前的伤已无大碍", "poisoned": "身上的毒已经解了", "subdued": "被制住的穴道已经解开"}
-_WAS = {"wounded": "受了伤", "poisoned": "中了毒", "subdued": "被点了穴道、动弹不得"}
+_HEALED = {"wounded": "你身上已不怎么疼了", "poisoned": "你体内那股麻痒已经退了", "subdued": "你手脚又能动了"}
 LATELY_TICKS = 60        # 近来：一个时辰之内
 LATELY_KEEP = 4          # 至多说这么多件
 ARRIVED_TICKS = 30       # 刚来到眼前：玩家自己看见他走进此地不过这么多分钟
@@ -74,24 +74,20 @@ def continuity(env: TurnEnvelope, me: BeliefStore, before: BeliefStore | None, f
     here = believed_place(me, player)
     surprising: set[str] = set()
     if before is not None:
-        healed = [a for a in _ails(before, player) if a not in now]
-        notes += [_HEALED[a] for a in healed]
-        statuses |= set(healed)
+        notes += [_HEALED[a] for a in _ails(before, player) if a not in now]       # 措辞不带状态词：不必另开许可
         for p in _seen(env, player, here):
             name = _name(me, p)
-            if name is None or here is None or not before.knows(p):
-                continue
-            parts = []
+            if name is None or here is None or not before.knows(p) or believed_place(me, p) != here:
+                continue                         # 本回合又走了的人不算“此刻在眼前”
             was_held = before.holds(Proposition.attr(p, "subdued", True)) and not me.holds(Proposition.attr(p, "subdued", True))
-            if was_held:
-                parts.append(_WAS["subdued"])
-                statuses.add("subdued")
             was_at = believed_place(before, p)
-            if was_at is not None and was_at != here and _name(before, was_at):
-                parts.append(f"还在{_name(before, was_at)}")
-            if parts:
-                notes.append(f"你原以为{name}" + "，".join(parts) + "——此刻却在眼前")
+            elsewhere = was_at is not None and was_at != here and _name(before, was_at) is not None
+            if elsewhere:
+                held = "被制住了，还困在" if was_held else "还在"
+                notes.append(f"你原以为{name}{held}{_name(before, was_at)}——此刻却在眼前")
                 surprising.add(p)
+            elif was_held:
+                notes.append(f"你原以为{name}动弹不得——此刻他已能动了")
         moved = any(p.modality == Modality.SELF and p.event is not None and p.event.actor == player
                     and p.event.kind == Op.MOVE.value and p.event.outcome == Outcome.SUCCESS for p in env.percepts)
         if moved:
@@ -110,14 +106,18 @@ def continuity(env: TurnEnvelope, me: BeliefStore, before: BeliefStore | None, f
 
 
 def lately(mind: BeliefStore, who: str, now: int) -> str:
-    """此人近来亲历的事（他自己的经历，用“我”说）：走过的路、挨过的打、被制与脱身——只取他自己的行动与冲着他来的事。"""
-    rows: list[str] = []
-    for ep in mind.episodes:
+    """此人怎么来到眼前（他自己的话，用“我”说）：只取他开口之前（不晚于 now）的经历里，一路走到此地的那几步，
+    以及冲着他来的动手与施救。他自己对别人的动手、去过又离开的地方（私奔去营地之类的隐情）一概不给——
+    这是给他解释“怎么找来的”，不是替他交代行踪。"""
+    eps = [ep for ep in mind.episodes if now - LATELY_TICKS <= ep.tick <= now and ep.event.kind != "noise"]
+    path: list = []
+    for ep in reversed(eps):                    # 从开口那一刻往回找：最后一步走到的地方，和一路连着走过来的那几步
         ev = ep.event
-        if ep.tick < now - LATELY_TICKS or ev.kind == "noise":
-            continue
-        mine = ep.modality == Modality.SELF and ev.actor == who and ev.kind in (Op.MOVE.value, Op.ATTACK.value, Op.USE.value)
-        at_me = ev.target == who and ev.kind in (Op.ATTACK.value, Op.USE.value)
-        if mine or at_me:
-            rows.append(render_experience(ep.modality, ev, mind.entities, who, me="我"))
+        if ep.modality == Modality.SELF and ev.actor == who and ev.kind == Op.MOVE.value and ev.outcome == Outcome.SUCCESS:
+            if path and ev.target != path[-1].event.place:
+                break
+            path.append(ep)
+    hits = [ep for ep in eps if ep.event.target == who and ep.event.kind in (Op.ATTACK.value, Op.USE.value)]
+    rows = [render_experience(ep.modality, ep.event, mind.entities, who, me="我")
+            for ep in sorted([*reversed(path), *hits], key=lambda e: e.tick)]
     return "；".join(dict.fromkeys(rows[-LATELY_KEEP:]))
