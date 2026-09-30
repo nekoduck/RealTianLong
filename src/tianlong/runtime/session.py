@@ -3,7 +3,7 @@
          runtime/gm 的主持层纯函数（gm_command / companions / salient / build_brief），runtime/aside 的 AsideMixin / ENDED（不推进的回合），
          runtime/endings 的 EndingMixin（落幕与终章），runtime/cast 的 policy_for / wakes / advance_marks（驱力），
          runtime/staging 的 recognize / stops_wait / lore_at（看点：只读玩家自己的感知；月出后的外观描写），runtime/suggest 的 suggestions，
-         runtime/names 的相识账本（Acquaintance / masked / gate_aliases / may_name / learn_heard / learn_delivered / early_line），
+         runtime/names 的相识账本（Acquaintance / masked / voiced / gate_aliases / may_name / learn_heard / learn_delivered / early_line），
          agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
          memory 的 QdrantMemoryIndex / Recall / MemoryIndexer / MemoryScope，language 的 IntentParser / MoveKind / Parsed / Narrator /
          TemplateSpeaker / LLMClient，language/scene 的 SceneBrief / TextSink，
@@ -34,7 +34,8 @@
        场景给了驱力的 NPC 经 cast.policy_for 套上 Driven，时间窗打开即唤醒（cast.wakes，不改调度器）；
        驱力标记与看点账本（staged：已让等待停过的一次性看点）在 annotate 的副本上推进（驱力只记兑现成功的），与调度标记同一事务落库；
        相识账本同样：听见的原话在 annotate 里推进（names.learn_heard），交付的正文在叙述之后推进、随下一次提交落库。
-       给玩家看的一切（解释、叙述、行动建议、场外问答、终章）都用 _view()——还叫不出名字的人换成外貌称呼的展示用副本；
+       给玩家看的一切（解释、叙述、行动建议、场外问答、终章）都用 _view()——还叫不出名字的人换成外貌称呼的展示用副本，
+       叙述与台词读的感知同样经 names.voiced（旁人原话里他叫不出名字的人换成外貌称呼）；
        叙述闸门的别称按账本给（没引介的人的名字只用于拒绝），NPC 台词可点名的经 names.may_name；NPC 的决策从不经过它。
        CLI、测试、未来的 Web 前端都只和它打交道
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -565,6 +566,7 @@ class GameSession(AsideMixin, EndingMixin):
         叙述者有 narrate_scene（主持人之声）就交给它流式写，否则一次写完再交付。
         before 是本回合之前玩家的认知（前后照应的比对基准；重试补写时没有）；closing：这一回合抵达了结局，叙述收在余韵上。"""
         me, acq, sc = self._view(), self._acq, self.scenario      # 名字经相识账本：玩家叫不出的人用外貌称呼
+        env = replace(env, percepts=names.voiced(env.percepts, acq, self.player, sc))   # 旁人原话里同样（展示用）
         lapse = clock_label(env.ticks[-1]) if _interruptible(env) and env.planned_ticks > 1 and env.ticks else ""
         brief = gm.build_brief(env, me, sc, self.beliefs, self._recent, before, closing, self._told,
                                lambda a: self.store.recent_memories(self.ref, a, 0), suggestions(me, friends=self._friends),

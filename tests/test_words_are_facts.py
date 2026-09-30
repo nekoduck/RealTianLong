@@ -5,7 +5,8 @@
 [OUTPUT]: plan §7 M2 test_words_are_facts（原则 2 话即事实）：钟灵的驱力台词（挂在施用解药上）原样出现在玩家的
           PerceivedEvent.utterance 与在场 NPC 的经历里；brief 里是 said=True 的台词（act 是施用这一下）；模型给她编了另一套词 →
           该句被丢、违规为 fidelity；截取连续一段则放行；模板回退原样印出这句台词；提示词把它归入“照录的原话”一节；
-          只有录入原话的说话者才查一致性（模板措辞的台词照旧可以改写）
+          只有录入原话的说话者才查一致性（模板措辞的台词照旧可以改写）；添或丢一个否定字、挪前挪后都是另编；
+          “她道：”接上一句的主语照查，丢掉后补上录入的那句
 [POS]: tests 的话即事实：NPC 说出口的原话是随意图落库的事实（“X 说了 Y”），叙述者只照录、不另编
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -86,6 +87,21 @@ def test_fidelity_is_checked_only_for_recorded_words():
     assert "fidelity" not in {v.kind for v in check_quotes(text, SceneBrief((_line(False),)), _plan())}
     close = "钟灵道：“解药在这儿，你们不再为难这书呆子，我就救他。”"            # 换了一两个字：字二元组过六成
     assert "fidelity" not in {v.kind for v in check_quotes(close, SceneBrief((_line(True),)), _plan())}
+
+
+def test_a_reversed_or_reordered_line_is_infidelity():
+    """换一两个字可以，添一个“不”、丢一个“不”、挪前挪后都是另编：玩家读到的不许与世界录下的相反。"""
+    for text in ("钟灵道：“解药在这儿。你们再为难这书呆子，我便不救他。”", "钟灵道：“你们再为难这书呆子，我便救他。”",
+                 "钟灵道：“我便救他，你们不再为难这书呆子。”", "钟灵道：“解药在这儿，我便救他。”"):
+        assert "fidelity" in {v.kind for v in check_quotes(text, SceneBrief((_line(True),)), _plan())}, text
+
+
+def test_a_pronoun_does_not_smuggle_in_an_invented_line():
+    """“她道：”接的是上一句的主语：她本回合只有录入的原话，照样查一致性；丢掉之后补上录入的那句。"""
+    text = "钟灵把瓷瓶一扬。她道：“这瓶药你拿去，咱们两清。”"
+    assert "fidelity" in {v.kind for v in check_quotes(text, SceneBrief((_line(True),)), _plan())}
+    _, r = _bargain("梁上的青衫少女把瓷瓶一扬。她道：“这瓶药你拿去，咱们两清。”")
+    assert "两清" not in r.narration and f"“{LINE}”" in r.narration
 
 
 def test_the_prompt_files_recorded_words_under_verbatim_and_the_template_keeps_them():

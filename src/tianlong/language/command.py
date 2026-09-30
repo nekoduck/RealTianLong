@@ -7,7 +7,8 @@
        否定（我不攻击守卫）、条件（如果……才）、计划与斟酌（再决定是否）、转述（守卫刚刚攻击了我）、引语、复合指令、
        疑问都被识别为非即时语态——规则快路径只接受明确的单一、肯定、即时指令，其余交给受约束的语义解析或追问澄清。
        言语行为词与姿态词也是行动词：“打招呼”盖住“打”、“救命”盖住“救”、“坐下”盖住“下”，于是也受否定与条件约束；
-       “笑道/低声道：……”是说话、“赔笑”是赔罪（单个“道”太泛，“拱手道”仍是姿态）；“对那姑娘说”里介词与人之间的指示词不挡住介词。
+       “笑道/低声道：……”是说话、“赔笑”是赔罪（单个“道”太泛，“拱手道”仍是姿态）；“对那姑娘说”里介词与人之间的指示词不挡住介词；
+       嵌在更长的人物提及里的称呼不当主语（“对梁上的青衫少女说”里的“少女”、“对钟姑娘说”里的“姑娘”）。
        parser 在此之上做实体与角色绑定；本模块不引用任何实体表以外的知识
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -245,10 +246,14 @@ def _clause_of(t: str, pos: int) -> tuple[int, int]:
 
 
 def _subject(t: str, action_pos: int, clause_start: int, mentions: Sequence[Mention], owner: str) -> str | None:
-    """行动词之前、同一分句里、不带介词也不作定语的人物提及就是主语。"""
+    """行动词之前、同一分句里、不带介词也不作定语的人物提及就是主语；嵌在更长的人物提及里的不算
+    （“对梁上的青衫少女说”里的“青衫少女”“少女”，“对钟姑娘说”里的“姑娘”）。"""
+    people = [(m.pos, m.pos + m.length) for m in mentions if m.kind == Kind.PERSON]
     subj = None
     for m in mentions:
         if not (clause_start <= m.pos < action_pos) or m.kind != Kind.PERSON:
+            continue
+        if any(a <= m.pos and m.pos + m.length <= b and b - a > m.length for a, b in people):
             continue
         before = t[max(0, m.pos - 4):m.pos]
         before = next((before[:-len(d)] for d in _DEMONSTRATIVES if before.endswith(d)), before)

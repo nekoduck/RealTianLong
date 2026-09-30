@@ -3,7 +3,7 @@
          language/llm 的 LLMClient / LLMUnavailable，language/scene 的 SceneBrief / TextSink，
          language/sheet 的 Row / scene_rows / compose / voices / lines / patches / prose（节目单与补句），
          language/render 的 fact_lines / build_plan / check / sentence_ends / Violation / Rendered / RenderStatus，
-         language/gate 的 violations（逐句判定），language/quotes 的 voiced，language/lead 的 lead_line / restates，
+         language/gate 的 violations（逐句判定），language/quotes 的 voiced / recites，language/lead 的 lead_line / restates，
          language/voice_prompt 的 system_prompt / scene_prompt / render_voice / lapse_line / TIMED（措辞层）
 [OUTPUT]: 对外提供 Narrator（narrate_scene() 主持人之声：流式生成、逐句过闸门、通过即交付；narrate_rendered() / narrate()
           以空 SceneBrief 委托之；secrets 是场景的秘密词表；deadline 是迟到先声的绝对时限）、MAX_DROPS、MAX_CHARS、LEAD_AFTER、
@@ -43,7 +43,7 @@
        （“她说完……”，只跟被丢的台词）与反应句（“钟灵的笑声一下子断了”）一并略过（_REACTION）
        先声之后，别的必讲之事讲到没有只看模型自己交付的正文；有台词时引语里的名字与状态词交给台词闸门按说话者查。
        narrate_scene/narrate_rendered/narrate 可另收这一回合的闸门别称 aliases（会话按相识账本给：玩家还叫不出名字的人，
-       本名与带名的别称只用于拒绝），不给就用场景的那一份；录入原话的动作台词（said）漏写照补、不当吆喝
+       本名与带名的别称只用于拒绝），不给就用场景的那一份；录入原话的动作台词（said）漏写照补、不当吆喝；said 台词须有一段引语照录了它（quotes.recites）才算讲到——开了口却另说一套照补
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -62,7 +62,7 @@ from tianlong.core import Modality, Op, Outcome, Percept, is_night
 from tianlong.language.gate import violations
 from tianlong.language.lead import lead_line, restates
 from tianlong.language.llm import LLMClient, LLMUnavailable
-from tianlong.language.quotes import voiced
+from tianlong.language.quotes import recites, voiced
 from tianlong.language.render import (
     Rendered,
     RenderPlan,
@@ -157,6 +157,8 @@ def _spoken(row: Row, text: str, said: frozenset[str]) -> bool:
     """这句台词正文里讲到了没有：有原话或说法的，须有一段归到说话者名下的引语（或名字后紧跟言说动词）；闲话提到其人即可。"""
     vl = row.voice
     assert vl is not None
+    if vl.said and vl.template:
+        return recites(text, vl.template)          # 录入的原话：须有一段引语照录了它，开了口却另说一套不算讲到
     return vl.speaker_name in said if (vl.template or vl.claim) else vl.speaker_name in text
 
 

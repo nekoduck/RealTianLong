@@ -8,12 +8,13 @@
          runtime/continuity 的 continuity / lately，runtime/talk 的 fresh
 [OUTPUT]: 对外提供 gm_command()（元指令与“GM：”前缀）、companions()（玩家的同伴 = 自己人 + DEFEND 目标）、salient()（等待该不该被打断）、
           build_brief()（SceneBrief：要替 NPC 说出口的话——谈资只给没说过的、被问到的人附上来历；任何操作上的驱力原话标 said 照录、
-          可点名的名字经会话交来的相识账本过滤、没被引介的人初次冲玩家开口可自报姓名——+ 前后照应 + 没人接的话 + 是否收幕
+          可点名的名字经会话交来的相识账本过滤、命题说法里玩家叫不出名字的人换成外貌称呼、问到外貌称呼也算问到了他、
+          没被引介的人初次冲玩家开口可自报姓名——+ 前后照应 + 没人接的话 + 是否收幕
           + 本回合开口者最近说过的原话 said_before + 本回合动过手脚的人 astir）、
           self_view() / goal_text() / aside_prompt()（场外问答只用玩家自己的认知）、PLAYER_GOALS（玩家目标的口吻表：goal_text 与
           scripts/bench_rival 的世界圣经同一口径）、gated_stream()（场外回答逐句过名字闸门、边生成边交付）、
-          closing_prompt()（终章只取玩家亲历）、leaked() / leaks()（名字闸门：玩家不认识的实体——含见过却叫不出名字的人 veiled——
-          不许出现在模型写的文字里，玩家亲口说出的名字除外）、
+          closing_prompt()（终章只取玩家亲历）、leaked() / leaks()（名字闸门：玩家不认识的实体——含见过却叫不出名字的人 veiled，
+          这几个名字先在原文里查，免得认得的人的别称“姑娘”把“钟姑娘”抹成“钟”——不许出现在模型写的文字里，玩家亲口说出的名字除外）、
           reveal()（终章的真相揭晓表）、is_ooc() / asks_direction()（场外还是故事里的自问、问没问方向）、
           META_HELP / ASIDE_SYSTEM（场外）/ ASIDE_INNER（故事里的自问：故事口吻、不标场外）/ ASIDE_TOKENS / CLOSING_SYSTEM
 [POS]: runtime 的主持层纯函数：会话（session）的回合循环调用它们，它们只读传进来的认知、已落库的请求进度与事件日志，从不写任何东西
@@ -283,7 +284,8 @@ def _about(answering: str | None, who: str, mind: BeliefStore, scenario: Scenari
     rows, ids = [], []
     for pid, prof in sorted(scenario.profiles.items()):
         sk = mind.sketch(pid)
-        forms = (sk.name, *scenario.aliases.get(pid, ())) if sk is not None else ()
+        # 玩家看见的外貌称呼也算问到了他（展示用的称呼，不是名字）：问“高个子的东宗弟子是谁”同样答来历
+        forms = (sk.name, *scenario.aliases.get(pid, ()), scenario.epithets.get(pid, "")) if sk is not None else ()
         if (pid != who and prof.intro and any(f and f in answering for f in forms)
                 and (may is None or sk.name in may)):
             rows.append(f"{sk.name}：{prof.intro}")
@@ -322,7 +324,9 @@ def _voice(ev: PerceivedEvent, me: BeliefStore, scenario: Scenario, mind: Belief
     veiled = veiled or {}
     listener = ("你" if ev.target == me.owner
                 else me.sketch(ev.target).name if ev.target and me.sketch(ev.target) else None)
-    claim = render_fact(ev.topic, mind.entities, who) if ev.topic is not None else None
+    # 命题的说法取自说话者的草图（带着真名）：玩家还叫不出名字的人换成外貌称呼——他叫得出、玩家听见了早已学会（相识账本）
+    shown = {eid: replace(sk, name=scenario.epithets[eid]) if eid in veiled else sk for eid, sk in mind.entities.items()}
+    claim = render_fact(ev.topic, shown, who) if ev.topic is not None else None
     if nameable is not None:
         may = set(nameable(who, mind))
     else:
@@ -461,11 +465,14 @@ def leaked(text: str, me: BeliefStore, scenario: Scenario, said: str = "",
         return [state.entity(eid).name, *(a for a in scenario.aliases.get(eid, ()) if len(a) >= 2)]
 
     hidden = {n for forms in veiled.values() for n in forms}
-    known = {n for eid in me.entities if state.has_entity(eid) for n in names(eid)} - hidden
-    known |= {n for eid in state.entities for n in names(eid) if said and n in said}
+    mine = {n for eid in state.entities for n in names(eid) if said and n in said}
+    # 叫不出名字的人先在原文里查：认得的人的别称（“姑娘”）可能是它的子串，先抹掉就把“钟姑娘”抹成了“钟”
+    early = [n for n in sorted(hidden) if n in text and n not in mine]
+    known = ({n for eid in me.entities if state.has_entity(eid) for n in names(eid)} - hidden) | mine
     for n in sorted(known, key=len, reverse=True):
         text = text.replace(n, "")
-    return [n for eid in state.entities if eid not in me.entities or eid in veiled for n in names(eid) if n in text]
+    late = [n for eid in state.entities if eid not in me.entities or eid in veiled for n in names(eid) if n in text]
+    return list(dict.fromkeys([*early, *late]))
 
 
 def leaks(text: str, me: BeliefStore, scenario: Scenario, said: str = "",
