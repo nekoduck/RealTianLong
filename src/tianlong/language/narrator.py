@@ -138,7 +138,7 @@ def _with_lines(plan: RenderPlan, brief: SceneBrief, forms: Mapping[str, Sequenc
     """会话交来的上下文本身有出处：台词的说话者与听者可以点名，原话、说法与说话者近来的经历算出处；
     前后照应（玩家的身体状况、本回合的意外与变化、眼前的地点与人、近旁叫得出名字的东西）同样算出处，其中的状态说出来不算升级，
     玩家自己与他以为身边的人身上的伤毒被制算落在对的人身上。forms 是名字 → 别称：近旁的东西说别称（“北冥神功”）同样可以。
-    看点的景观与细节原文算出处，许可词（“仙人”“长剑”）只进可点名的名字。"""
+    看点的景观与细节原文算出处，许可词（“仙人”“小貂”）只进可点名的名字。"""
     names = {n for vl in brief.lines for n in (vl.speaker_name, vl.listener_name) if n and n != "你"}
     names |= set(brief.present) | set(brief.nearby)
     also = frozenset(a for n in names for a in (forms or {}).get(n, ()))

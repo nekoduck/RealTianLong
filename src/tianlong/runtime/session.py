@@ -37,7 +37,7 @@
        给玩家看的一切（解释、叙述、行动建议、场外问答、终章）都用 _view()——还叫不出名字的人换成外貌称呼的展示用副本，
        叙述与台词读的感知同样经 names.voiced（旁人原话里他叫不出名字的人换成外貌称呼）；
        叙述闸门的别称按账本给（没引介的人的名字只用于拒绝），NPC 台词可点名的经 names.may_name；NPC 的决策从不经过它。
-       SceneBrief 另经 staging.dress 带上本回合的看点、写法卡、景观、细节与天色（旧版全空、逐字不变）；给过的细节在叙述之后记账。
+       SceneBrief 另经 staging.dress 带上本回合的看点、写法卡、景观、细节与天色（天色按玩家自以为所在处：看不见天只报时辰；旧版全空、逐字不变）；给过的细节在叙述之后记账。
        CLI、测试、未来的 Web 前端都只和它打交道
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -576,7 +576,8 @@ class GameSession(AsideMixin, EndingMixin):
         brief = gm.build_brief(env, me, sc, self.beliefs, self._recent, before, closing, self._told,
                                lambda a: self.store.recent_memories(self.ref, a, 0), suggestions(me, friends=self._friends),
                                self._said, lambda a, mind: names.may_name(a, mind, acq, sc), self._veiled())
-        brief = staging.dress(brief, staging.staging(sc, env, self._facets), sc.lore)   # 看点、写法、景观、细节与天色
+        st = staging.staging(sc, env, self._facets, me.location_of(self.player))   # 看点、写法、景观、细节与天色
+        brief = staging.dress(brief, st, sc.lore)
         aliases = names.gate_aliases(acq, self.player, sc, text)
         # 此前已知下落的东西：再翻出来不算“发现”（重试补写时没有 before，照旧）
         familiar = frozenset(e for e in before.entities if before.location_of(e) is not None) if before else frozenset()

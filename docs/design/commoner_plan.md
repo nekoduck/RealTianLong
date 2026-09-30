@@ -339,7 +339,7 @@ B 的结构性弱点仍然存在：硬事实错误率 13%；私奔那对不在�
     - `details: Mapping[str, tuple[str, ...]]`
     - `kowtow_ticks: int = 1`
   - `Ending` 增加 `at_clock` 与 `variants`。
-  - 新增 `Beat` 数据类。它是**识别器，不是触发器**，只匹配已结算、且玩家已感知到的事件或景观：`key, op, actors, target, obj, door, place, clock_from, gloss（玩家口吻的看点）, stage（写法卡，只有修辞）, allowed（额外许可词，如“小貂”“仙人”“长剑”）, lore（景观文字的 key）, once`。
+  - 新增 `Beat` 数据类。它是**识别器，不是触发器**，只匹配已结算、且玩家已感知到的事件或景观：`key, op, actors, target, obj, door, place, clock_from, gloss（玩家口吻的看点）, stage（写法卡，只有修辞）, allowed（额外许可词，如“小貂”“仙人”；实现时去掉了“长剑”：它是兵器架上真剑的名字，许了它闸门就不再查那柄剑，比喻语境的放宽已够用）, lore（景观文字的 key）, once`。
 - **`scenarios/tianlong/wuliang.py`**：只做重构（把 `_entities/_relations/_profiles` 参数化）。`build_wuliang(seed)` 的指纹钉死不变。
 - **`scenarios/tianlong/commoner.py`（新，约 360 行）**：`build_wuliang_commoner(seed)`。
   - 新实体：`ashun, shanjiao, d_downhill, chabing, huozhezi, suiyin`。
@@ -353,7 +353,7 @@ B 的结构性弱点仍然存在：硬事实错误率 13%；私奔那对不在�
   - 另有写法卡：
     - `subdue_style`：掌门的点穴写成“点穴”，貂毒写成“毒发麻倒”。被制的人口还能言，手脚动弹不得。
     - `mink_strike`：灰白影子一闪。
-    - `torch_search`：火光与叫骂，只在真有 SOUND/SIGHT 感知时出现。
+    - `torch_search`：火光与叫骂，只在真有 SOUND/SIGHT 感知时出现。实现时改为随 `chase` 看点生效、与它同一组识别器（举火把逼近、堵住叫骂、向人打听）：内核的 SOUND 感知没有施动者，认不出是谁；只看 MOVE 又会把作罢后走回大殿的路过也当成追逐。
     - `moon_wall`、`kowtow_count`、`grab_and_miss`。
   - `DETAILS`：每处地点或陈设 3–5 条干净的细节。例如后院：窗纸 / 古井 / 小门门闩；后山：禁地石碑；蒲团：绣字 / 朽裂。
 - **`scenarios/tianlong/lore_commoner.py`（新，约 170 行）**：
@@ -419,7 +419,7 @@ B 的结构性弱点仍然存在：硬事实错误率 13%；私奔那对不在�
   - `stops_wait(beats, percepts, player) -> bool`：等待在玩家感知到看点的那个 tick 停下。
   - `witnessed(...)` 供 B1 使用。
   - `sky(clock, moments) -> str`：交给叙述者，例如“戌时，月亮还没出来”“月已升过东边峭壁”。
-  - 实现补充（M3）：`sky(clock, moments, start) -> Sky | None`（文字、是否入夜、月亮 none / rising / up；rising 只在月出那个 tick 落在本回合里；场景没有月出时刻返回 None，旧版不给天色、审计不查）。`staging(scenario, env, facets)` 另给 `details`；`dress(brief, st, lore)` 交给 SceneBrief——天色、看点都经它，因为引擎里只许会话调用 staging（test_isolation），gm.build_brief 不碰它。事件看点只认成功的，景观只在那段描写本回合初次交付时（lore_at 与 env.fresh 是唯一的一处换景）；同一回合认出几个，取场景表里靠后的那个作 focus。写法卡是 `Card(text, cues)`：由看点的 stage 点名，或由卡自己的识别器认出（点穴得手 status、只认看见或听见 senses；不计 B1、不停等待）；貂毒的写法随 mink_strike（只有貂咬中时才有“毒”这个状态），subdue_style 只管点穴；卡文是一句能照抄进正文的话，不用冒号（“叫骂：……”会被当成有人开口）。细节账本 facets 是给过的细节原文，与谈资账本同一契约（叙述之后记账、随下一次提交落库）。
+  - 实现补充（M3）：`sky(clock, moments, start, enclosed) -> Sky | None`（文字、是否入夜、月亮 none / rising / up；rising 只在月出那个 tick 落在本回合里；场景没有月出时刻返回 None，旧版不给天色、审计不查；玩家在看不见天的地方——Scenario.enclosed——文字只报时辰，月相照旧交给审计）。`staging(scenario, env, facets, here)` 另给 `details`（天黑透了、月亮还没出来时不给）；`dress(brief, st, lore)` 交给 SceneBrief——天色、看点都经它，因为引擎里只许会话调用 staging（test_isolation），gm.build_brief 不碰它。事件看点只认成功的，景观只在那段描写本回合初次交付时（lore_at 与 env.fresh 是唯一的一处换景）；同一回合认出几个，取场景表里靠后的那个作 focus。写法卡是 `Card(text, cues)`：由看点的 stage 点名，或由卡自己的识别器认出（点穴得手 status；不计 B1、不停等待——审查后 senses 去掉了：SOUND 感知没有施动者，它什么也认不出；火光与叫骂改随 chase 看点生效，识别器另可认原话或姿态里的字 words）；貂毒的写法随 mink_strike（只有貂咬中时才有“毒”这个状态），subdue_style 只管点穴；卡文是一句能照抄进正文的话，不用冒号（“叫骂：……”会被当成有人开口）。细节账本 facets 是给过的细节原文，与谈资账本同一契约（叙述之后记账、随下一次提交落库）。
 - **`runtime/session.py`**（先迁出约 150 行，再加约 70 行接线，终值约 710）：
   - `__init__`：`self._marks`、`self._acq`、`self._staged`、`self._facets` 由 `_state/_restore` 管理。
   - `_npc_split`：`due |= cast.wakes(...)`。
@@ -466,7 +466,7 @@ B 的结构性弱点仍然存在：硬事实错误率 13%；私奔那对不在�
   - `lore_keys` 接受 `moments`：时钟 ≥ moon 时优先取 `id@moon`。
   - `narrate_scene` 接受 `deadline`（绝对时刻）。
 - **`language/render.py`**（精度，每一条都对应 run6 的一个误杀样本）：
-  1. **比喻 / 幻象语境不算指称**：同一小句里名词前有 `似 / 像 / 如 / 仿佛 / 宛如 / 竟像 / 好似`，就不做实体检查（治“手中似握着长剑”）。景观卡的 `allowed` 同时把“长剑”“仙人”列为许可。
+  1. **比喻 / 幻象语境不算指称**：同一小句里名词前有 `似 / 像 / 如 / 仿佛 / 宛如 / 竟像 / 好似`，就不做实体检查（治“手中似握着长剑”）。景观卡的 `allowed` 同时把“长剑”“仙人”列为许可（M3 实现时只留“仙人”：“长剑”是世界里真剑的名字，比喻放宽已治住那句）。
   2. **回忆语境**：`记得 / 想起 / 方才 / 先前 / 那尊 / 那面` 与收幕段落里，**玩家亲眼见过**（`sketch.seen`）的实体可以点名，但不许给它定位或写动作（治“玉像”）。
   3. **出处扩大**：出处文本加入玩家见过的所有实体的 lore，不只是本回合新看见的，绣字原文因此能通过。
 - **`language/quotes.py`**：
@@ -660,6 +660,7 @@ B 的结构性弱点仍然存在：硬事实错误率 13%；私奔那对不在�
   - `test_said_before`：同一 NPC 的台词与他最近的台词 3-gram 重合 ≥0.6 时，提示词里带“别重复”，F3 计入。
 - **出口条件**：scripted 管线跑完普通人走查，G1 ≤ 5%，SEAM = 0，NAME = 0。
 - **实现补充（M3 出口）**：`scripts/walk_commoner.py`——叙述者是照提示词写的 ScriptedLLM（天色、事实清单、照录的原话与要说出口的话、景观、初见外观、细节，再加本回合点到的写法卡卡文），解释一律退回规则；走 §8.1 的跟随型 38 句（种子 7、11）与 sim_beats 的跟随型脚本化玩家（走到落幕）。走查里查出的一处误杀（照抄清单里带字的姿态“口中念念有词：……”被判 voice）已修（quotes._posed），修后 G1 = 0%、SEAM = 0、NAME = 0。
+- **实现补充（M3 审查）**：走查的叙述者也照写本回合的看点（它是交给模型的唯一一句自由文字，说的事须真、须过闸门）——由此查出 bargain 的看点“拿解药换段公子平安”点了那一回合不在场的段公子，改成“梁上的少女拿解药跟龚光杰讲和”。`chase` 不再认 MOVE，只认搜人时玩家真感知得到的那几下（Beat.words 认姿态里的“举着火把”），`torch_search` 随它生效；`whisper` 的 TELL 限在后院、只认闲话（替挑夫高声求饶不是私语）；天黑透了、月亮还没出来时查看不给细节；石洞、石室（Scenario.enclosed）里天色只报时辰、不提日月。
 
 ### M4：评测改造 + run7（1.5 天 + 一轮代理评测）
 
@@ -863,8 +864,8 @@ B 的结构性弱点仍然存在：硬事实错误率 13%；私奔那对不在�
 | beating | 对段誉的 ATTACK 成功，段誉受伤 |
 | marten | 钟灵对龚光杰的 ATTACK（obj 为 mink）成功，龚光杰中毒 |
 | bargain | 钟灵对龚光杰 USE antidote |
-| whisper | 私奔那对之间的 TELL（SPEECH 或低语的 SIGHT） |
-| chase | 18:40 之后，龚光杰在后院、后山或崖顶的 MOVE 或 SAY（SIGHT / SOUND / SPEECH） |
+| whisper | 私奔那对在后院的闲话 TELL（REMARK）或低声私语的姿态（实现：求情的 PLEAD 不算） |
+| chase | 18:40 之后，龚光杰在后院、后山或崖顶举火把逼近、叫骂（TAUNT）或向人打听（ASK）（实现：不认 MOVE——作罢后走回大殿也是 MOVE；SOUND 感知没有施动者，认不出） |
 | cliff | 段誉 MOVE，门为 d_cliff |
 | moon | 玩家在剑湖畔，时钟 ≥ MOONRISE，`yubi@moon` 景观上演 |
 | crack | d_cave 被发现（任何人查见，玩家在场） |

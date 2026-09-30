@@ -6,8 +6,8 @@
           打印每回合的丢句、SEAM、NAME 与三项合计（G1 丢句比例 ≤ 5%、SEAM = 0、NAME = 0）；--show 另打印每回合玩家所见；
           也是可导入的库：PLAYTHROUGH（plan §8.1 跟随型 38 句）、echo()（脚本化叙述者的答案）、walk() -> list[Turn]、metrics()
 [POS]: scripts 的 M3 出口检查：scripted 管线走一遍普通人版。叙述者是 ScriptedLLM，它的“答案”照提示词写：天色、事实清单、
-       照录的原话与要说出口的话（写成“某某道：“……””）、眼前的景象、初见外观、这回多看出的细节，再加上本回合点到的写法卡卡文
-       ——也就是“模板正文 + 看点卡写法”，全部交给真实的闸门逐句验收。不解释玩家输入（带 schema 的
+       本回合的看点（照写成一句）、照录的原话与要说出口的话（写成“某某道：“……””）、眼前的景象、初见外观、这回多看出的细节，
+       再加上本回合点到的写法卡卡文——也就是“模板正文 + 看点 + 看点卡写法”，全部交给真实的闸门逐句验收。不解释玩家输入（带 schema 的
        调用一律 LLMUnavailable，解释退回规则），迟到先声关掉（逐字可复现）。
        G1 = 丢句 / (丢句 + 交付的句子)；SEAM = 模型最后一句之后还追加了模板行的回合数（补句插在钩子之前不算）；
        NAME = 交付的句子里出现玩家账本当时（叙述开始那一刻：听见的原话已学、交付的正文还没学）叫不出名字的人的本名或带名别称的句数
@@ -73,6 +73,8 @@ def echo(prompt: str, system: str | None, schema: object = None) -> str:
         title, _, rest = part.partition("\n")
         if title.startswith("天色"):
             head.append(title.split("：", 1)[1])
+        elif title.startswith("本回合的看点"):                # 看点也照写成一句：它说的事须真、须过得了闸门
+            body.append(title.split("：", 1)[1])
         elif title.startswith("本回合玩家感知到的事实"):
             body += [x for x in rest.splitlines() if not x.startswith("（除下列言语外") and not x.startswith("（无事发生")]
         elif title.startswith(("照录的原话", "要说出口的话")):

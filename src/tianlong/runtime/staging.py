@@ -6,15 +6,16 @@
           Staging / staging()（本回合的看点、写法卡、景观、许可词、天色与细节）、dress()（把它们交给 SceneBrief）
 [POS]: runtime 的看点识别与舞台调度：真相只用于呈现——这里只读玩家自己的感知（已结算的事件、环顾所见），从不读世界真相，
        也从不进入任何 NPC 的 Situation（只由会话与评测脚本调用）。识别器由场景给出（Scenario.beats）：
-       事件看点按行动/施动者/对象/物件/门/地点/言语行为/原因/得手后的状态/感知方式匹配（缺省只认成功的）；景观看点（lore）只看环顾：
+       事件看点按行动/施动者/对象/物件/门/地点/言语行为/原因/得手后的状态/原话或姿态里的字匹配（缺省只认成功的）；景观看点（lore）只看环顾：
        玩家在该处、时钟已到、看得见那件陈设。once 的看点一局只让等待停一次（已停过的记在会话运行态 staged 里）。
        景观看点认得出的那一刻，会话经 lore_at() 交付的正是那段描写（月下玉璧的舞剑人影），看点与正文不相矛盾。
        staging() 给叙述者的一切都只在“真发生了、玩家也感知到了”时出现：事件看点须是成功的（没得手的一掌不是看点），
        景观看点须是那段描写本回合初次交付（lore_at 与 env.fresh 是唯一的一处换景：景观不另起第二套）；本回合的看点取认出的
        识别器里在场景表中最靠后的那个（表按剧情推进排）；写法卡来自认出的看点（Beat.stage）与卡自己的识别器（Card.cues）；
        细节：玩家这一步查看某处或某件陈设（INSPECT 成功），给出它的卡组里下一条还没给过的（facets 是一幕里已给过的细节原文，
-       会话记账、随运行态往返），一回合至多一条。天色 sky() 只在场景有月出时刻时给（旧版 None：天色不查）：
-       夜按内核的夜（is_night），月亮在月出之前 none、月出那个 tick 所在的回合 rising、之后 up
+       会话记账、随运行态往返），一回合至多一条；天黑透了、月亮还没出来时不给（看不出来）。天色 sky() 只在场景有月出时刻时给
+       （旧版 None：天色不查）：夜按内核的夜（is_night），月亮在月出之前 none、月出那个 tick 所在的回合 rising、之后 up；
+       玩家在看不见天的地方（Scenario.enclosed：石洞、石室）文字只报时辰、不提日月，夜与月相照旧交给审计
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -52,7 +53,7 @@ def matches(beat: Beat, p: Percept, player: str, moments: Mapping[str, int] | No
         return (p.modality == Modality.SCENE and (not beat.place or _where(p, player) in beat.place)
                 and any(f.holds and f.prop.subject == eid for f in p.facts))
     ev = p.event
-    if ev is None or p.modality == Modality.SCENE or ev.actor is None or (beat.senses and p.modality not in beat.senses):
+    if ev is None or p.modality == Modality.SCENE or ev.actor is None or beat.words not in (ev.utterance or ""):
         return False
     if beat.status and not any(f.holds and f.prop.is_attr and f.prop.attr_key == beat.status for f in p.facts):
         return False
@@ -109,20 +110,23 @@ def witnessed(beats: Iterable[Beat], percepts: Iterable[Percept], player: str,
 # ============================================================
 
 
-def sky(clock: int, moments: Mapping[str, int], start: int | None = None) -> Sky | None:
+def sky(clock: int, moments: Mapping[str, int], start: int | None = None, enclosed: bool = False) -> Sky | None:
     """clock 时刻的天色；start 是这一回合开始时的时钟（月出那个 tick 落在 (start, clock] 里就是 rising）。
-    场景没有月出时刻（旧版、仓库）返回 None：叙述不给天色，审计也不查。"""
+    场景没有月出时刻（旧版、仓库）返回 None：叙述不给天色，审计也不查。
+    enclosed：玩家在看不见天的地方（石洞、石室）——文字只报时辰、不提日月，夜与月相照旧交给审计。"""
     moon = moments.get("moon")
     if moon is None:
         return None
     when, night = in_words(clock_label(clock)), is_night(clock)
     if clock >= moments.get("dawn", 1 << 60):
-        return Sky(f"{when}，天边已经泛白", night, MOON_UP)
-    if clock < moon:
-        return Sky(f"{when}，{'天已黑透' if night else '天色将暗未暗'}，月亮还没出来", night, MOON_NONE)
-    if start is not None and start < moon:
-        return Sky(f"{when}，月亮正从东边的山头后升起", night, MOON_RISING)
-    return Sky(f"{when}，月已升过东边的山头", night, MOON_UP)
+        out = Sky(f"{when}，天边已经泛白", night, MOON_UP)
+    elif clock < moon:
+        out = Sky(f"{when}，{'天已黑透' if night else '天色将暗未暗'}，月亮还没出来", night, MOON_NONE)
+    elif start is not None and start < moon:
+        out = Sky(f"{when}，月亮正从东边的山头后升起", night, MOON_RISING)
+    else:
+        out = Sky(f"{when}，月已升过东边的山头", night, MOON_UP)
+    return replace(out, text=f"{when}，四下不见天日") if enclosed else out
 
 
 # ============================================================
@@ -146,8 +150,8 @@ def _settled(beats: Iterable[Beat], env: TurnEnvelope, sc: Scenario, player: str
     return tuple(b for b in found if not b.lore or b.lore in env.fresh)
 
 
-def staging(scenario: Scenario, env: TurnEnvelope, facets: Collection[str] = ()) -> Staging:
-    """本回合交给叙述者的舞台调度。facets：一幕里已经给过的细节原文（会话记账）。"""
+def staging(scenario: Scenario, env: TurnEnvelope, facets: Collection[str] = (), here: str | None = None) -> Staging:
+    """本回合交给叙述者的舞台调度。facets：一幕里已经给过的细节原文（会话记账）；here：玩家（自以为）此刻身在何处。"""
     player = scenario.player or ""
     rank = {b.key: i for i, b in enumerate(scenario.beats)}          # 同一个看点有几条识别器：按最后一条排
     beats = _settled(scenario.beats, env, scenario, player)
@@ -157,11 +161,12 @@ def staging(scenario: Scenario, env: TurnEnvelope, facets: Collection[str] = ())
     looked = [ev.target for p in env.percepts if (ev := p.event) is not None and p.modality == Modality.SELF
               and ev.actor == player and ev.kind == Op.INSPECT.value and ev.outcome == Outcome.SUCCESS
               and ev.target in scenario.details]
-    fresh = [d for t in looked[:1] for d in scenario.details[t] if d not in facets][:1]
     end = env.ticks[-1] if env.ticks else env.start_clock
+    now = sky(end, scenario.moments, env.start_clock, here in scenario.enclosed)
+    dark = now is not None and now.night and now.moon == MOON_NONE          # 天黑透了、月亮还没出来：看不出细节
+    fresh = [] if dark else [d for t in looked[:1] for d in scenario.details[t] if d not in facets][:1]
     return Staging(focus.gloss if focus is not None else None, tuple(dict.fromkeys(k for k in stage if k in scenario.cards)),
-                   tuple(b.lore for b in beats if b.lore), frozenset(a for b in beats for a in b.allowed),
-                   sky(end, scenario.moments, env.start_clock), tuple(fresh))
+                   tuple(b.lore for b in beats if b.lore), frozenset(a for b in beats for a in b.allowed), now, tuple(fresh))
 
 
 def dress(brief: SceneBrief, st: Staging, lore: Mapping[str, str]) -> SceneBrief:

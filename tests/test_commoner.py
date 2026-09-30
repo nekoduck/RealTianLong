@@ -8,7 +8,7 @@
           opening（被动玩家 15 tick 内：龚光杰对段誉叫阵或出手、钟灵出手打龚光杰、段誉从不动手）、bargain（20 个种子里 ≥16 个：
           钟灵离开大殿前没被制、龚光杰的毒由她的 USE 解开、没人从她身上搜走解药、左子穆说了 AGREE）、story_runs_offscreen
           （被动玩家下段誉 ≥12/20 到琅嬛、≥8/20 到澜沧江；纪事只写真相里发生过的事）、follower_beats（跟随型 ≥16/20 目击 ≥8/11 看点）、
-          divergence 1–5（撒谎引开龚光杰、抢先拿走帛卷则段誉只能恳求、带段誉去山道就不跳崖、落单撞见私奔被打而求饶有人求情、
+          divergence 1–5（撒谎引开龚光杰、抢先拿走帛卷则段誉只能恳求、带段誉去山道就不跳崖、落单撞见私奔被打而求饶有人求情（那几回合的看点不是后院私语）、
           两人同在则不灭口）、one_way_restraint（龚光杰从不经断崖、并说出作罢的话）、guard_supper（20:30 下山成功落幕“第一幕终 · 下山”，
           18:00 挨一下过不去，塞了碎银放行）；统计版标 slow，各留一个单种子冒烟版；stage() 供别的测试把人挪到某处、把时钟拨到某刻重新建档；
           审查回归：带字姿态只写成看得见的那一行（不做成“对众人道”、不套引号），马五德的差遣是 EXPLAIN（阿顺对东家不降、
@@ -278,11 +278,12 @@ def test_divergence_lone_witness_is_attacked_and_mercy_holds_the_blade():
     s = _lone_witness({})
     while s.authority.head().target("ganguanghao", Rel.AT) != "houshan" and s.authority.head().clock < at(1, 19, 30):
         s.turn("等待")
-    s.turn("向干光豪求饶：饶命啊")                       # 那一对一进后山就开口求饶
+    turns = [s.turn("向干光豪求饶：饶命啊")]               # 那一对一进后山就开口求饶
     assert _struck(s), "19:21 独自在后山撞见私奔那对：灭口"
     plea = max(e.tick for e in _events(s, "ashun", Op.TELL))
-    for _ in range(4):
-        s.turn("等待")
+    turns += [s.turn("等待") for _ in range(4)]
+    assert not [r.brief.focus for r in turns if "whisper" in r.beats or r.brief.focus == "后院里有人低声私语"], \
+        "后山上替挑夫高声求饶不是后院私语（看点不能把这一回合说成私语、把挨打一笔带过）"
     assert any(e.op == Op.TELL and e.intent.social == Social.PLEAD and e.intent.target == "ganguanghao"
                for e in _events(s, "geguangpei")), "西宗女弟子替他求情"
     assert not [e for e in _events(s, "ganguanghao", Op.ATTACK) if e.tick > plea], "干光豪不再动手"

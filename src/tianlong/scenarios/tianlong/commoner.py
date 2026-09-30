@@ -3,7 +3,7 @@
          scene_percept，scenarios/base 的 Scenario / Ending / Variant，scenarios/tianlong/wuliang 的 entities / relations / layout /
          profiles / DOORS / PLACEMENT / OWNS / START / NIGHTFALL / SECT / EAST / WEST / SHENNONG / LOVERS / SECRETS，
          scenarios/tianlong/lore_commoner 的文字素材，scenarios/tianlong/drives_c 的 DRIVES_C 与时刻，scenarios/tianlong/stagecraft 的 BEATS_C / CARDS_C / DETAILS_C
-[OUTPUT]: 对外提供 build_wuliang_commoner()：无量山·普通人版（世界 ID wuliang_c），ENDINGS_C / SECRETS_C / CHRONICLE / EPITHETS / MOMENTS
+[OUTPUT]: 对外提供 build_wuliang_commoner()：无量山·普通人版（世界 ID wuliang_c），ENDINGS_C / SECRETS_C / CHRONICLE / EPITHETS / MOMENTS / ENCLOSED
 [POS]: scenarios/tianlong 第一幕的普通人版：玩家是马五德茶号的伙计阿顺（martial .05），段誉降为同行的 NPC（没有目标，
        整条弧线由驱力承载，不还手）。世界在旧版之上加了阿顺、无量山脚（经山道尽头神农帮扎的木栅关卡相连：栅门上锁，钥匙在帮众身上——
        他们守着时一个挑夫闯不过去，夜饭换班或收了碎银才开）、茶饼、火折子、碎银与关卡钥匙。
@@ -74,6 +74,7 @@ from tianlong.scenarios.tianlong.wuliang import (
 # ============================================================
 
 MOMENTS = {"night": NIGHTFALL, "moon": MOONRISE, "dawn": DAWN}
+ENCLOSED = frozenset({"shidong", "langhuan"})      # 山腹里的石洞与石室：看不见天，天色只报时辰
 DOORS_C = {**DOORS, "d_downhill": ("shandao", "shanjiao")}
 PLACEMENT_C = {**PLACEMENT, "ashun": "hall", "chabing": "ashun", "huozhezi": "ashun", "suiyin": "ashun",
                "guanyao": "shennong"}
@@ -195,5 +196,6 @@ def build_wuliang_commoner(seed: int = 7) -> Scenario:
     return Scenario("wuliang_c", state, _profiles(), priors, setting=SETTING_C, lore=LORE_C, aliases=ALIASES_C,
                     hints=HINTS_C, style=STYLE, guide=GUIDE_C, endings=ENDINGS_C, secrets=SECRETS_C, guide_at=GUIDE_AT_C,
                     common_words=COMMON_WORDS_C, drives=DRIVES_C, epithets=EPITHETS, introduced=_introduced(),
-                    moments=MOMENTS, beats=BEATS_C, cards=CARDS_C, chronicle=CHRONICLE, details=DETAILS_C, kowtow_ticks=6)
+                    moments=MOMENTS, beats=BEATS_C, cards=CARDS_C, chronicle=CHRONICLE, details=DETAILS_C, kowtow_ticks=6,
+                    enclosed=ENCLOSED)
 

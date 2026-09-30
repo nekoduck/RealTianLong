@@ -5,9 +5,10 @@
          language/voice_prompt 的 system_prompt，persistence 的 TurnEnvelope，tests/test_commoner 的 stage（把人挪到某处、把时钟拨到某刻）
 [OUTPUT]: 看点、写法卡、景观、细节与天色的验收（plan §7 M3）：
           only_settled（看点只在匹配的事件成功、且在玩家感知里时出现：同一回合的感知把那一掌改成落空，focus 为 None；
-          玩家不在场，开场的叫阵与那一掌都不是他的看点；景观只在那段描写本回合初次交付时；火光与叫骂只认看见或听见，只听见说话不给）、
+          玩家不在场，开场的叫阵与那一掌都不是他的看点；景观只在那段描写本回合初次交付时；火光与叫骂只认搜人时那几下、看点与写法卡同进同退，作罢后路过不算；
+          替人求饶不是后院私语；许可词不是世界里实体的名字或别称；天黑透了、月亮还没出来时不给细节）、
           gate_clean（每一张写法卡、每一条细节、每一处景观：在它生效的场面里把卡文、细节原文或景观原文与许可词附在模板叙述后面，
-          交给真实的叙述闸门，零违规、零丢句）、sky（月出之前 none、月出那一回合 rising、之后 up；旧版 None）、
+          交给真实的叙述闸门，零违规、零丢句）、sky（月出之前 none、月出那一回合 rising、之后 up；旧版 None；石洞石室里只报时辰）、
           提示词的四段（看点、写法、眼前的景象、细节；卡文在系统提示的目录里；景观不再当初见外观列一遍）与旧版逐字不变
 [POS]: tests 的舞台调度层：真相只用于呈现——看点只读玩家本回合的感知，写法只加修辞、不加事实
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -127,7 +128,7 @@ def test_each_card_fires_in_its_scene():
     marten = staging.staging(*_contexts()["mink_strike"])
     assert marten.focus == "一道灰影扑上龚光杰，他中了貂毒" and marten.allowed == {"小貂"}
     moon = staging.staging(*_contexts()["moon_wall"])
-    assert moon.spectacle == ("yubi@moon",) and moon.allowed == {"仙人", "长剑"} and moon.sky.moon == MOON_RISING
+    assert moon.spectacle == ("yubi@moon",) and moon.allowed == {"仙人"} and moon.sky.moon == MOON_RISING
     assert staging.staging(*_contexts()["subdue_style"]).focus is None, "写法卡的识别器不是看点：不计 B1、不给看点"
 
 
@@ -141,12 +142,44 @@ def test_only_settled_events_are_staged():
     assert again.focus is None and again.spectacle == () and not again.cards, "月下玉璧只在那段描写初次交付时上演"
 
 
-def test_torch_needs_sight_or_sound():
-    sc = _at({ME: "houshan", "gongguangjie": "houshan", "duanyu": "houshan"}, HUNT + 5)
-    heard = _env([_seen(sc, "houshan", Op.TELL, "gongguangjie", "duanyu", modality=Modality.SPEECH,
-                        utterance="酸秀才，这回看你还往哪里逃！", social=Social.TAUNT)], HUNT + 5)
-    st = staging.staging(sc, heard)
-    assert st.focus == "火把与叫骂声追了过来" and "torch_search" not in st.cards, "只听见说话：看点照认，火光不写"
+def test_torch_only_while_the_search_is_on():
+    """火把与叫骂只认搜人时那几下（举火把逼近、堵住叫骂、向人打听），看点与写法卡同进同退；只路过、作罢摔火把都不算。"""
+    sc = _at({ME: "houyuan", "gongguangjie": "houyuan", "duanyu": "houyuan"}, HUNT + 5)
+    gg = "gongguangjie"
+    searching = [_seen(sc, "houyuan", Op.TELL, gg, "duanyu", modality=Modality.SPEECH,
+                       utterance="酸秀才，这回看你还往哪里逃！", social=Social.TAUNT),
+                 _seen(sc, "houyuan", Op.ASK, gg, ME, modality=Modality.SPEECH, utterance="段誉在哪里？"),
+                 _seen(sc, "houyuan", Op.WAIT, gg, utterance="举着火把逼上一步，冷笑着堵住去路")]
+    for p in searching:
+        st = staging.staging(sc, _env([p], HUNT + 5))
+        assert st.focus == "火把与叫骂声追了过来" and st.cards == ("torch_search",), p.event
+    quit_ = [_seen(sc, "houyuan", Op.MOVE, gg, "hall", "d_corridor"),
+             _seen(sc, "houyuan", Op.WAIT, gg, utterance="把火把往地上一掼：“哼，算那酸秀才命大！”")]
+    for p in quit_:
+        st = staging.staging(sc, _env([p], HUNT + 30))
+        assert st.focus is None and st.cards == (), ("作罢之后走回大殿只是路过：没有追逐", p.event)
+
+
+def test_whisper_is_the_back_yard_murmur_only():
+    """私语只认后院里那一对的闲话与低语的姿态：后山上替挑夫高声求饶（plan 分歧 4）不是私语。"""
+    lovers = {"ganguanghao": "houshan", "geguangpei": "houshan"}
+    for place in ("houshan", "houyuan"):
+        sc = _at({ME: place, **{k: place for k in lovers}}, at(1, 19, 21))
+        plea = _seen(sc, place, Op.TELL, "geguangpei", "ganguanghao", modality=Modality.SPEECH,
+                     utterance="师哥，他一个挑茶的，饶了他吧！", social=Social.PLEAD)
+        assert staging.staging(sc, _env([plea], at(1, 19, 21))).focus is None, place
+    sc = _at({ME: "houyuan", **{k: "houyuan" for k in lovers}}, at(1, 18, 20))
+    murmur = _seen(sc, "houyuan", Op.WAIT, "ganguanghao", utterance="凑在她耳边低声道：“……天黑了再走……”",
+                   social=Social.REMARK)
+    assert staging.staging(sc, _env([murmur], at(1, 18, 20))).focus == "后院里有人低声私语"
+
+
+def test_allowed_words_are_not_world_names():
+    """许可词只许点名：它若是世界里某个实体的名字或别称（“长剑”是兵器架上的真剑），闸门就不再查那件真东西。"""
+    universe = {e.name for e in SC.state.entities.values()} | {a for al in SC.aliases.values() for a in al} | {
+        a for al in SC.gate_aliases.values() for a in al}
+    allowed = {w for b in BEATS_C for w in b.allowed} | {w for c in CARDS_C.values() for b in c.cues for w in b.allowed}
+    assert allowed and not allowed & universe, allowed & universe
 
 
 def _session(sc: Scenario, llm=None):
@@ -237,6 +270,21 @@ def test_sky_by_the_clock():
     assert staging.sky(MOONRISE, m, MOONRISE - 30).moon == MOON_RISING, "月出那个 tick 落在这一回合里"
     assert staging.sky(MOONRISE + 5, m, MOONRISE).moon == MOON_UP and staging.sky(MOONRISE, m).moon == MOON_UP
     assert staging.sky(MOONRISE, {}) is None and staging.staging(build_wuliang(7), _env([], at(1, 18))).sky is None
+    for place in SC.enclosed:                           # 山腹里看不见天：只报时辰，不提日月；月相照旧交给审计
+        shut = staging.staging(SC, _env([], MOONRISE - 30, MOONRISE), here=place).sky
+        assert shut.moon == MOON_RISING and not any(w in shut.text for w in ("月", "日头", "天边")), shut
+    assert SC.enclosed == {"shidong", "langhuan"} and "月亮正从" in staging.staging(SC, _env([], MOONRISE - 30, MOONRISE),
+                                                                                     here="jianhu").sky.text
+
+
+def test_no_details_in_the_dark():
+    """天黑透了、月亮还没出来：查看也看不出细节（湖底的小鱼、玉璧的倒影都是要光的）；有了月光或天没黑再给。"""
+    for when, given in ((at(1, 19, 10), False), (MOONRISE + 5, True), (at(1, 18, 20), True)):
+        sc = _at({ME: "jianhu"}, when)
+        looked = make_percept(sc.state, Modality.SELF, PerceivedEvent(Op.INSPECT.value, "jianhu", ME, "yubi", None,
+                                                                      Outcome.SUCCESS), vantage="jianhu")
+        st = staging.staging(sc, _env([looked, scene_percept(sc.state, ME)], when), here="jianhu")
+        assert bool(st.details) == given, (when, st.details)
 
 
 def test_waiting_for_the_moon_rises_it_once():

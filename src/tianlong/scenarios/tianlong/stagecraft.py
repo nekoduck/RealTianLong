@@ -1,20 +1,22 @@
 """
-[INPUT]: 依赖 core 的 Modality / Op / Social，scenarios/base 的 Beat / Card，scenarios/tianlong/wuliang 的 LOVERS，scenarios/tianlong/drives_c 的 HUNT
+[INPUT]: 依赖 core 的 Op / Social，scenarios/base 的 Beat / Card，scenarios/tianlong/wuliang 的 LOVERS，scenarios/tianlong/drives_c 的 HUNT
 [OUTPUT]: 对外提供 BEATS_C（普通人版的 11 个看点识别器，plan 附录 A）、BEAT_KEYS（看点的次序）、CARDS_C（写法卡目录）、
           DETAILS_C（地点与陈设的细节卡组）
 [POS]: scenarios/tianlong 普通人版的看点、写法与细节：识别器，不是触发器——只匹配已结算、且玩家已感知到的事件或景观（runtime/staging 求值），
-       供 B1 计数、“等待在看点处停下”与叙述的看点。同一个看点可以有几条识别器（叫阵或动手；私语是说话或带字的姿态）；
+       供 B1 计数、“等待在看点处停下”与叙述的看点。同一个看点可以有几条识别器（叫阵或动手；私语是后院里的闲话或带字的姿态——替人求饶的高声不算）；
        识别器按剧情推进排列，同一回合认出几个时取靠后的那个作本回合的看点（gloss 是玩家口吻的一句）。
        写法卡只有修辞、不加事实（文字须在它生效的场面里过得了叙述闸门，tests/test_stagecraft 逐张验）：
-       貂的写法随貂咬中生效（毒发麻倒也在这里——只有貂毒），点穴的写法由它自己的识别器认点穴得手，火光与叫骂只在真看见或听见搜人时，
-       扑空只认钟灵在琅嬛的那个姿态。卡文是一句能照抄进正文的话（不用冒号：“叫骂：……”会被当成有人开口）。许可词只许点名：月下舞剑的人影说成“仙人”“长剑”，貂说成“小貂”。
+       貂的写法随貂咬中生效（毒发麻倒也在这里——只有貂毒），点穴的写法由它自己的识别器认点穴得手，火光与叫骂随追逐看点生效（同一组识别器：举火把逼近、堵住叫骂、向人打听，
+       只路过不算——作罢后走回大殿也是路过，看点与写法卡不会一个说有火把一个说没有），
+       扑空只认钟灵在琅嬛的那个姿态。卡文是一句能照抄进正文的话（不用冒号：“叫骂：……”会被当成有人开口）。许可词只许点名：月下舞剑的人影说成“仙人”，貂说成“小貂”；
+       许可词不得是世界里实体的名字或别称（“长剑”是兵器架上的真剑：许了它，闸门就不再查那柄剑）。
        细节只写看得见的静物：不写人、不写会变的状态（门开没开）、不写线索之外的事，不点别处的名字，不写日月
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
 from __future__ import annotations
 
-from tianlong.core import Modality, Op, Social
+from tianlong.core import Op, Social
 from tianlong.scenarios.base import Beat, Card
 from tianlong.scenarios.tianlong.drives_c import HUNT
 from tianlong.scenarios.tianlong.wuliang import LOVERS
@@ -22,19 +24,23 @@ from tianlong.scenarios.tianlong.wuliang import LOVERS
 _GG, _DY, _ZL = ("gongguangjie",), ("duanyu",), ("zhongling",)
 _SCROLLS = ("scroll_lb", "scroll_bm")
 _SEARCHED = ("houyuan", "houshan", "yading")
+# 搜人时玩家真感知得到的那几下（都只在举了火把、还没作罢时才有）：举火把逼近、堵住叫骂、向人打听；
+# 只路过不算——作罢之后走回大殿也是这样路过
+_HUNTING = ((Op.WAIT, None, "举着火把"), (Op.TELL, Social.TAUNT, ""), (Op.ASK, None, ""))
 
 BEATS_C: tuple[Beat, ...] = (
     Beat("challenge", Op.TELL, _GG, _DY, social=Social.CHALLENGE, gloss="龚光杰冲着段公子叫阵"),
     Beat("challenge", Op.ATTACK, _GG, _DY, success=False, gloss="龚光杰对段公子动手"),
     Beat("beating", Op.ATTACK, _GG, _DY, gloss="段公子挨了龚光杰一掌"),
     Beat("marten", Op.ATTACK, _ZL, _GG, gloss="一道灰影扑上龚光杰，他中了貂毒", stage=("mink_strike",), allowed=("小貂",)),
-    Beat("bargain", Op.USE, _ZL, _GG, obj="antidote", gloss="梁上的少女拿解药换段公子平安"),
-    Beat("whisper", Op.TELL, LOVERS, LOVERS, gloss="后院里有人低声私语"),
+    Beat("bargain", Op.USE, _ZL, _GG, obj="antidote", gloss="梁上的少女拿解药跟龚光杰讲和"),
+    Beat("whisper", Op.TELL, LOVERS, LOVERS, place=("houyuan",), social=Social.REMARK, gloss="后院里有人低声私语"),
     Beat("whisper", Op.WAIT, LOVERS, place=("houyuan",), social=Social.REMARK, gloss="后院里有人低声私语"),
-    Beat("chase", None, _GG, place=_SEARCHED, clock_from=HUNT, gloss="火把与叫骂声追了过来"),
+    *(Beat("chase", op, _GG, place=_SEARCHED, clock_from=HUNT, social=social, words=words, gloss="火把与叫骂声追了过来",
+           stage=("torch_search",)) for op, social, words in _HUNTING),
     Beat("cliff", Op.MOVE, _DY, door="d_cliff", gloss="段公子攀着藤萝跳下断崖"),
     Beat("moon", place=("jianhu",), clock_from="moon", lore="yubi@moon", once=True, gloss="月光照上玉璧，壁上似有仙人舞剑",
-         stage=("moon_wall",), allowed=("仙人", "长剑")),
+         stage=("moon_wall",), allowed=("仙人",)),
     Beat("crack", Op.INSPECT, door="d_cave", place=("jianhu",), gloss="玉璧旁露出一道石缝"),
     Beat("kowtow", Op.WAIT, place=("langhuan",), social=Social.SUBMIT, gloss="有人对着玉像磕头", stage=("kowtow_count",)),
     Beat("scroll", Op.TAKE, target=_SCROLLS, gloss="蒲团里的帛卷被人取了出来"),
@@ -51,9 +57,7 @@ CARDS_C: dict[str, Card] = {
         "点穴就写点穴，一指点去，被点中的人登时手脚动弹不得，嘴里却还说得出话，眼珠也还转得动。",
         cues=(Beat("subdue_style", Op.ATTACK, status="subdued"),)),
     "mink_strike": Card("貂扑出时只见一道灰白的影子一闪，快得看不清；貂毒写成毒发麻倒，被咬的地方又麻又胀，手脚渐渐不听使唤。"),
-    "torch_search": Card(
-        "搜人的动静写成火光与叫骂，火把的光一晃一晃，粗声的叫嚷时远时近。",
-        cues=(Beat("torch_search", None, _GG, place=_SEARCHED, clock_from=HUNT, senses=(Modality.SIGHT, Modality.SOUND)),)),
+    "torch_search": Card("搜人的动静写成火光与叫骂，火把的光一晃一晃，粗声的叫嚷时远时近。"),
     "moon_wall": Card("月下的玉璧写成光与影，壁上的人影似动非动，衣袂飘飘，像有仙人在壁上舞剑，看得人出了神。"),
     "kowtow_count": Card("磕头写成一下一下地数，额头碰着地面，咚的一声，又是一声。"),
     "grab_and_miss": Card(

@@ -84,5 +84,5 @@ class SceneBrief:
     cards: tuple[str, ...] = ()              # 写法卡的编号（卡文在系统提示的目录里）：只加修辞，不加事实
     spectacle: tuple[str, ...] = ()          # 眼前的景象（景观 lore 原文，月下玉璧）：算出处
     details: tuple[str, ...] = ()            # 这回合查看时多看出的一处细节（细节卡组原文）：算出处
-    allowed: frozenset[str] = frozenset()    # 额外许可词（“仙人”“长剑”）：只许点名，不许状态
+    allowed: frozenset[str] = frozenset()    # 额外许可词（“仙人”“小貂”）：只许点名，不许状态
     people: tuple[tuple[str, str], ...] = () # (别称, 称呼)：本回合开口的人在正文里的别称（“钟姑娘”→“钟灵”），台词账本据此归属
