@@ -205,7 +205,9 @@ def _answer(od: Path, key: str, text: str) -> str:
         path = od.parent / "interp_answers.json"
         rows = json.loads(path.read_text("utf-8")) if path.exists() else []
         rows = [r for r in rows if r["input"] != pending["input"]] + [{"input": pending["input"], "json": text}]
-        path.write_text(json.dumps(rows, ensure_ascii=False, indent=1), "utf-8")
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")         # 几个会话并行作答：原子替换，文件不会写坏
+        tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=1), "utf-8")
+        os.replace(tmp, path)
         pend.unlink()
         return f"saved interp answer for {pending['input']!r} ({key})"
     if pending is None or pending["call"] != len(got):
