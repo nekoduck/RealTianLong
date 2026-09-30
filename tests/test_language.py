@@ -104,10 +104,10 @@ def test_narrator_sees_only_player_percepts(authority, act):
     text = Narrator(llm).narrate("player", [o.percept for o in r.observations_of("player")], store.entities)
     assert text == "守卫走了进来。"
     prompt = llm.calls[0]
-    assert "守卫走向仓库" in prompt and "账簿" not in prompt and "船长" not in prompt
+    assert "守卫经仓库大门来到仓库" in prompt and "账簿" not in prompt and "船长" not in prompt
     fallback = Narrator(FakeLLM(fail=True)).narrate("player", [o.percept for o in r.observations_of("player")],
                                                    store.entities)
-    assert "看见守卫走向仓库" in fallback and "我" not in fallback
+    assert "看见守卫经仓库大门来到仓库" in fallback and "我" not in fallback
 
 
 
@@ -121,7 +121,7 @@ def test_narrator_orders_lapse_first_and_command_is_only_intent(authority, act):
     assert Narrator().narrate("player", [], store.entities, lapse="第1日 19:00").endswith("（不觉已是第1日 19:00）")
     llm = FakeLLM("……")
     Narrator(llm).narrate("player", percepts, store.entities, command="飞上房梁")
-    assert llm.calls[0].startswith("玩家的输入：飞上房梁") and "守卫走向仓库" in llm.calls[0]
+    assert llm.calls[0].startswith("玩家的输入：飞上房梁") and "守卫经仓库大门来到仓库" in llm.calls[0]
 
 def test_speaker_keeps_proposition_on_failure():
     names = build_warehouse()

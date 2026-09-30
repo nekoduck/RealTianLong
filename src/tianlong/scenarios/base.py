@@ -1,6 +1,7 @@
 """
 [INPUT]: 依赖 core 的 WorldState / Percept / Profile
-[OUTPUT]: 对外提供 Scenario（初始世界 + 角色设定 + 初始认知 + 文风/外观描写/别称 + 逐级提示 guide + 结局 endings + 秘密词表 secrets）、Ending
+[OUTPUT]: 对外提供 Scenario（初始世界 + 角色设定 + 初始认知 + 文风/外观描写/别称（common_words 只供解析）+ 逐级提示 guide（guide_at 按所在处定起点）
+          + 结局 endings + 秘密词表 secrets）、Ending
 [POS]: scenarios 的容器类型；初始认知以“过去的感知”给出，于是信念从第一刻起就只有一个来源——感知，没有“直接注入信念”的后门
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -39,6 +40,8 @@ class Scenario:
     guide: tuple[str, ...] = ()        # 逐级提示（/hint、“我该做什么”）：由浅入深，只点方向不给步骤；玩家目标见其 Profile.goals
     endings: tuple[Ending, ...] = ()   # 本幕的结局：玩家抵达某地即落幕，终章据事件日志收束并揭晓真相
     secrets: tuple[str, ...] = ()      # 剧情秘密的说法（正则片段，如“私奔”）：只交给叙述闸门，玩家没听说过就不许写进正文
+    guide_at: Mapping[str, int] = field(default_factory=dict)   # 玩家身在某地时提示至少从第几条说起（走过的路不再提）
+    common_words: frozenset[str] = frozenset()  # 别称里同时是普通名词的（“石壁”）：只供解析，闸门不据此拒绝
 
     @property
     def player(self) -> str | None:

@@ -1,5 +1,5 @@
 """
-[INPUT]: 依赖 runtime/authority 的 WorldAuthority / Settlement，runtime/versions 的 current_versions / check_save，
+[INPUT]: 依赖 runtime/authority 的 WorldAuthority / Settlement，runtime/versions 的 current_versions / check_save，runtime/talk 的谈资账本，
          runtime/gm 的主持层纯函数（gm_command / companions / salient / build_brief / self_view / goal_text / aside_prompt / gated_stream /
          closing_prompt / leaked / leaks / reveal），
          agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
@@ -9,7 +9,7 @@
          RequestConflict / VersionConflict，scenarios 的 Scenario / Ending，cognition 的 Candidate / believed_place，
          language/templates 的 render_fact，memory/view 的 MemoryView（NPC 的长期记忆摘要，增量汇总——水位含边界、按记录 ID 去重，与读档后重建逐项相同）
 [OUTPUT]: 对外提供 GameSession（可玩会话：turn() 一回合、intro()/epilogue() 开场与终章、belief_lines() 玩家自己的认知；
-          读档接续并恢复调度标记、已描写实体、最近几段正文与提示进度；请求幂等、存档版本闸门）、
+          读档接续并恢复调度标记、已描写实体、最近几段正文、提示进度与谈资账本；请求幂等、存档版本闸门）、
           TurnReport（一回合的全部产物：世界侧与文字侧分开记录，含这句话的类别、结局、首字耗时、分阶段耗时与叙述上下文）
 [POS]: runtime 的装配中心（主持层的回合循环）：一回合 = 解释玩家输入（后台同时算好本 tick 的 NPC 决策；元指令与“GM：”一眼认得，不算）→ 按类别推进：
        ACT 走 1~3 步计划（失败即止）、SAY/GESTURE 与冲着在场之人的行动再加一个反应 tick、普通等待按时长且只被要紧的事打断
@@ -81,7 +81,7 @@ from tianlong.persistence import (
     WorldRef,
     WorldStore,
 )
-from tianlong.runtime import gm
+from tianlong.runtime import gm, talk
 from tianlong.runtime.authority import Settlement, WorldAuthority
 from tianlong.runtime.versions import check_save, current_versions
 from tianlong.scenarios import Ending, Scenario
@@ -133,6 +133,11 @@ def _compact(percepts: tuple[Percept, ...]) -> tuple[Percept, ...]:
     等上四个时辰也不让每次提交整份重写的进度随 tick 平方增长。正常叙述与崩溃后的重写用的是同一份。"""
     last = max((i for i, p in enumerate(percepts) if p.modality == Modality.SCENE), default=-1)
     return tuple(p for i, p in enumerate(percepts) if p.modality != Modality.SCENE or i == last)
+
+
+def _gated(scenario: Scenario) -> dict[str, tuple[str, ...]]:
+    """交给叙述闸门的别称：去掉同时是普通名词的（“石壁”在石洞里只是石壁），解析玩家输入仍用全部别称。"""
+    return {k: tuple(a for a in v if a not in scenario.common_words) for k, v in scenario.aliases.items()}
 
 
 def _interruptible(env: TurnEnvelope) -> bool:
@@ -239,6 +244,7 @@ class GameSession:
         self._described: set[str] = set()   # 已向玩家描写过外观的实体：只在初见时描写
         self._recent: list[str] = []        # 最近几段正文（派生数据：叙述之后更新，随下一次提交落库）
         self._hint = 0                      # 已给出的逐级提示条数
+        self._told: dict[str, set[int]] = {}   # 谈资账本：每个 NPC 已经出现在正文里的谈资条目（派生数据，随下一次提交落库）
         self._asides: dict[str, tuple[str, TurnReport]] = {}   # 带 request_id 的不推进回合：ID → (原文摘要, 报告)
         self._restore(session_state)
         self.llm = llm
@@ -247,7 +253,7 @@ class GameSession:
                                                       universe=(e.name for e in scenario.state.entities.values()))
         self.pipeline = pipeline
         # 开了磁盘缓存（评测、演示录像）就不用迟到的先声：它由网速决定出不出场，同一局重跑的文字就对不上了
-        self.narrator = Narrator(llm, scenario.setting, scenario.lore, scenario.style, scenario.aliases, scenario.secrets,
+        self.narrator = Narrator(llm, scenario.setting, scenario.lore, scenario.style, _gated(scenario), scenario.secrets,
                                  lead_after=None if isinstance(llm, CachedLLM) else LEAD_AFTER)
         self._universe = frozenset(e.name for e in scenario.state.entities.values())  # 闸门拒绝用的名字全集
         self._friends = gm.companions(scenario.profiles[self.player])   # 有人对他们动手即打断等待
@@ -281,7 +287,7 @@ class GameSession:
 
     def _state(self, sched: Scheduler, described: set[str]) -> dict:
         return {"scheduler": sched.to_state(), "described": sorted(described), "recent": list(self._recent),
-                "hint": self._hint}
+                "hint": self._hint, "told": {k: sorted(v) for k, v in sorted(self._told.items()) if v}}
 
     def _restore(self, state: Mapping | None) -> None:
         """会话运行态以落库的那一份为准：读档时，以及一次请求被同一请求的另一次投递越过之后。"""
@@ -290,6 +296,7 @@ class GameSession:
         self._described = set(state.get("described", ()))
         self._recent = [str(x) for x in state.get("recent", ())][-RECENT_KEEP:]
         self._hint = int(state.get("hint", 0))
+        self._told = {str(k): {int(i) for i in v} for k, v in (state.get("told") or {}).items()}
 
     def _opening_keys(self) -> list[str]:
         """开场讲的初始认知里应当描写外观的实体：新游戏的 intro() 描写它们，建档后尚无提交就读档时据此补回“已描写”。"""
@@ -491,7 +498,7 @@ class GameSession:
         before 是本回合之前玩家的认知（前后照应的比对基准；重试补写时没有）；closing：这一回合抵达了结局，叙述收在余韵上。"""
         me = self.beliefs(self.player)
         lapse = clock_label(env.ticks[-1]) if _interruptible(env) and env.planned_ticks > 1 and env.ticks else ""
-        brief = gm.build_brief(env, me, self.scenario, self.beliefs, self._recent, before, closing)
+        brief = gm.build_brief(env, me, self.scenario, self.beliefs, self._recent, before, closing, self._told)
         # 此前已知下落的东西：再翻出来不算“发现”（重试补写时没有 before，照旧）
         familiar = frozenset(e for e in before.entities if before.location_of(e) is not None) if before else frozenset()
         scene = getattr(self.narrator, "narrate_scene", None)
@@ -507,8 +514,12 @@ class GameSession:
         return render, brief
 
     def _remember(self, narration: str) -> None:
-        """最近几段正文：叙述写成之后更新（派生数据），随下一次提交落库。"""
+        """最近几段正文与谈资账本：叙述写成之后更新（派生数据），随下一次提交落库。"""
         self._recent = [*self._recent, narration][-RECENT_KEEP:]
+        for npc in self.scenario.npcs:
+            said = talk.told(self.scenario.profiles[npc].knows, narration)
+            if said:
+                self._told[npc] = self._told.get(npc, set()) | said
 
     def _record(self, request_id: str, text: str) -> str:
         """记下请求的文字，返回已落库的那一份：先写者为准（并发的重复投递可能抢先写下自己的），同一请求永远只有一段正文。"""
@@ -643,24 +654,31 @@ class GameSession:
         guide = self.scenario.guide
         if not guide:
             return "（这一幕没有提示。）"
+        self._hint = max(self._hint, self._floor())
         line = guide[min(self._hint, len(guide) - 1)]
         self._hint = min(self._hint + 1, len(guide))
         return f"提示：{line}"
+
+    def _floor(self) -> int:
+        """提示至少从第几条说起：走过的路不再提（身在崖底还说“龚光杰来者不善”，是主持人没跟上故事）。"""
+        here = self.beliefs(self.player).location_of(self.player) or ""
+        return min(self.scenario.guide_at.get(here, 0), max(len(self.scenario.guide) - 1, 0))
 
     def _gm_aside(self, question: str, me: BeliefStore, sink: _Sink) -> Rendered:
         """场外问答：只用玩家自己的认知、他的目标、逐级提示（到下一条为止，不剧透更深的）与最近几段正文。
         模型的回答边生成边交付，逐句过名字闸门：点了玩家不认识的名字那句不交付、流也不再读；
         一句都没交出（首句即违规、空答、模型不可用）就交模板 = 处境摘要 + 下一条提示。"""
         view = gm.self_view(me)
-        guide = self.scenario.guide
-        nxt = guide[min(self._hint, len(guide) - 1)] if guide else None
+        guide, floor = self.scenario.guide, self._floor()
+        level = max(self._hint, floor)
+        nxt = guide[min(level, len(guide) - 1)] if guide else None
         plain = "（场外）" + "；".join(view[:3]) + "。" + (f"\n提示：{nxt}" if nxt else "")
         if self.llm is None:
             sink(plain)
             return Rendered(plain, RenderStatus.TEMPLATE)
         prof = self.scenario.profiles[self.player]
         goals = [t for t in (gm.goal_text(g, me) for g in prof.goals) if t]
-        prompt = gm.aside_prompt(question, view, prof.persona, goals, guide[:self._hint + 1], self._recent)
+        prompt = gm.aside_prompt(question, view, prof.persona, goals, guide[floor:level + 1], self._recent)
         text, found, failed = gm.gated_stream(self._aside_pieces(prompt), lambda t: gm.leaked(t, me, self.scenario),
                                               sink, lead="（场外）")
         violations = tuple(Violation("entity", n) for n in found)

@@ -5,7 +5,7 @@
          language/deeds 的 check_deeds，language/quotes 的 check_quotes / voiced，language/lead 的 lead_line / restates
 [OUTPUT]: 对外提供 Narrator（narrate_scene() 主持人之声：流式生成、逐句过闸门、通过即交付；narrate_rendered() / narrate()
           以空 SceneBrief 委托之；secrets 是场景的秘密词表）、render_voice()（一句 NPC 言语的确定性模板）、SOCIAL_PHRASES / SOCIAL_LABELS、
-          MAX_DROPS、MAX_CHARS、fact_lines()（再导出）、lore_keys()
+          MAX_DROPS、MAX_CHARS、fact_lines()（再导出）、lore_keys()、grams()（三字片段：复述与谈资说过没有都用它）
 [POS]: language 的输出层（主持人之声）。输入只有玩家自己的感知与会话交来的 SceneBrief（要替 NPC 说出口的话、最近几回合正文、
        玩家原话、眼下的钩子），不是世界真相；台词本身算出处（说话者与听者可点名，原话与说法照搬不算违规）。
        模板先写成事实清单，清单里听见的言语换成带言语行为的台词（“龚光杰冷笑着向你叫阵：……”；只看见的耳语照旧），措辞按语义输入确定地轮换。
@@ -25,7 +25,8 @@
        提示词只是请求，闸门才是验收：第二人称、80~250 字、台词写成“某某道：“……””、不替玩家开口、停在钩子上、不写钟点；
        最近正文只留最后三段、每段末尾约 300 字，钟点换成时辰文字；世界前提与文风来自场景
        前后照应（SceneBrief：玩家的身体状况、出乎他意料之处、眼前的地点与人、说话者近来的经历）写进提示词且算出处；闲话只可说谈资、近来的经历与眼前的事；
-       无事发生时有模型就写眼前的光景；到了结局收在余韵上
+       无事发生时有模型就写眼前的光景；到了结局收在余韵上；玩家的话没人接就照实写出没人接（不替他编答案）；
+       回话先接住玩家的话头，谈资只给没说过的（会话记账），被问到的人附上说话者所知的来历；此地叫得出名字的东西（nearby）可以点名
        先声之后，别的必讲之事讲到没有只看模型自己交付的正文；有台词时引语里的名字与状态词交给台词闸门按说话者查。
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -41,7 +42,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
-from tianlong.core import Modality, Op, Percept, Social, derive_seed, is_night
+from tianlong.core import Modality, Op, Outcome, Percept, Social, derive_seed, is_night
 from tianlong.language.deeds import check_deeds
 from tianlong.language.lead import lead_line, restates
 from tianlong.language.llm import LLMClient, LLMUnavailable
@@ -146,9 +147,14 @@ _VISUAL = frozenset({Modality.SELF, Modality.SIGHT, Modality.SCENE})
 def lore_keys(viewer: str, percepts: Sequence[Percept], lore: Mapping[str, str]) -> list[str]:
     """本回合真正映入眼帘、且有外观描写的实体：身处的地点、在场的人与物、眼前的通道与事件的参与者。
     外观只由亲眼所见触发——听人说起的、隔墙听见的、门那头的地点都只有名字（草图 seen=False），不描写。
-    夜里优先取 "id@night" 变体（月下的玉璧不同于白日的玉璧）。"""
+    夜里优先取 "id@night" 变体（月下的玉璧不同于白日的玉璧）；观察者自己穿过一道有 "门@pass" 描写的通道（攀着藤萝落下断崖），
+    也给出这段经过——下断崖不是走台阶，书生毫发无伤地“纵身一跃”读来不合理。"""
     keys: list[str] = []
     for p in percepts:
+        ev = p.event
+        if (p.modality == Modality.SELF and ev is not None and ev.actor == viewer and ev.kind == Op.MOVE.value
+                and ev.outcome == Outcome.SUCCESS and f"{ev.obj}@pass" in lore and f"{ev.obj}@pass" not in keys):
+            keys.append(f"{ev.obj}@pass")
         if p.modality not in _VISUAL:
             continue
         night = is_night(p.tick)
@@ -189,8 +195,8 @@ def _with_lines(plan: RenderPlan, brief: SceneBrief) -> RenderPlan:
     前后照应（玩家的身体状况、本回合的意外与变化、眼前的地点与人）同样算出处，其中的状态说出来不算升级，
     玩家自己身上的伤毒被制算落在对的人身上。"""
     names = {n for vl in brief.lines for n in (vl.speaker_name, vl.listener_name) if n and n != "你"}
-    names |= set(brief.present)
-    said = [x for vl in brief.lines for x in (vl.template, vl.claim) if x]       # 谈资与近来经历只在他自己的引语里算数（台词闸门）
+    names |= set(brief.present) | set(brief.nearby)
+    said = [x for vl in brief.lines for x in (vl.template, vl.claim) if x]   # 谈资、近来经历与来历只在他自己的引语里算数（台词闸门）
     said += [x for x in (brief.condition, *brief.notes, "、".join(brief.present)) if x]
     if not said and not names and not brief.statuses:
         return plan
@@ -310,15 +316,16 @@ def _missing(rows: Sequence[_Row], text: str, plan: RenderPlan, brief: SceneBrie
     return out
 
 
-def _grams(text: str, n: int = 3) -> frozenset[str]:
+def grams(text: str, n: int = 3) -> frozenset[str]:
+    """去掉标点空白后的 n 字片段：判断复述、判断谈资说过没有，都用它。"""
     t = re.sub(r"[^\w]", "", text)
     return frozenset(t[i:i + n] for i in range(len(t) - n + 1))
 
 
 def _echoes(said: str, text: str) -> bool:
     """玩家的原话或姿态在正文里照着写了出来：它的三字片段过半出现在正文里。"""
-    mine = _grams(said)
-    return bool(mine) and len(mine & _grams(text)) >= ECHO * len(mine)
+    mine = grams(said)
+    return bool(mine) and len(mine & grams(text)) >= ECHO * len(mine)
 
 
 def _deadline(pieces: Iterator[str], after: float, on_late: Callable[[], None], pool: ThreadPoolExecutor) -> Iterator[str]:
@@ -410,7 +417,7 @@ class _Gate:
         if not lead or self.lead or self._found(lead, self.out.text + lead, self.out.text):
             return False
         self.out.emit(lead + sep)
-        self.lead, self._lead_grams, self._echo = lead + sep, _grams(lead), echo
+        self.lead, self._lead_grams, self._echo = lead + sep, grams(lead), echo
         self._judged = 0
         return True
 
@@ -447,8 +454,8 @@ class _Gate:
         self._judged += 1
         found = self._found(piece, before + piece, before)
         if not found and self.lead and self._judged <= ECHO_WINDOW:      # 违规的照样记账；干净的复述悄悄略过
-            grams = _grams(body)
-            if (grams and len(grams & self._lead_grams) / len(grams) >= ECHO) or self._echo(body):
+            said = grams(body)
+            if (said and len(said & self._lead_grams) / len(said) >= ECHO) or self._echo(body):
                 log.info("模型复述了先声，略过: %s", body)
                 return
         if found:
@@ -627,10 +634,13 @@ class Narrator:
             around = f"{brief.present[0]}" + (f"，身边有{'、'.join(brief.present[1:])}" if len(brief.present) > 1 else "，身边没有别人")
             parts.append(f"玩家以为自己此刻在：{around}")
         if brief.condition:
-            parts.append(f"玩家自己的身体状况（不要写得像没事人一样，也不要加重）：{brief.condition}")
+            parts.append(f"玩家自己的身体状况（记在心里，不要写得像没事人，也不要加重；只在这一步吃力——走动攀爬、出手、挨打——"
+                         f"或刚受伤时带一笔，别每回合都写疼）：{brief.condition}")
         if brief.notes:
             parts.append("本回合出乎玩家意料之处（写出他的觉察与惊讶，不要替他下结论，也不要替别人解释原因）：\n"
                          + "\n".join(f"- {n}" for n in brief.notes))
+        if brief.unanswered:
+            parts.append(f"玩家的话还没人接：{brief.unanswered}没有回答你（不要替他编答案；写出他没顾上回答、或没有理会的样子）")
         if brief.lines:
             # 可点名只列真能通过闸门的：本回合计划里的名字、清单里原样有的名字、闸门不认识的名字
             universe = known | plan.hidden
@@ -638,7 +648,7 @@ class Narrator:
 
             def fits(n: str) -> bool:
                 return n in speakable or n in plan.source or n not in universe or n in lines_text
-            lines_text = "\n".join(x for vl in brief.lines for x in (vl.knows, vl.lately) if x)
+            lines_text = "\n".join(x for vl in brief.lines for x in (vl.knows, vl.lately, vl.about) if x)
             parts.append("要说出口的话（按先后，逐句写成对白）：\n"
                          + "\n".join(_describe(i, vl, fits) for i, vl in enumerate(brief.lines, 1)))
         if looks:
@@ -659,16 +669,21 @@ def _describe(i: int, vl: VoiceLine, fits: Callable[[str], bool]) -> str:
     ask = vl.op == Op.ASK.value
     act = (SOCIAL_LABELS.get(vl.social) if vl.social else None) or ("问话" if ask else "说话")
     body = (f"说法“{vl.claim}”——须如实转达，不多不少" if vl.claim
-            else "闲话——只可说谈资里的掌故、他自己近来的经历与眼前人人看得见的事，不得夹带别的事实")
+            else "回话——先接住玩家的话头，只可说谈资里的掌故、他自己近来的经历、他所知的来历与眼前人人看得见的事，不得夹带别的事实"
+            if vl.answering else
+            "闲话——只可说谈资里的掌故、他自己近来的经历与眼前人人看得见的事，不得夹带别的事实")
     if vl.template:
         body += f"；原话“{vl.template}”——可换措辞，意思不变"
     rows = [f"{i}. {vl.speaker_name}对{vl.listener_name or '众人'}（{act}）：{body}"]
     if vl.voice:
         rows.append(f"   腔调：{vl.voice}")
     if vl.knows:
-        rows.append(f"   谈资：{vl.knows}")
+        rows.append(f"   谈资（他还没说过的；与眼下无关就不提，提也只挑一条）：{vl.knows}")
+    if vl.about:
+        rows.append(f"   玩家问到的人，他所知的来历（据此回答）：{vl.about}")
     if vl.lately:
-        rows.append(f"   他自己近来的经历（可以借这句话说起，不必都说）：{vl.lately}")
+        rows.append(f"   他自己近来的经历（{'玩家问起他怎么来的，就照这个回答' if vl.answering else '可以借这句话说起，不必都说'}）："
+                    f"{vl.lately}")
     if vl.answering:
         rows.append(f"   回应的是：“{vl.answering}”")
     else:

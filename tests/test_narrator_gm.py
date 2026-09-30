@@ -6,7 +6,8 @@
           保留已交付的并补模板；模板把 NPC 言语写成带言语行为的台词；提示词带最近正文与台词要素且没有钟点数字；首句交付早于整段完成；
           分句器处理引号（含错配的收引号）、省略号、较长的后置归属与流的边界；合法的道谢、挑衅与如实的位置说法不被误伤；
           漏掉的台词与内核结果补上模板行、传闻说成事实在流出前就丢、只看见的耳语不算开口、场景秘密被拦、写够长即停、回退的模板行以句号收尾；
-          讲到了就不补（写到翻出的帛卷、照着写出玩家的姿态），回退也只补正文没讲到的
+          讲到了就不补（写到翻出的帛卷、照着写出玩家的姿态），回退也只补正文没讲到的；闸门不再误杀照应句——NPC 讲自己的来路不是瞬移、
+          刻在门上的字不是谁的话、“被左子穆制住”写进提醒就许说、近旁的地方与普通名词的别称（石壁）不算凭空点名；叩拜写成磕头、下断崖有经过
 [POS]: tests 的主持层叙述；证伪“流式叙述会把没过闸门的句子交给玩家”“主持人替玩家说话”“NPC 说出他不该知道的名字”
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -402,7 +403,7 @@ def test_prompt_carries_recent_passages_and_voice_lines(view):
     assert old not in prompt and "第二段正文。" in prompt and "第三段正文。" in prompt and "末尾一句。" in prompt
     passage = next(line for line in prompt.splitlines() if line.startswith("【3】"))
     assert len(passage) <= 310, "每段正文只留末尾约 300 字"
-    for part in (TAUNT, "叫阵", GONG.voice, GONG.knows, GONG.answering, "左子穆", "闲话", "在下只是觉得好笑",
+    for part in (TAUNT, "叫阵", GONG.voice, GONG.knows, GONG.answering, "左子穆", "回话", "在下只是觉得好笑",
                  "拱手赔笑", "龚光杰等着你答话"):
         assert part in prompt, part
     assert "听见龚光杰对你说" not in prompt, "要说的话不在事实清单里重复一遍"
@@ -681,3 +682,66 @@ def test_the_fallback_tail_only_adds_what_the_passage_left_out():
     r = _quiet(_script("四下一片漆黑。" + B_ENTITY + B_PUPPET)).narrate_scene("duanyu", [walk, empty], names,
                                                                           brief=SceneBrief(), known=KNOWN)
     assert "你来到石洞。" in r.text, "没写到的照样补上"
+
+
+# ============================================================
+#  评审回归（第二轮找错：闸门把最要紧的照应句丢了）
+# ============================================================
+
+
+def test_someone_telling_where_they_went_is_not_a_teleport():
+    """钟灵自己说“我先去了后院”是她讲来路，不是叙述者替谁瞬移；叙述者自己的口吻照旧拦。"""
+    percepts, names = _settle(("duanyu", Op.WAIT, None, None, Manner.NORMAL))
+    plan = build_plan("duanyu", percepts, names, show_scene=True)
+    quoted = frozenset({"钟灵", "剑湖宫后院", "后院"})
+    said = "钟灵拍手笑道：“我先去了剑湖宫后院，又绕回来啦！”"
+    assert not check(said, plan, KNOWN, quoted)
+    assert [v for v in check("钟灵去了剑湖宫后院。", plan, KNOWN, quoted) if v.kind == "teleport"]
+
+
+def test_words_carved_on_a_door_are_nobodys_line():
+    percepts, names = _settle(("duanyu", Op.WAIT, None, None, Manner.NORMAL))
+    plan = build_plan("duanyu", percepts, names)
+    carved = "石阶尽头，一扇石门静静立着，门楣上刻着四个字：“琅嬛福地”。"
+    assert not [v for v in check_quotes(carved, SceneBrief(), plan, KNOWN) if v.kind == "puppet"]
+
+
+def test_a_surprise_may_name_who_held_them_and_nearby_places_may_be_named():
+    """前后照应里写明“被左子穆制住了”：叙述者说出“她明明被左子穆点了穴道”不算凭空点名、也不算状态升级；
+    此地看得见的东西、门那头的地点（nearby）可以点名。"""
+    view = _settle(("duanyu", Op.WAIT, None, None, Manner.NORMAL))
+    note = "你原以为钟灵被左子穆制住了，还困在剑湖宫大殿——此刻却在眼前"
+    brief = SceneBrief(notes=(note,), statuses=frozenset({"subdued"}), present=("剑湖宫后院", "钟灵"))
+    wonder = "你心头一跳——她明明被左子穆点了穴道，怎地此刻就在眼前？"
+    r, _ = _run(view, _script(wonder), brief)
+    assert r.text == wonder and r.status == RenderStatus.LLM, r.violations
+    r, _ = _run(view, _script("回头望去，后山的林子黑沉沉的。"), SceneBrief(nearby=("后山",)))
+    assert "后山" in r.text and not r.violations
+    r, _ = _run(view, _script("回头望去，后山的林子黑沉沉的。"), SceneBrief())
+    assert "后山的林子" not in r.text, "不在眼前也不在近旁的地方照旧不许凭空点名"
+
+
+def test_common_nouns_among_aliases_are_not_names():
+    """“石壁”是无量玉璧的别称，也是寻常的石壁：交给闸门的别称去掉它，大殿里说“石壁”不再被当成点名了玉璧。"""
+    from tianlong.runtime.session import _gated
+
+    gated = _gated(SC)
+    assert "石壁" not in gated["yubi"] and "玉璧" in gated["yubi"]
+    percepts, names = _settle(("duanyu", Op.WAIT, None, None, Manner.NORMAL))
+    wall = "殿角的石壁上挂着几幅字画。"
+    known = KNOWN - {"石壁"}
+    r = Narrator(_script(wall), SC.setting, SC.lore, SC.style, gated).narrate_scene(
+        "duanyu", percepts, names, brief=SceneBrief(present=("剑湖宫大殿",)), known=known)
+    assert r.text == wall, r.violations
+
+
+def test_a_kowtow_reads_as_a_kowtow_and_the_cliff_drop_is_told():
+    from tianlong.language.narrator import lore_keys
+    from tianlong.language.templates import render_event
+
+    names = _sketches(("duanyu", Kind.PERSON, "段誉"), ("langhuan", Kind.PLACE, "琅嬛福地"))
+    bow = PerceivedEvent(Op.INSPECT.value, "langhuan", "duanyu", "langhuan", outcome=Outcome.SUCCESS, social=Social.SUBMIT)
+    assert "磕头" in render_event(bow, names, "duanyu", "你"), "原著路线的叩拜：磕头照写，不被写成打断了的一拜"
+    drop = Percept(10, Modality.SELF, PerceivedEvent(Op.MOVE.value, "jianhu", "duanyu", "jianhu", "d_cliff",
+                                                     outcome=Outcome.SUCCESS))
+    assert "d_cliff@pass" in lore_keys("duanyu", [drop], SC.lore), "下断崖的经过：藤萝兜住、衣衫刮破，不是毫发无伤地一跃"

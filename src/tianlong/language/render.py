@@ -9,7 +9,7 @@
           （_mentions / _lexical / _negated / _quotes / _mask / _clauses……，含无引号的“某某道：……”与“某某说……”式转述）
 [POS]: language 的“文字 ≠ 事实”闸门。提示词约束拦不住一次成功调用返回的错误非空文本，这里用确定性的词法检查拦：
        点名清单外的人与物（名或别称）、状态升级（受伤→被制、略有所得→学成，含“吐了一口血”“嘴唇发紫”“悟透”这类武侠说法）、
-       瞬移、物品复制、编造承诺、把传闻说成叙述者确认的事实、场景秘密（私奔、投神农帮）——命中即丢句或回退确定模板。
+       瞬移（有台词时引语里说话者讲自己的来路不算）、物品复制、编造承诺、把传闻说成叙述者确认的事实、场景秘密（私奔、投神农帮）——命中即丢句或回退确定模板。
        宁可错杀：误报只让这一句（或这一回合）的文字退回模板，世界结算不受任何影响。状态落在谁身上、谁做成了什么、
        玩家此刻在哪由 deeds.check_deeds() 查，引语归到谁、谁能说什么由 quotes.check_quotes() 查，渲染计划为它们记下
        谁身上有什么状态、谁做成了什么、玩家在哪、谁身上有什么东西、只闻其说的传闻里提到了谁。
@@ -426,10 +426,11 @@ def check(text: str, plan: RenderPlan, known_names: Iterable[str] = (),
                 for w in _unsourced(text, plan.source, COMMITMENT_WORDS, COMMITMENT_EXCLUSIONS)]
 
     # ---- 4. 瞬移：抵达动词之后的地点必须是本回合真的到达的、或观察者此刻就在的（“走到大殿门口”“走到湖畔的钟灵”）；
-    #      原话里转述的“回到港口”照搬不算；在全部名字上做最长匹配：“仓库大门”“后山小径”是门，不会被截成地点“仓库”“后山”
+    #      原话里转述的“回到港口”照搬不算；在全部名字上做最长匹配：“仓库大门”“后山小径”是门，不会被截成地点“仓库”“后山”；
+    #      有台词时引语里的“我先去了营地”是说话者讲自己的来路，不是叙述者替谁瞬移（台词闸门按说话者查）
     everything = universe | plan.places
-    for i, verb in _arrivals(text):
-        hits = _mentions(_clause_after(text, i + len(verb), ARRIVAL_WINDOW), everything)
+    for i, verb in _arrivals(narration):
+        hits = _mentions(_clause_after(narration, i + len(verb), ARRIVAL_WINDOW), everything)
         if (hits and hits[0][1] in plan.places and hits[0][1] not in plan.arrivals | plan.here
                 and verb + hits[0][1] not in plan.source):
             out.append(Violation("teleport", verb + hits[0][1]))

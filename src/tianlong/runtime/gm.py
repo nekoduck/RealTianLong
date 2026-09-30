@@ -4,9 +4,9 @@
          cognition 的 BeliefStore / believed_place，kernel/perception 的 sketches_for，language/parser 的 MoveKind / Parsed，
          language/llm 的 LLMUnavailable，language/render 的 sentence_ends，
          language/scene 的 SceneBrief / VoiceLine，language/templates 的 SOCIAL_VERBS / render_event / render_experience / render_fact，
-         persistence 的 TurnEnvelope，scenarios 的 Scenario，runtime/continuity 的 continuity / lately
+         persistence 的 TurnEnvelope，scenarios 的 Scenario，runtime/continuity 的 continuity / lately，runtime/talk 的 fresh
 [OUTPUT]: 对外提供 gm_command()（元指令与“GM：”前缀）、companions()（玩家的同伴 = 自己人 + DEFEND 目标）、salient()（等待该不该被打断）、
-          build_brief()（SceneBrief：要替 NPC 说出口的话 + 前后照应 + 是否收幕）、
+          build_brief()（SceneBrief：要替 NPC 说出口的话——谈资只给没说过的、被问到的人附上来历——+ 前后照应 + 没人接的话 + 是否收幕）、
           self_view() / goal_text() / aside_prompt()（场外问答只用玩家自己的认知）、gated_stream()（场外回答逐句过名字闸门、边生成边交付）、
           closing_prompt()（终章只取玩家亲历）、leaked() / leaks()（名字闸门：玩家不认识的实体不许出现在模型写的文字里，玩家亲口说出的名字除外）、
           reveal()（终章的真相揭晓表）、META_HELP / ASIDE_SYSTEM / ASIDE_TOKENS / CLOSING_SYSTEM
@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 
 from tianlong.cognition import BeliefStore
 from tianlong.cognition.navigation import believed_place
@@ -51,6 +51,7 @@ from tianlong.language.scene import SceneBrief, VoiceLine
 from tianlong.language.templates import SOCIAL_VERBS, render_event, render_experience, render_fact
 from tianlong.persistence import TurnEnvelope
 from tianlong.runtime.continuity import continuity, lately
+from tianlong.runtime.talk import fresh
 from tianlong.scenarios import Scenario
 
 TALK = frozenset({Op.TELL.value, Op.ASK.value})
@@ -135,12 +136,16 @@ def salient(percepts: Iterable[Percept], player: str, friends: Iterable[str], he
 
 
 def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_of: Callable[[str], BeliefStore],
-                recent: Sequence[str], before: BeliefStore | None = None, closing: bool = False) -> SceneBrief:
+                recent: Sequence[str], before: BeliefStore | None = None, closing: bool = False,
+                told: Mapping[str, Collection[int]] | None = None) -> SceneBrief:
     """要替 NPC 说出口的话（本回合玩家听见的每一句 NPC 言语、看见的每一个 NPC 姿态）、最近几段正文、玩家原话，
     以及前后照应（continuity：玩家自己的身体状况、本回合的意外与变化、身在何处身边有谁；出人意料地出现的人带上他近来的经历）。
     耳语（只看见在交谈、没听见内容）不算：玩家没听见的话，叙述者也不该替它编出来。
     answering：NPC 冲着玩家、且在玩家开口（或冲他摆了姿态、赔了罪道了谢）之后说的话，带上玩家这一步作回话的由头。
-    before 是本回合之前玩家的认知（重试补写时没有）；closing 表示这是这一幕的最后一段。"""
+    before 是本回合之前玩家的认知（重试补写时没有）；closing 表示这是这一幕的最后一段；
+    told 是谈资账本（每个 NPC 已经说过的谈资条目）：只把还没说过的交给叙述者。
+    玩家问到的人（原话里点了名、说话者认识的），附上说话者所知的公开来历；玩家冲着谁说了话、他本回合却没接话，记在 unanswered；
+    普通等待被身边的事打断，前后照应里添一句“你本想再等下去”。"""
     player = me.owner
     prof = scenario.profiles.get(player)
     ctx = continuity(env, me, before, companions(prof) if prof else ())
@@ -162,10 +167,22 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
             answer = cue if ev.target == player and acted is not None and p.tick > acted.tick else None
             mind = beliefs_of(ev.actor)
             lines.append(_voice(ev, me, scenario, mind, answer,
-                                lately(mind, ev.actor, p.tick) if ev.actor in ctx.newcomers else ""))
+                                lately(mind, ev.actor, p.tick) if ev.actor in ctx.newcomers else "",
+                                (told or {}).get(ev.actor, ())))
+    asked = (acted.event.target if acted is not None and acted.event.kind in TALK
+             and acted.event.outcome == Outcome.SUCCESS else None)          # 话没说成（人不在）就谈不上没人接
+    unanswered = None
+    if asked and asked != player and asked in scenario.profiles and not any(
+            vl.speaker == asked and vl.answering for vl in lines):
+        sk = me.sketch(asked)
+        unanswered = sk.name if sk is not None else None
+    notes = ctx.notes
+    if env.done and env.intent.op == Op.WAIT and not env.followups and not env.reaction \
+            and len(env.ticks) < env.planned_ticks:
+        notes = (*notes, "你本想再等下去，却被眼前的事打断了")
     return SceneBrief(tuple(lines), tuple(recent), mine.utterance if mine is not None else None,
-                      condition=ctx.condition, notes=ctx.notes, present=ctx.present, statuses=ctx.statuses,
-                      afflicted=ctx.afflicted, closing=closing)
+                      condition=ctx.condition, notes=notes, present=ctx.present, statuses=ctx.statuses,
+                      afflicted=ctx.afflicted, closing=closing, nearby=ctx.nearby, unanswered=unanswered)
 
 
 def _cue(ev: PerceivedEvent, me: BeliefStore) -> str | None:
@@ -178,9 +195,23 @@ def _cue(ev: PerceivedEvent, me: BeliefStore) -> str | None:
     return None
 
 
+def _about(answering: str | None, who: str, mind: BeliefStore, scenario: Scenario) -> str:
+    """玩家这句话里问到的人（名或别称；说话者自己除外），说话者认识的，附上他们的公开来历。"""
+    if not answering:
+        return ""
+    rows = []
+    for pid, prof in sorted(scenario.profiles.items()):
+        sk = mind.sketch(pid)
+        forms = (sk.name, *scenario.aliases.get(pid, ())) if sk is not None else ()
+        if pid != who and prof.intro and any(f and f in answering for f in forms):
+            rows.append(f"{sk.name}：{prof.intro}")
+    return "；".join(rows)
+
+
 def _voice(ev: PerceivedEvent, me: BeliefStore, scenario: Scenario, mind: BeliefStore,
-           answering: str | None, lately_text: str = "") -> VoiceLine:
-    """一句 NPC 言语：结构取自玩家的感知，说法与可点名的名字取自说话者自己的认知，腔调与谈资取自角色设定。"""
+           answering: str | None, lately_text: str = "", told: Collection[int] = ()) -> VoiceLine:
+    """一句 NPC 言语：结构取自玩家的感知，说法与可点名的名字取自说话者自己的认知，腔调与谈资取自角色设定
+    （谈资只给还没说过的），被问到的人附上说话者所知的来历。"""
     who = str(ev.actor)
     prof = scenario.profiles[who]
     listener = ("你" if ev.target == me.owner
@@ -190,7 +221,8 @@ def _voice(ev: PerceivedEvent, me: BeliefStore, scenario: Scenario, mind: Belief
     may |= {a for eid in mind.entities for a in scenario.aliases.get(eid, ())}
     sk = me.sketch(who)
     return VoiceLine(who, sk.name if sk else scenario.state.entity(who).name, listener, ev.kind, ev.social, claim,
-                     ev.utterance, prof.voice, prof.knows, frozenset(may), answering, lately_text)
+                     ev.utterance, prof.voice, fresh(prof.knows, told), frozenset(may), answering, lately_text,
+                     _about(answering, who, mind, scenario))
 
 
 # ============================================================

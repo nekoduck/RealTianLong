@@ -7,6 +7,7 @@
 [POS]: language 的台词闸门，与 render.check()、deeds.check_deeds() 并用。每段引语（含无引号的“某某道：……”与“某某说……”式转述）
        归到说话者：引子小句的主语、句首引语之后的“某某喝道”、上一段引语的说话者、上一句的主语（句首引语紧跟在谁的动作之后，
        读者就听成是谁说的——这也算确凿）；归到“你”名下的只能是玩家本回合的原话，NPC 只许点名自己认识的名字、只许说出计划里有的状态。
+       刻着、写着、题作、绣着的字（“门楣上刻着四个字：“琅嬛福地””）是物件上的字，不归给任何人。
        局限（如实）：主语靠词法近似（宾语标记、“的”字结构、感知动词、“你”只在小句开头或承接词、状语之后才是主语），复杂句式可能归错；
        转述只认“说/告诉/提到/透露/低语”后面直接跟着的内容，且须找得到具名的说话者；替玩家起念头只认“决定/打定主意/心想”等少数说法
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -124,6 +125,10 @@ def _speaker_in(masked: str, forms: Iterable[str], selves: set[str], lo: int, hi
     return None
 
 
+# 刻在石上、写在纸上、绣在布上的字（“门楣上刻着四个字：“琅嬛福地””）：是物件上的字，不是谁说的话
+_INSCRIBED = re.compile(r"(?:[刻写题绣印镌凿](?:着|有|的是|作)[^。！？；]{0,8}|[四八两几数]个?字)[：:，,]?$")
+
+
 def _intro(lead: str) -> bool:
     """引语前面紧挨着的是不是“某某道：”式的引子。"""
     return lead.endswith(("：", ":", "，", ",", "一声")) or lead[-1:] in SPEECH_MARKS + "语曰"
@@ -153,6 +158,8 @@ def _attribute(text: str, masked: str, quotes: Sequence[_Quote], k: int, spans: 
             return whos[k - 1]                      # 接着上一段引语说
         # 句首引语紧跟在某人的动作之后（“左子穆脸色一沉。“够了。””）：读者就听成是他说的
         return (_speaker_in(masked, forms, selves, *earlier) if earlier else None), True
+    if _INSCRIBED.search(lead):
+        return None, False                          # 物件上的字：不归给任何人
     if _intro(lead):
         who = _speaker_in(masked, forms, selves, a, q.start)
         if who is None and earlier:
@@ -221,7 +228,7 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
     for vl in brief.lines:
         lines.setdefault(vl.speaker_name, []).append(vl)
     voices = {name: _Voice(frozenset({name, *selves, *(n for vl in vls for n in (*vl.may_name, vl.listener_name) if n)}),
-                           "\n".join(x for vl in vls for x in (vl.claim, vl.template, vl.knows, vl.lately) if x))
+                           "\n".join(x for vl in vls for x in (vl.claim, vl.template, vl.knows, vl.lately, vl.about) if x))
               for name, vls in lines.items()}
     universe = (set(known_names) | plan.names | plan.aliases | plan.hidden | set(people) | set(voices)
                 | {n for v in voices.values() for n in v.names}) - {"你"}

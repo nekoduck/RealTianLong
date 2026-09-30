@@ -1,7 +1,7 @@
 """
 [INPUT]: 依赖标准库 dataclasses / enum
 [OUTPUT]: 对外提供 GoalKind / Goal / Profile
-[POS]: core 的角色设定卡（含时间闸门与盟友，以及主持层用的腔调 voice、谈资 knows、话多 chatty、脾气 temper）；
+[POS]: core 的角色设定卡（含时间闸门与盟友，以及主持层用的腔调 voice、谈资 knows、公开来历 intro、话多 chatty、脾气 temper）；
        agents 的脚本策略据此行动（回话、搭话、先礼后兵），learning 的奖励据此计算，主持人之声据 voice 写台词——
        目标是角色条件化的，不存在统一的“剧情精彩度”
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -48,7 +48,8 @@ class Profile:
     trust: tuple[tuple[str, float], ...] = ()   # 对他人说法的信任度（未列出者取默认值）
     allies: tuple[str, ...] = ()                # 自己人：守地、灭口时不会对他们动手
     voice: str = ""                             # 说话的腔调与待人的样子（公开的一面）：主持人之声据此写他的台词
-    knows: str = ""                             # 谈资：此人知道、且肯对人讲的掌故与背景（不含秘密）
+    knows: str = ""                             # 谈资：此人知道、且肯对人讲的掌故与背景（不含秘密），按“；”分条
+    intro: str = ""                             # 公开的来历：认识他的人都知道的身份（不含秘密），别人被问到“他是什么来头”时据此回答
     chatty: float = 0.0                         # 主动搭话的倾向 [0, 1]：话多的人在玩家身边会找话说
     temper: float = 0.0                         # 脾气 [-1, 1]：越高越受不得激（被辱即翻脸），越低越能忍
 

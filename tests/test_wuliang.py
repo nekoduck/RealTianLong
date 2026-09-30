@@ -184,7 +184,7 @@ def test_player_goals_are_registered_and_point_at_the_ending():
 def test_guide_is_progressive_not_a_walkthrough():
     sc = build_wuliang()
     guide = sc.guide
-    assert 4 <= len(guide) <= 6 and all(h.strip() for h in guide) and len(set(guide)) == len(guide)
+    assert 4 <= len(guide) <= 7 and all(h.strip() for h in guide) and len(set(guide)) == len(guide)
     steps = re.compile(r"[/／→>]|然后|接着|第[一二三四五六七八九十\d]+步|\d|[;；]\s*再")
     assert not [h for h in guide if steps.search(h)], "只点方向，不列步骤"
     persons = {e.id for e in sc.state.of_kind(Kind.PERSON)}

@@ -4,7 +4,8 @@
           REASONS / SUCCESS_NOTES / ATTR_WORDS、
           SOCIAL_VERBS（没有原话的言语按言语行为写成动作：“向钟灵打了个招呼”）
 [POS]: language 的确定性文本层（无 LLM）；memory 用它生成经历文本，narrator 在无模型时用它兜底——同一套措辞，两处复用。
-       所见清单按所在处归拢成人话（也是交给声音模型的事实清单：更短、更像话，每条事实照旧都在）
+       所见清单按所在处归拢成人话（也是交给声音模型的事实清单：更短、更像话，每条事实照旧都在）。
+       旁人来到眼前写出他从哪道认得的门过来（“钟灵经断崖来到剑湖畔”：人是怎么来的一目了然），带服软的查看写成伏地磕头
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -147,13 +148,16 @@ def _verb(v: PerceivedEvent, names: Names, viewer: str | None, me: str) -> str:
     op = Op(v.kind)
     table = {
         Op.MOVE: (f"来到{t}" if v.actor == viewer and v.outcome == Outcome.SUCCESS    # 自己只写到达，步态留给原话
+                  # 旁人来到眼前：看得见他从哪道门（认得的）过来——“钟灵经断崖来到剑湖畔”，人是怎么来的一目了然
+                  else (f"经{o}来到{t}" if v.obj in names else f"来到{t}")
+                  if v.outcome == Outcome.SUCCESS and v.target and v.place == v.target
                   else f"走向{t}" if v.target else f"走向{o}" if v.obj else "想要离开"),  # 旁人只看见他走向哪道门
         Op.TAKE: f"拿起{t}",
         Op.PUT: f"把{o}放在{t}",
         Op.GIVE: f"把{o}交给{t}",
         Op.UNLOCK: f"用{o}开{t}的锁",
         Op.LOCK: f"用{o}锁上{t}",
-        Op.INSPECT: f"仔细查看{t}",
+        Op.INSPECT: f"伏地磕头，顺势细看{t}" if v.social == Social.SUBMIT else f"仔细查看{t}",   # 原著路线的叩拜：磕头照写
         Op.TELL: _speech(v, t, topic),
         Op.ASK: _speech(v, t, topic),
         Op.WAIT: v.utterance or "静静等待",          # 带姿态的等待：姿态是不带主语的动作短语（“坐下来喝了口茶”）
