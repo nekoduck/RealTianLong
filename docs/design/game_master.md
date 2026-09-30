@@ -295,7 +295,28 @@ NPC 的台词不单独调模型，由叙述调用一并写出（§4.3）。
 - **模型**：`--llm auto` 用环境里的真模型，缓存关闭；没有密钥则退回 `scripted`。`scripted` 的报告开头注明不是真模型，不作验收依据。
   评审默认与叙述同一型号；要让第三方型号来评，设 `GEMINI_JUDGE_MODEL`。
 
-## 8. 出处
+## 8. M2-a spike 结论：驱力层要用到的内核事实
+
+在真实的 Kernel / WorldAuthority 上逐条核对（旧版无量山 + 只在 spike 里加的阿顺），**内核一行不改**，不成立的都改在驱力条件上。
+
+**tick 语义**：同一 tick 所有 NPC 在同一个世界版本上决策；内核按先手值逐个结算意图。
+先手值 = 基值 + 姿态（CAREFUL −0.2，ROUGH +0.2）+ 0.5·敏捷 + 抖动 [0, 0.1)。
+基值为：ATTACK .7；USE / TAKE .6；TELL / ASK / GIVE / PUT / 上锁 .5；MOVE .4；INSPECT .3；STUDY .2；WAIT 0。
+第 t tick 的 TELL 从 t+1 起才影响别人的选择。
+
+| # | 假设 | 结论 | 驱力层的对策 |
+|---|---|---|---|
+| 1 | 先验里的言语能把态度折叠到 +1 | **只在听者的认知里成立**（GREET 只在态度为 0 时 +1） | 段誉、马五德喜欢阿顺，就在**他们**的先验里放一条阿顺向他们 GREET / THANK 的感知。马五德的叮嘱在阿顺先验里若记成 COMMAND，会让阿顺对马五德 −1，所以改记为马五德自己的 SELF 先验或 EXPLAIN。先验至少比开场早 4 tick，否则留下待回应的义务。段誉自己的 GREET 也记为 SELF 先验，免得 17:40 再打一次招呼。不需要在 found() 里写 regard。 |
+| 2 | NPC 夜里 INSPECT 玉璧能看见石缝 | **成立**，从 19:00（内核的夜）起；INSPECT 剑湖畔本身也行，旁观者得到同样的事实 | 进 shidong 之前 `route_to(langhuan)` 为空：explore_crack 要先 `Go(shidong)` 再 `Go(langhuan)`。石缝在 19:00–19:39、月出之前就能发现，只是叙述要自洽。 |
+| 3 | 同一 tick 走进来的人听得见正常音量的 TELL | **不成立**（同敏捷时，只有他的 MOVE 先结算才听得见）：阿顺 0/60，钟灵（敏捷 .8）56/60 | 同一 tick 离开的人照样听得见。在场摆出的 WAIT 带字姿态 60/60 被看见。隔壁房间约 5% 只听到无内容的响动。私奔那对的 `company[ashun]` 等于下一次决策 tick，所以 hush 在 t+1 才触发。**对策二选一**：murmur 改成 Pose（WAIT + 字 + REMARK），走进来的人当 tick 就看得见（相识账本须接受 WAIT 上的原话）；或者 hush 推迟一 tick，只在外人的 `company.since < now` 时触发，since == now 时不拦 murmur，冷却 1。 |
+| 4 | 左子穆的 demand 能抢在还手之前 | **部分成立**：t0 咬 → t0+1 demand（同 tick 的 ATTACK 先结算）→ t0+2 USE → t0+3 AGREE | 照原表跑，钟灵与龚光杰互相还手，龚光杰 19/19 局以中毒 + 被制告终。加两条 VETO 后：中毒 0/20，被制 0/20，解药从没被搜走。一条是钟灵的 `hold_bite`：不再打她看见已中毒的人，交易之后不再打龚光杰，除非挨打。另一条是龚光杰的 `defer`：听见师父对钟灵开口后不打她。仍有 5/20 局不成：第一口被格开 → 没中毒 → 没有 demand；种子 14 是线索缓冲被挤掉。龚光杰的外伤不会好（内核没有自愈），“痊愈”指不再中毒。可选的左子穆 `warn`：对盟友出手没得手时，改为 THREATEN。**VETO 的时间窗一律以该驱力自己的标记计**，不看线索或经历：线索上限 8 条，经历 12 条。 |
+| 5 | USE / MOVE / ATTACK 上的原话，在场者都感知得到 | **成立**，`public_view` 保留原话与 social | 被看见的情形：ATTACK 成功或被格开、USE 成功或无效、MOVE 成功（出发地与目的地都看见）、WAIT 带字、INSPECT、TAKE、GIVE。**例外**：<br>• 无声失败：够不着、没什么可学、MOVE 时同 tick 早先已被制；<br>• MOVE 在门口失败：单向、门锁，重建的视图里没有原话；<br>• 不带字的 WAIT、耳语 TELL。<br>只有 TELL / ASK / WAIT 产生 SocialCue，其余 op 的原话只进 12 格的经历缓冲。所以必须被听见的台词只挂在不会无声失败的 op 上，否则另起一个 TELL 或 Pose。truce 与相识账本途径 2 必须读经历或任何 `PerceivedEvent.utterance`，不能只读线索。 |
+| 6 | 钟灵看见段誉经断崖下去后，能沿断崖跟下去 | **成立**：她看见他的 MOVE 与原话，相信他在 jianhu，路线经 d_cliff，DEFEND 让她在 t+1 移动 | 没看见的跳崖，靠探索约在 t+7 到达 jianhu。**龚光杰也会在 t+1 跟着跳**：give_up 必须在 t+1 抢先，他对跳崖的 SIGHT 那时已经有了。 |
+| 7 | 研读学成对旁观者可见 | **不成立**：旁观者看到的学成与没学成是同一个 `PE(study, success)`，没有事实也没有理由；难度对段誉隐藏，他预见不到哪一次学成 | 凌波微步要到交手时才以 `evaded` 显出来。**对策**：URGENT、once 的 `exult` 驱力，自己已会 evasion 时，学成后一 tick 摆 Pose“妙哉……”。钟灵的 `grab` 挂在这个 Pose 上：她看见他 STUDY 之后，又收到段誉的 WAIT 线索。`leave` 排在 exult 之后。 |
+| 8 | 搜人（`_hostile(until=subdued)`） | 相信对方在哪就去；否则去最近的、20 分钟内没看过的地方；只有这种地方都没了才打听（实际上从不打听） | 在后山 2 tick 就找到段誉，立刻出手，受伤的段誉被制。没看见的跳崖：18:48 他自己**探索下了断崖**，give_up 从不触发。`_blocked_doors` 加上认为单向的门的子类能挡住（四处转，最后困在 yading）。60 tick 里没问过一次路。flee 的“3 tick 内挨过打”约 60 分钟后失效（经历被挤出）。同 tick 的 ATTACK（.7）先于段誉的 MOVE（.4），开局就出手的追兵逃不掉。**对策（只在驱力层）**：<br>• hunt 不知下落时先 ASK 在场的人，再用 drives.py 里 MartialTactics 子类的 `_hostile`，其 `_blocked_doors` 加上认为单向的门；<br>• give_up 在找遍（困在 yading）时也触发；<br>• flee 改看在场的、态度 ≤ −2、没中毒也没被制的人；<br>• corner 每次遭遇一次。 |
+| 9 | Choice 能带原话 | **今天不能**：Choice 只有 index / rationale / tag / social / free；free 只给 TELL / ASK；原话只由 `npc_graph.express` 给有话题的 TELL / ASK 生成 | `Orchestrator._share_the_floor` 把被压下的 CHATTER 改写成光秃秃的 WAIT，丢掉原话与 social；只有 social 的 WAIT 谁也看不见。**对策**：<br>• `Choice.line` → NpcState → express，任何 op 有 line 都优先用它；<br>• 驱力的选择从不标 CHATTER；<br>• 每个 Pose 都带字（叩首每次都带）；<br>• line 在 `chosen()` 之后挂上，不挂在 Candidate 上。 |
+
+## 9. 出处
 
 - Jenova 智能体页：<https://www.jenova.ai/en/a/roleplay-game-master>（中文 <https://www.jenova.ai/zh/a/roleplay-game-master>）
 - Jenova 如何主持一场战役（2026-09-09）：<https://www.jenova.ai/en/resources/how-does-jenova-s-ai-roleplay-game-master-run-a-campaign>
