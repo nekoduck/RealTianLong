@@ -97,7 +97,7 @@ class Scenario:
     common_words: frozenset[str] = frozenset()  # 别称里同时是普通名词的（“石壁”）：只供解析，闸门不据此拒绝
     drives: Mapping[str, tuple[Drive, ...]] = field(default_factory=dict)   # 角色 → 驱力（性情，按表序）：会话把它套在策略外面；
                                                                             # 没有驱力的角色（及仓库、程序化世界、旧版）一切照旧
-    epithets: Mapping[str, str] = field(default_factory=dict)   # 外貌称呼：没人道出姓名之前怎样叫此人（“梁上的青衫少女”）
+    epithets: Mapping[str, str] = field(default_factory=dict)   # 外貌称呼：没人道出姓名之前怎样叫此人（“青衫少女”）
     introduced: Mapping[str, frozenset[str]] = field(default_factory=dict)   # 开场谁已认得谁（知其名）
     moments: Mapping[str, int] = field(default_factory=dict)    # 场景的时钟事实（"moon" 月出、"dawn" 天亮）：等待与看点据此换算
     beats: tuple[Beat, ...] = ()                                # 看点识别器（B1 与等待的停点）

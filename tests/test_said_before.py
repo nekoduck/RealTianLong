@@ -97,14 +97,14 @@ def test_ledger_knows_the_speakers_forms_the_session_hands_over():
 
 
 def test_session_forms_hide_names_the_player_cannot_call():
-    """gm._people：玩家叫不出名字的人只给不带名的别称（“青衫少女”），带名的（钟姑娘、灵儿）不给；两个开口的人共用的别称谁也不给。"""
+    """gm._people：玩家叫不出名字的人只给不带名的别称（“梁上的青衫少女”），带名的（钟姑娘、灵儿）不给；两个开口的人共用的别称谁也不给。"""
     from tianlong.runtime.gm import _people
     from tianlong.runtime.names import forms
     from tianlong.scenarios import build_wuliang_commoner
     sc = build_wuliang_commoner(7)
-    zl = replace(LING, speaker="zhongling", speaker_name="梁上的青衫少女")
+    zl = replace(LING, speaker="zhongling", speaker_name="青衫少女")
     people = dict(_people((zl,), sc, {"zhongling": forms(sc, "zhongling")}))
-    assert people.get("青衫少女") == "梁上的青衫少女" and not {"钟姑娘", "灵儿", "钟灵"} & set(people)
+    assert people.get("梁上的青衫少女") == "青衫少女" and not {"钟姑娘", "灵儿", "钟灵"} & set(people)
     named = replace(zl, speaker_name="钟灵")
     known = dict(_people((named,), sc, {}))
     assert known.get("钟姑娘") == "钟灵" and known.get("灵儿") == "钟灵"

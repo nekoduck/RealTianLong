@@ -4,7 +4,7 @@
          language/gate 的 violations，language/quotes 的 introduces，language/scene 的 SceneBrief / VoiceLine，
          language/render 的 build_plan，persistence 的 InMemoryWorldStore，scenarios 的 build_wuliang / build_wuliang_commoner，
          tests/test_commoner 的 _session（缺 LangGraph / Qdrant 即跳过）
-[OUTPUT]: plan §7 M2 test_names：引介之前含“钟灵”的叙述句被丢、brief 里是“梁上的青衫少女”；她录入的“我叫钟灵”之后，
+[OUTPUT]: plan §7 M2 test_names：引介之前含“钟灵”的叙述句被丢、brief 里是外貌称呼“青衫少女”（“梁上的青衫少女”作解析别称）；她录入的“我叫钟灵”之后，
           玩家与在场 NPC 的账本都有了她、名字放行；存档再读档账本不变（JSON 往返不变）；玩家抢先打出真名时解析从宽、只提示一次
           （那句提示过得了闸门）；展示用副本永不落库；没有外貌称呼的旧版逐字不变；
           对抗审查回归：NPC 教不会他自己叫不出的名字（模板答话展示成外貌称呼）、问句里复述的真名不算引介、问外貌称呼答来历、
@@ -70,7 +70,7 @@ def test_masked_view_renames_only_the_unintroduced_and_legacy_is_untouched():
     sc = build_wuliang_commoner(7)
     me = BeliefStore("ashun").revise_all(sc.priors["ashun"])[0]
     view = names.masked(me, names.initial(sc), sc)
-    assert view.sketch("zhongling").name == "梁上的青衫少女" and view.sketch("duanyu").name == "段誉"
+    assert view.sketch("zhongling").name == "青衫少女" and view.sketch("duanyu").name == "段誉"
     assert me.sketch("zhongling").name == "钟灵", "展示用副本：认知本身不动"
     assert set(view.entities) == set(me.entities) and view.beliefs == me.beliefs
     aliases = names.gate_aliases(names.initial(sc), "ashun", sc)
@@ -110,7 +110,7 @@ def test_before_the_introduction_her_name_is_dropped_and_the_brief_shows_her_loo
     s.intro()
     _scripted(s, "钟灵在梁上嗑着瓜子。梁上的青衫少女朝你们这边瞥了一眼。")
     r = s.turn("抬头看看梁上那少女")
-    assert "梁上的青衫少女" in r.brief.present and not any("钟灵" in x for x in r.brief.present)
+    assert "青衫少女" in r.brief.present and not any("钟灵" in x for x in r.brief.present)
     assert ("entity", "钟灵") in {(v.kind, v.detail) for v in r.render.violations}, "引介之前点她的名即违规"
     assert "钟灵" not in r.narration and "梁上的青衫少女朝你们这边瞥了一眼" in r.narration
     assert s.beliefs("ashun").sketch("zhongling").name == "钟灵", "外貌称呼只在展示用副本里，从不落库"
@@ -150,7 +150,7 @@ def test_typing_her_true_name_first_is_understood_and_remarked_on_once():
     first = s.turn("打量钟灵")
     assert first.parsed.kind.value == "gesture" and "钟灵" in (first.parsed.utterance or ""), "解释从宽：照常解析"
     remark = first.narration.splitlines()[-1]
-    assert remark.startswith("梁上的青衫少女") and "这个名字" in remark, "只一次地附一句（外貌称呼、不带引号）"
+    assert remark.startswith("青衫少女") and "这个名字" in remark, "只一次地附一句（外貌称呼、不带引号）"
     assert s.session_state()["names"]["early"] == ["zhongling"]
     assert "zhongling" not in s._acq.of("ashun"), "叫得出不等于有人引介：她仍是外貌称呼"
     again = s.turn("打量钟灵")
@@ -167,7 +167,7 @@ def test_the_early_remark_passes_the_gate():
     known = frozenset(e.name for e in sc.state.entities.values()) | {sk.name for sk in me.entities.values()}
     for command in ("打量钟灵", "对钟灵说：多谢", "钟灵，你好", "看看钟灵", "问钟灵"):
         line = names.early_line(["zhongling"], command, sc).strip()
-        assert line.startswith("梁上的青衫少女") and not violations(line, line, "", plan, SceneBrief(), known, command)
+        assert line.startswith("青衫少女") and not violations(line, line, "", plan, SceneBrief(), known, command)
 
 
 # ============================================================
@@ -185,7 +185,7 @@ def test_an_npc_cannot_teach_a_name_he_never_heard():
     assert "zhongling" not in s._acq.of("mawude")
     assert "zhongling" not in s._acq.of("duanyu"), "马五德的听众没从他嘴里学到她的名字"
     assert "zhongling" not in s._acq.of("ashun") and "钟灵" not in r.narration
-    assert "梁上的青衫少女在剑湖宫大殿" in r.narration, "他指给你看的是那个人，不是那个名字"
+    assert "青衫少女在剑湖宫大殿" in r.narration, "他指给你看的是那个人，不是那个名字"
     assert not any("钟灵" in x for x in s.belief_lines())
 
 

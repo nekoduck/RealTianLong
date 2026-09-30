@@ -105,7 +105,7 @@ LORE_C: dict[str, str] = {
 ALIASES_C: dict[str, tuple[str, ...]] = {
     **ALIASES,
     "ashun": ("阿顺", "小伙计", "挑茶的", "伙计", "小兄弟"),
-    "zhongling": (*ALIASES["zhongling"], "青衫少女", "少女", "姑娘"),
+    "zhongling": (*ALIASES["zhongling"], "青衫少女", "梁上的青衫少女", "少女", "姑娘"),
     "shanjiao": ("山脚", "山下"),
     "d_downhill": ("关卡", "木栅", "栅门"),
     "chabing": ("茶饼", "普洱茶", "普洱"),

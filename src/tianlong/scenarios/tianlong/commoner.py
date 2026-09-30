@@ -83,7 +83,7 @@ OWNS_C = (*OWNS, ("ashun", "chabing"), ("ashun", "huozhezi"), ("ashun", "suiyin"
 SECRETS_C = (*SECRETS, "王子", "世子", "镇南王", "段正淳")
 CHRONICLE = ("duanyu", "zhongling", "ganguanghao", "geguangpei", "gongguangjie")   # 终章纪事取材的角色
 # 没人道出姓名之前怎样称呼（帮众本来就是泛称）
-EPITHETS = {"zhongling": "梁上的青衫少女", "ganguanghao": "高个子的东宗弟子", "geguangpei": "清秀的西宗女弟子",
+EPITHETS = {"zhongling": "青衫少女", "ganguanghao": "高个子的东宗弟子", "geguangpei": "清秀的西宗女弟子",
             "sikongxuan": "须发花白的药农头领"}
 _MATCH = ("gongguangjie", "zuozimu", "xinshuangqing")      # 比剑时唱过名的人：满堂都知其名
 

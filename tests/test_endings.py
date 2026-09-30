@@ -65,7 +65,7 @@ def test_chronicle_tells_only_what_truly_happened_out_of_sight():
     assert mastered and any("参透" in x for x in lines)
     assert any("撂下一句狠话" in x for x in lines), "龚光杰作罢"
     assert not any("解药" in x for x in lines), "开场的以药换人玩家亲眼看见了：不是“没看见的事”"
-    assert "钟灵" not in text and "梁上的青衫少女" in text, "没被引介的人用外貌称呼"
+    assert "钟灵" not in text and "青衫少女" in text, "没被引介的人用外貌称呼"
     assert s.epilogue().count(CHRONICLE_HEAD) == 1 and "真相揭晓" not in s.epilogue(), "有纪事角色就用纪事代替真相表"
 
 
