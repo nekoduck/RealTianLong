@@ -1,8 +1,9 @@
 """
 [INPUT]: 依赖 tianlong.language.lead 的 lead_line，tianlong.runtime.session 的 GameSession，tianlong.scenarios 的 build_wuliang
 [OUTPUT]: 先声验收：玩家自己这一步写成确定的一两句人话——拿到了、到了哪、说了什么、失败说明原因、动手写出后果；模型迟迟不出字时先声到点顶上；
-          只说玩家自己的行动，旁人的言行一概不抢（留给声音模型）；干等不抢先；同一回合同一句（确定性）
-[POS]: tests 的先声：证伪“第一句要等模型”“先声替 NPC 说话”“失败被写成成功”
+          只说玩家自己的行动，旁人的言行一概不抢（留给声音模型）；干等不抢先；同一回合同一句（确定性）；
+          先声时限从回车算起（解释 0.9 秒、叙述首字 3 秒时，首字 ≤ 回车后 1.6 秒）
+[POS]: tests 的先声：证伪“第一句要等模型”“先声替 NPC 说话”“失败被写成成功”“解释花掉的时间还要再等一遍先声时限”
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -86,6 +87,33 @@ def test_first_text_does_not_wait_for_a_slow_model():
     r = s.turn("拿起兵器架上的长剑", on_text=got.append)
     assert got and got[0].startswith("你") and "长剑" in got[0]
     assert r.first_text_ms is not None and r.first_text_ms < 1000, r.first_text_ms
+    assert "面面相觑" in r.narration
+
+
+def test_deadline_from_enter():
+    """先声的时限从回车算起：解释花 0.9 秒、叙述模型首字要 3 秒时，首字 ≤ 回车后 1.6 秒（先声时限 1.5 秒 + 0.1 秒余量）——
+    以前从叙述开始才起算，首字要等到 0.9 + 结算 + 1.5 秒。时间按比例 K 缩短（余量 0.1 秒是结算与交付的开销，不缩）。"""
+    import time
+
+    from tianlong.language.llm import ScriptedLLM
+
+    k = 0.5
+    voice = ScriptedLLM(lambda p, s, sc: "兵器架旁的弟子们面面相觑。")
+    s = GameSession(build_wuliang(7), llm=voice, fast_llm=ScriptedLLM(lambda p, s, sc: ""))
+    s.narrator.lead_after = 1.5 * k
+    s.intro()
+    voice.first_delay = 3.0 * k                  # 开场不等：只有这一回合的叙述首字慢
+    real = s.interpreter.interpret
+
+    def slow(*a, **kw):
+        time.sleep(0.9 * k)
+        return real(*a, **kw)
+
+    s.interpreter.interpret = slow
+    got: list[str] = []
+    r = s.turn("拿起兵器架上的长剑", on_text=got.append)
+    assert r.timings["interpret"] >= 900 * k and got[0].startswith("你") and "长剑" in got[0]
+    assert r.first_text_ms is not None and r.first_text_ms <= (1.5 * k + 0.1) * 1000, (r.first_text_ms, r.timings)
     assert "面面相觑" in r.narration
 
 

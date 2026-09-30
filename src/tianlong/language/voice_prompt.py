@@ -5,7 +5,7 @@
           in_words() / lapse_line()（钟点换成时辰文字、一段等待之后的时辰）、CLOCK_ANY（正文里的钟点数字）/ TIMED（正文已交代过时辰）
 [POS]: language/narrator 的措辞层：主持人之声交给模型的全部文字——系统提示（第二人称、80~250 字、台词归属、只许点名可点名的、
        不替玩家开口、不写钟点、停在钩子上）与用户提示（最近三段正文每段末尾约 300 字且钟点换成时辰、玩家原话、事实清单、
-       身体状况与身边人的伤、干等时的钩子、意料之外、没人接的话、要说出口的话（腔调/谈资/来历/近来经历/回应/可点名）、
+       身体状况与身边人的伤、干等时的钩子、意料之外、没人接的话、要说出口的话（按叙述者给的顺序；腔调/谈资/来历/近来经历/回应/可点名）、
        初见外观、眼下处境、收幕、已写好的开头），以及没有模型时台词的模板措辞。提示词只是请求，闸门在 narrator 里验收；
        模型只见时辰文字，不见钟点数字（钟点的样子与闸门同一份 CLOCK_ANY）
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -171,7 +171,7 @@ def scene_prompt(brief: SceneBrief, command: str, when: Sequence[str], facts: Se
         def fits(n: str) -> bool:
             return n in speakable or n in plan.source or n not in universe or n in lines_text
         lines_text = "\n".join(x for vl in brief.lines for x in (vl.knows, vl.lately, vl.about) if x)
-        parts.append("要说出口的话（按先后，逐句写成对白）：\n"
+        parts.append("要说出口的话（按这个顺序，逐句写成对白）：\n"
                      + "\n".join(_describe(i, vl, fits) for i, vl in enumerate(brief.lines, 1)))
     if looks:
         parts.append("玩家初次看清的人与物（仅作外观描写的依据）：\n" + "\n".join(looks))

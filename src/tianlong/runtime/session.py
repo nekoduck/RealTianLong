@@ -16,7 +16,7 @@
        （当面动手、对同伴——自己人与 DEFEND 目标——动手都算）、
        ASK_GM/META/追问不推进时间也不落库（AsideMixin：场外回答边生成边逐句过名字闸门；模型写的追问同样过闸门，玩家自己说出的名字不算）→
        权威结算（同一事务附上请求进度与会话运行态）→ 同步记忆索引 →
-       主持人之声据玩家感知与 SceneBrief 流式叙述（过语义闸门；SceneBrief 带前后照应——拿本回合开始前玩家的认知比对，
+       主持人之声据玩家感知与 SceneBrief 流式叙述（过语义闸门；迟到先声的时限从回车算起：deadline = 回车时刻 + lead_after；SceneBrief 带前后照应——拿本回合开始前玩家的认知比对，
        此前已知下落的东西再翻出来不算发现，抵达结局的那一回合收幕）→ 幂等记下叙述（先写者为准，返回与记住的都是落库的那一段）→
        抵达结局地点即落幕（EndingMixin）。
        后台预算的决策只依赖同一版本；首 tick 时版本未变才用，否则或本回合不推进就丢弃——结果与顺序执行逐项相同。
@@ -145,6 +145,7 @@ def _interruptible(env: TurnEnvelope) -> bool:
 class _Stopwatch:
     def __init__(self) -> None:
         self.start = self._t = time.perf_counter()
+        self.entered = time.monotonic()       # 回车的时刻（先声时限的起点，与 narrate_scene 的 deadline 同一口径）
         self.laps: dict[str, float] = {}
 
     def lap(self, name: str) -> None:
@@ -505,10 +506,12 @@ class GameSession(AsideMixin, EndingMixin):
         # 此前已知下落的东西：再翻出来不算“发现”（重试补写时没有 before，照旧）
         familiar = frozenset(e for e in before.entities if before.location_of(e) is not None) if before else frozenset()
         scene = getattr(self.narrator, "narrate_scene", None)
+        after = getattr(self.narrator, "lead_after", None)      # 迟到先声的时限从回车算起：解释与结算花掉的时间不再另等
         if scene is not None:
             render = scene(self.player, env.percepts, me.entities, brief=brief, fresh=env.fresh, command=text,
                            familiar=familiar, since=clock_label(env.start_clock) if lapse else "",
-                           lapse=lapse, known=self._known(me), on_text=sink)
+                           lapse=lapse, known=self._known(me), on_text=sink,
+                           deadline=clock.entered + after if after else None)
         else:
             render = self.narrator.narrate_rendered(self.player, env.percepts, me.entities, fresh=env.fresh,
                                                     command=text, lapse=lapse, known=self._known(me))
