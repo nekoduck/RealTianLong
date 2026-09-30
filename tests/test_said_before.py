@@ -1,12 +1,13 @@
 """
 [INPUT]: 依赖 language/voice_prompt 的 scene_prompt / REPEAT / SAID_SHOWN，language/quotes 的 said_by，language/render 的 RenderPlan，
-         language/scene 的 SceneBrief / Sky / VoiceLine，runtime/talk 的 said / SAID_KEEP
+         language/scene 的 SceneBrief / Sky / VoiceLine，runtime/talk 的 said / SAID_KEEP，runtime/gm 的 _people，runtime/names 的 forms
 [OUTPUT]: M3 台词不重复与天色的提示词验收（设计 §7 M3 的 test_said_before）：本回合开口的人最近说过的原话进提示词
           “他最近说过的话（别重复）”，至多 SAID_SHOWN 句，与这回合要说的原话三字片段重合 ≥REPEAT 的加注“换个说法”、
           不重合的只列不注；本回合不开口的人不列，said_before 为空时提示词与旧版逐字相同；sky 给了才有“天色”一节；
           系统规则 8 不许编造征兆；台词账本只记确凿归到本回合有台词的人名下的引语（转述、拟声、归属不明、玩家自己的话都不记；
           引子里认不出的人不往前记到上一个说话者名下），
-          每人最近 SAID_KEEP 句
+          每人最近 SAID_KEEP 句；会话交来的开口者别称 brief.people 同样认得（“灵儿拍手笑道：”），gm._people 只给玩家叫得出名字的人
+          带名的别称、两人共用的别称谁也不给（M3 语言侧遗留 3 接上）
 [POS]: tests 的台词账本与提示词规格。只依赖核心，零依赖 CI 同跑；会话里账本随运行态落库、读档恢复由 test_continuity 验
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -84,3 +85,28 @@ def test_ledger_never_hands_an_unrecognised_speakers_line_to_someone_else():
                   "钟灵拍手道：“好玩。”", "一个清脆的声音道：“好玩。”"):
         assert said({}, "龚光杰冷笑道：“你笑什么？”" + other, brief) == {"gong": ["你笑什么？"]}, other
     assert said({}, "“你笑什么？”龚光杰冷笑道。", brief) == {"gong": ["你笑什么？"]}, "句首引语紧跟的“某某道”照记"
+
+
+def test_ledger_knows_the_speakers_forms_the_session_hands_over():
+    """M3 语言侧遗留（open issue 3）接上：会话经 build_brief 交来开口者的别称（brief.people，相识账本过滤过），
+    “灵儿拍手笑道：”记到钟灵名下；不是本回合开口的人的别称照旧不认。"""
+    brief = SceneBrief(lines=(LING,), people=(("灵儿", "钟灵"), ("左掌门", "左子穆")))
+    assert said({}, "灵儿拍手笑道：“我家住万劫谷。”", brief) == {"ling": ["我家住万劫谷。"]}
+    assert said({}, "龚光杰冷笑道：“你笑什么？”左掌门沉声喝道：“光杰，退下！”", replace(brief, lines=(GONG,))) == {
+        "gong": ["你笑什么？"]}, "左子穆本回合没开口：他的别称不认"
+
+
+def test_session_forms_hide_names_the_player_cannot_call():
+    """gm._people：玩家叫不出名字的人只给不带名的别称（“青衫少女”），带名的（钟姑娘、灵儿）不给；两个开口的人共用的别称谁也不给。"""
+    from tianlong.runtime.gm import _people
+    from tianlong.runtime.names import forms
+    from tianlong.scenarios import build_wuliang_commoner
+    sc = build_wuliang_commoner(7)
+    zl = replace(LING, speaker="zhongling", speaker_name="梁上的青衫少女")
+    people = dict(_people((zl,), sc, {"zhongling": forms(sc, "zhongling")}))
+    assert people.get("青衫少女") == "梁上的青衫少女" and not {"钟姑娘", "灵儿", "钟灵"} & set(people)
+    named = replace(zl, speaker_name="钟灵")
+    known = dict(_people((named,), sc, {}))
+    assert known.get("钟姑娘") == "钟灵" and known.get("灵儿") == "钟灵"
+    twin = replace(named, speaker_name="钟二")               # 同一套别称归到两个开口的人：谁也不给
+    assert "钟姑娘" not in dict(_people((named, twin), sc, {}))

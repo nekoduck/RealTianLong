@@ -10,7 +10,7 @@
           build_brief()（SceneBrief：要替 NPC 说出口的话——谈资只给没说过的、被问到的人附上来历；任何操作上的驱力原话标 said 照录、
           可点名的名字经会话交来的相识账本过滤、命题说法里玩家叫不出名字的人换成外貌称呼、问到外貌称呼也算问到了他、
           没被引介的人初次冲玩家开口可自报姓名——+ 前后照应 + 没人接的话 + 是否收幕
-          + 本回合开口者最近说过的原话 said_before + 本回合动过手脚的人 astir）、
+          + 本回合开口者最近说过的原话 said_before + 本回合动过手脚的人 astir + 开口者的别称 people——叫不出名字的人不给带名的）、
           self_view() / goal_text() / aside_prompt()（场外问答只用玩家自己的认知）、PLAYER_GOALS（玩家目标的口吻表：goal_text 与
           scripts/bench_rival 的世界圣经同一口径）、gated_stream()（场外回答逐句过名字闸门、边生成边交付）、
           closing_prompt()（终章只取玩家亲历）、leaked() / leaks()（名字闸门：玩家不认识的实体——含见过却叫不出名字的人 veiled，
@@ -262,7 +262,19 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
                       afflicted=ctx.afflicted, closing=closing, nearby=ctx.nearby, unanswered=unanswered, hurt=hurt,
                       hooks=tuple(hooks) if env.intent.op == Op.WAIT and not lines and not closing else (),
                       said_before=tuple((n, tuple(said[a])) for a, n in speaking.items() if (said or {}).get(a)),
-                      astir=tuple(sorted(astir)))
+                      astir=tuple(sorted(astir)), people=_people(lines, scenario, veiled or {}))
+
+
+def _people(lines: Sequence[VoiceLine], scenario: Scenario, veiled: Mapping[str, Sequence[str]]
+            ) -> tuple[tuple[str, str], ...]:
+    """本回合开口的人在正文里的别称 → 他的称呼（台词账本据此认得“钟姑娘道：”）：玩家叫不出名字的人，带名的别称不算；
+    两个开口的人共用的别称（“姑娘”）谁也不给。"""
+    forms: dict[str, set[str]] = {}
+    for vl in lines:
+        for a in scenario.gate_aliases.get(vl.speaker, ()):
+            if a != vl.speaker_name and a not in veiled.get(vl.speaker, ()):
+                forms.setdefault(a, set()).add(vl.speaker_name)
+    return tuple(sorted((a, next(iter(n))) for a, n in forms.items() if len(n) == 1))
 
 
 def _cue(ev: PerceivedEvent, me: BeliefStore) -> str | None:

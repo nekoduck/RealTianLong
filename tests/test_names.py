@@ -195,7 +195,8 @@ def test_asking_by_her_true_name_is_not_an_introduction():
     s.intro()
     r = s.turn("问左子穆：干光豪是谁？")
     assert "ganguanghao" not in s._acq.of("ashun") and "这个名字" in r.narration
-    assert "高个子的东宗弟子" in s.turn("环顾四周").narration.splitlines()[-1]
+    seen = next(x for x in s.turn("环顾四周").narration.splitlines() if x.startswith("你看到"))   # 所见之后还可能有一处细节
+    assert "高个子的东宗弟子" in seen
     s2 = _session()
     s2.intro()
     r2 = s2.turn("问左子穆：高个子的东宗弟子是谁？")

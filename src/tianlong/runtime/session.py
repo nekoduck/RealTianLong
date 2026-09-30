@@ -2,7 +2,7 @@
 [INPUT]: 依赖 runtime/authority 的 WorldAuthority / Settlement，runtime/versions 的 current_versions / check_save，runtime/talk 的谈资账本与台词账本，
          runtime/gm 的主持层纯函数（gm_command / companions / salient / build_brief），runtime/aside 的 AsideMixin / ENDED（不推进的回合），
          runtime/endings 的 EndingMixin（落幕与终章），runtime/cast 的 policy_for / wakes / advance_marks（驱力），
-         runtime/staging 的 recognize / stops_wait / lore_at（看点：只读玩家自己的感知；月出后的外观描写），runtime/suggest 的 suggestions，
+         runtime/staging 的 recognize / stops_wait / lore_at / staging / dress（看点、写法卡、景观、细节、天色：只读玩家自己的感知），runtime/suggest 的 suggestions，
          runtime/names 的相识账本（Acquaintance / masked / voiced / gate_aliases / may_name / learn_heard / learn_delivered / early_line），
          agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
          memory 的 QdrantMemoryIndex / Recall / MemoryIndexer / MemoryScope，language 的 IntentParser / MoveKind / Parsed / Narrator /
@@ -11,7 +11,7 @@
          RequestConflict / VersionConflict，scenarios 的 Scenario / Ending，cognition 的 Candidate / believed_place，
          language/templates 的 render_fact，memory/view 的 MemoryView（NPC 的长期记忆摘要，增量汇总——水位含边界、按记录 ID 去重，与读档后重建逐项相同）
 [OUTPUT]: 对外提供 GameSession（可玩会话：turn() 一回合、intro()/epilogue() 开场与终章、belief_lines() 玩家自己的认知；
-          读档接续并恢复调度标记、已描写实体、最近几段正文、提示进度、谈资账本、台词账本、驱力标记与看点账本；请求幂等、存档版本闸门）、
+          读档接续并恢复调度标记、已描写实体、最近几段正文、提示进度、谈资账本、台词账本、驱力标记、看点账本与细节账本 facets；请求幂等、存档版本闸门）、
           TurnReport（一回合的全部产物：世界侧与文字侧分开记录，含这句话的类别、结局、首字耗时、分阶段耗时、叙述上下文与玩家感知到的看点 beats）、
           ENDED（再导出自 runtime/aside）
 [POS]: runtime 的装配中心（主持层的回合循环）：一回合 = 解释玩家输入（后台同时算好本 tick 的 NPC 决策；元指令与“GM：”一眼认得，不算）→ 按类别推进：
@@ -37,6 +37,7 @@
        给玩家看的一切（解释、叙述、行动建议、场外问答、终章）都用 _view()——还叫不出名字的人换成外貌称呼的展示用副本，
        叙述与台词读的感知同样经 names.voiced（旁人原话里他叫不出名字的人换成外貌称呼）；
        叙述闸门的别称按账本给（没引介的人的名字只用于拒绝），NPC 台词可点名的经 names.may_name；NPC 的决策从不经过它。
+       SceneBrief 另经 staging.dress 带上本回合的看点、写法卡、景观、细节与天色（旧版全空、逐字不变）；给过的细节在叙述之后记账。
        CLI、测试、未来的 Web 前端都只和它打交道
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -270,6 +271,7 @@ class GameSession(AsideMixin, EndingMixin):
         self._marks: dict[str, dict[str, list[int]]] = {}   # 驱力标记：角色 → 驱力 → 兑现成功的时刻（随世界同一事务落库）
         self._staged: set[str] = set()      # 已让等待停过的一次性看点（随世界同一事务落库）
         self._acq = names.initial(scenario)   # 相识账本：谁叫得出谁的名字（听见的原话随世界落库，交付的正文随下一次提交）
+        self._facets: set[str] = set()      # 细节卡组里一幕之内已经给过的细节（派生数据，随下一次提交落库）
         self._asides: dict[str, tuple[str, TurnReport]] = {}   # 带 request_id 的不推进回合：ID → (原文摘要, 报告)
         self._restore(session_state)
         self.llm = llm
@@ -280,7 +282,8 @@ class GameSession(AsideMixin, EndingMixin):
         self.pipeline = pipeline
         # 开了磁盘缓存（评测、演示录像）就不用迟到的先声：它由网速决定出不出场，同一局重跑的文字就对不上了
         self.narrator = Narrator(llm, scenario.setting, scenario.lore, scenario.style, scenario.gate_aliases, scenario.secrets,
-                                 lead_after=None if isinstance(llm, CachedLLM) else LEAD_AFTER)
+                                 lead_after=None if isinstance(llm, CachedLLM) else LEAD_AFTER,
+                                 cards={k: c.text for k, c in scenario.cards.items()})
         self._universe = frozenset(e.name for e in scenario.state.entities.values())  # 闸门拒绝用的名字全集
         self._friends = gm.companions(scenario.profiles[self.player])   # 有人对他们动手即打断等待
         self.speaker: Speaker = TemplateSpeaker()     # 决策图里从不调模型：NPC 的台词由主持人之声一并写出
@@ -320,7 +323,8 @@ class GameSession(AsideMixin, EndingMixin):
                 "hint": self._hint, "told": {k: sorted(v) for k, v in sorted(self._told.items()) if v},
                 "drives": {a: {k: list(v) for k, v in sorted(m.items())} for a, m in sorted(marks.items()) if m},
                 **({"said": dict(sorted(self._said.items()))} if self._said else {}),
-                **({"staged": sorted(staged)} if staged else {}), **({"names": acq.to_state()} if acq.known else {})}
+                **({"staged": sorted(staged)} if staged else {}), **({"names": acq.to_state()} if acq.known else {}),
+                **({"facets": sorted(self._facets)} if self._facets else {})}
 
     def _restore(self, state: Mapping | None) -> None:
         """会话运行态以落库的那一份为准：读档时，以及一次请求被同一请求的另一次投递越过之后。"""
@@ -335,6 +339,7 @@ class GameSession(AsideMixin, EndingMixin):
                        for a, m in (state.get("drives") or {}).items()}
         self._staged = {str(k) for k in state.get("staged", ())}
         self._acq = names.Acquaintance.from_state(state["names"]) if "names" in state else names.initial(self.scenario)
+        self._facets = {str(x) for x in state.get("facets", ())}
 
     def _opening_keys(self) -> list[str]:
         """开场讲的初始认知里应当描写外观的实体：新游戏的 intro() 描写它们，建档后尚无提交就读档时据此补回“已描写”。"""
@@ -571,6 +576,7 @@ class GameSession(AsideMixin, EndingMixin):
         brief = gm.build_brief(env, me, sc, self.beliefs, self._recent, before, closing, self._told,
                                lambda a: self.store.recent_memories(self.ref, a, 0), suggestions(me, friends=self._friends),
                                self._said, lambda a, mind: names.may_name(a, mind, acq, sc), self._veiled())
+        brief = staging.dress(brief, staging.staging(sc, env, self._facets), sc.lore)   # 看点、写法、景观、细节与天色
         aliases = names.gate_aliases(acq, self.player, sc, text)
         # 此前已知下落的东西：再翻出来不算“发现”（重试补写时没有 before，照旧）
         familiar = frozenset(e for e in before.entities if before.location_of(e) is not None) if before else frozenset()
@@ -598,6 +604,7 @@ class GameSession(AsideMixin, EndingMixin):
         self._recent = [*self._recent, narration][-RECENT_KEEP:]
         self._acq, _ = names.learn_delivered(self._acq, self.player, narration, brief, command, self.scenario)
         self._said = talk.said(self._said, narration, brief)
+        self._facets |= set(brief.details if brief else ())
         offered = {vl.speaker: vl.knows for vl in (brief.lines if brief else ()) if vl.speaker_name in narration}
         for npc in self.scenario.npcs:
             said = talk.told(self.scenario.profiles[npc].knows, narration, offered.get(npc, ""))

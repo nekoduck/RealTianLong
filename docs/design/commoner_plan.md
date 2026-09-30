@@ -419,6 +419,7 @@ B 的结构性弱点仍然存在：硬事实错误率 13%；私奔那对不在�
   - `stops_wait(beats, percepts, player) -> bool`：等待在玩家感知到看点的那个 tick 停下。
   - `witnessed(...)` 供 B1 使用。
   - `sky(clock, moments) -> str`：交给叙述者，例如“戌时，月亮还没出来”“月已升过东边峭壁”。
+  - 实现补充（M3）：`sky(clock, moments, start) -> Sky | None`（文字、是否入夜、月亮 none / rising / up；rising 只在月出那个 tick 落在本回合里；场景没有月出时刻返回 None，旧版不给天色、审计不查）。`staging(scenario, env, facets)` 另给 `details`；`dress(brief, st, lore)` 交给 SceneBrief——天色、看点都经它，因为引擎里只许会话调用 staging（test_isolation），gm.build_brief 不碰它。事件看点只认成功的，景观只在那段描写本回合初次交付时（lore_at 与 env.fresh 是唯一的一处换景）；同一回合认出几个，取场景表里靠后的那个作 focus。写法卡是 `Card(text, cues)`：由看点的 stage 点名，或由卡自己的识别器认出（点穴得手 status、只认看见或听见 senses；不计 B1、不停等待）；貂毒的写法随 mink_strike（只有貂咬中时才有“毒”这个状态），subdue_style 只管点穴；卡文是一句能照抄进正文的话，不用冒号（“叫骂：……”会被当成有人开口）。细节账本 facets 是给过的细节原文，与谈资账本同一契约（叙述之后记账、随下一次提交落库）。
 - **`runtime/session.py`**（先迁出约 150 行，再加约 70 行接线，终值约 710）：
   - `__init__`：`self._marks`、`self._acq`、`self._staged`、`self._facets` 由 `_state/_restore` 管理。
   - `_npc_split`：`due |= cast.wakes(...)`。
@@ -446,6 +447,7 @@ B 的结构性弱点仍然存在：硬事实错误率 13%；私奔那对不在�
 
 - **`language/voice_prompt.py`（新，约 220 行）**：把 `narrator._prompt / _describe / _system / SOCIAL_LABELS` 迁出，narrator.py 从 738 行降到约 560 行。
   - 静态前缀放在最前面，便于隐式缓存：契约、世界、文风、看点卡目录。
+  - 实现补充（M3）：写法卡目录进系统提示（没有卡时系统提示逐字不变）；用户提示里四段——看点、写法（只点卡的编号）、眼前的景象（景观原文，初见外观里不再重列）、这回多看出的细节——都空时一段也不加，旧版提示词逐字不变。
   - **新段落**：
     - “本回合的看点（围绕它写，其余一笔带过）”；
     - “写法（只加修辞，不加事实）”；
@@ -657,6 +659,7 @@ B 的结构性弱点仍然存在：硬事实错误率 13%；私奔那对不在�
   - `test_detail_deck`：在后院连续三次“四下打量”，提示词里给出三条不同的细节，一幕之内不重复；
   - `test_said_before`：同一 NPC 的台词与他最近的台词 3-gram 重合 ≥0.6 时，提示词里带“别重复”，F3 计入。
 - **出口条件**：scripted 管线跑完普通人走查，G1 ≤ 5%，SEAM = 0，NAME = 0。
+- **实现补充（M3 出口）**：`scripts/walk_commoner.py`——叙述者是照提示词写的 ScriptedLLM（天色、事实清单、照录的原话与要说出口的话、景观、初见外观、细节，再加本回合点到的写法卡卡文），解释一律退回规则；走 §8.1 的跟随型 38 句（种子 7、11）与 sim_beats 的跟随型脚本化玩家（走到落幕）。走查里查出的一处误杀（照抄清单里带字的姿态“口中念念有词：……”被判 voice）已修（quotes._posed），修后 G1 = 0%、SEAM = 0、NAME = 0。
 
 ### M4：评测改造 + run7（1.5 天 + 一轮代理评测）
 

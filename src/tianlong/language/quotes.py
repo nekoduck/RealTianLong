@@ -3,7 +3,7 @@
          _clause_after / _clause_before / _post_attribution / _persons）与词表（STATUS_LEXICON / STATUS_EXCLUSIONS / MIN_ALIAS / SPEECH_MARKS /
          PRONOUNS / POST_WINDOW / QUOTE_OPEN），language/scene 的 SceneBrief / VoiceLine
 [OUTPUT]: 对外提供 check_quotes()（台词闸门：引语归属、替玩家开口、NPC 越界点名、凭空多出的说话者）、voiced()（正文里确有归属引语的说话者，
-          供叙述者查台词是否讲到）、said_by()（正文里确凿归到本回合有台词的人名下、且本名就在这段引语引子里的原话，供会话记台词账本）、unspoken()（不是话的引语的起点，交给叙述闸门照叙述查）、
+          供叙述者查台词是否讲到）、said_by()（正文里确凿归到本回合有台词的人名下、且本名——或会话交来的别称 brief.people——就在这段引语引子里的原话，供会话记台词账本）、unspoken()（不是话的引语的起点，交给叙述闸门照叙述查）、
           introduces()（一句话里说话者自报了姓名：我叫/在下/本姑娘 + 名或带名的别称，我姓/在下姓/本姑娘姓 + 姓；相识账本与主持层共用）、
           recites()（正文里有一段引语照录了某句录入的原话，叙述者查 said 台词讲到没有）、
           台词词表 OBJECT_MARKERS / SUBJECT_LEADS / PERCEPTION / PLAYER_MIND / VOICED / SEQUENCE / PRETEND / DOUBTED / SOUNDS / SELF_INTRO /
@@ -20,7 +20,8 @@
        眼神里的问话（“那目光分明在问：”后跟无引号的话；“目光一沉问：“……””是开了口）、无引号冒号之后照着出处写的景；
        “龚光杰的声音远远传来：”里声音的主人是说话者；“你打定主意熬到天黑”只是复述玩家自己输入的意图（覆盖过半且收尾相同、
        不点名谁、不添先后说法），不算替他拿主意；引语里“当作/以为”之后的状态词是假设，不算说出的状态
-       （“别以为我不知道……”“还当我瞧不出……”是反话，照查）。
+       （“别以为我不知道……”“还当我瞧不出……”是反话，照查）；确凿归到没开口的人名下的引语是 voice——除非清单里正有他那一行
+       带字的姿态、字就在那一行里（_posed：“口中念念有词：……”照抄不算凭空多出的话，挪到别人嘴里照拦）。
        局限（如实）：代词不分男女，“钟灵瞪了段誉一眼。他道：”会接到钟灵身上——只会多丢一句（录入的原话随后照补），不会多交付一句；
        主语靠词法近似（宾语标记、“的”字结构、感知动词、“你”只在小句开头或承接词、状语之后才是主语），复杂句式可能归错；
        转述只认“说/告诉/提到/透露/低语”后面直接跟着的内容，且须找得到具名的说话者；替玩家起念头只认“决定/打定主意/心想”等少数说法
@@ -359,16 +360,18 @@ def said_by(text: str, brief: SceneBrief) -> tuple[tuple[str, str], ...]:
     """交付的正文里确凿归到本回合有台词的人名下的引语：(本名, 原话)，按先后。转述、不是话的引语、归属不明的都不算。
     只认 brief 里说话者的本名（会话手里没有计划，别称认不出）；所以还须他的本名就在这段引语自己的引子里
     （同一句里、上一段引语之后，或句首引语紧跟的“某某道”），或紧接着他上一段记下的引语说——
-    “左掌门沉声喝道：”“一个清脆的声音道：”“段誉拱手道：”里认不出的人不会被往前找、记到龚光杰名下。宁可少记。"""
+    “左掌门沉声喝道：”“一个清脆的声音道：”“段誉拱手道：”里认不出的人不会被往前找、记到龚光杰名下。宁可少记。
+    会话交来的 brief.people（开口者的别称 → 称呼，相识账本过滤过：叫不出名字的人只有不带名的称呼）同样认得（“钟姑娘道：”）。"""
     names = {vl.speaker_name for vl in brief.lines}
+    people = {**{n: n for n in names}, **{f: n for f, n in brief.people if n in names}}
     plan = RenderPlan("", (), frozenset(), frozenset(), frozenset(), frozenset(), (), (),
-                      people=tuple((n, n) for n in sorted(names)))
+                      people=tuple(sorted(people.items())))
     quotes, _, whos, inert = _speakers(text, plan, names)
     spans = _spans(text)
     out: list[tuple[str, str]] = []
     kept: set[int] = set()
     for k, (q, (who, sure)) in enumerate(zip(quotes, whos, strict=True)):
-        if not (sure and who in names and k not in inert and not q.indirect and _norm(q.words)):
+        if not (sure and who in people and k not in inert and not q.indirect and _norm(q.words)):
             continue
         a = next((a for a, b in spans if a <= q.start < b), 0)
         lead = text[max(a, quotes[k - 1].end if k else 0):q.start]
@@ -376,7 +379,7 @@ def said_by(text: str, brief: SceneBrief) -> tuple[tuple[str, str], ...]:
         chained = k - 1 in kept and whos[k - 1][0] == who and not text[quotes[k - 1].end:q.start].strip()
         if named or chained:
             kept.add(k)
-            out.append((who, q.words.strip()))
+            out.append((people[who], q.words.strip()))
     return tuple(out)
 
 
@@ -421,7 +424,8 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
         if name not in voices and name in plan.speakers:
             continue                                # 确实开口、却没交来台词的人：由 check() 把关
         if name not in voices and sure and name and name not in PRONOUNS:
-            out.append(Violation("voice", name))    # 别人的原话照搬到他嘴里也算：谁说了什么同样是事实
+            if not _posed(words, name, plan):       # 他自己那行带字的姿态照着写（“口中念念有词：……”）不是凭空多出的话
+                out.append(Violation("voice", name))    # 别人的原话照搬到他嘴里也算：谁说了什么同样是事实
             continue
         if len(words) >= MIN_ALIAS and words in source:
             continue
@@ -453,6 +457,14 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
             continue
         out.append(Violation("puppet", m.group(0)))
     return tuple(dict.fromkeys(out))
+
+
+def _posed(words: str, name: str, plan: RenderPlan) -> bool:
+    """这段字就在清单里他自己那一行带字的姿态里：那一行以他开头（“看见段誉对着玉像跪倒，口中念念有词：“神仙姐姐在上……””）。
+    姿态不是开口（plan.speakers 不算它），可字是他亲口念的；别人那行里的字（“扑过去要抓段公子的袖子：……”）照旧不许挪到他嘴里。"""
+    forms = tuple({name, *(f for f, n in plan.people if n == name)})
+    return len(words) >= MIN_ALIAS and any(words in _norm(line) and line.removeprefix("看见").startswith(forms)
+                                           for line in plan.lines)
 
 
 def _restates(masked: str, i: int, mine: str, names: Iterable[str]) -> bool:

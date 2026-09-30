@@ -1,12 +1,13 @@
 """
 [INPUT]: 依赖 core 的 Op / Social / derive_seed，language/render 的 RenderPlan，language/scene 的 VoiceLine / SceneBrief
-[OUTPUT]: 对外提供 system_prompt()（主持人之声的系统提示）、scene_prompt()（一回合的用户提示词）、SOCIAL_LABELS / SOCIAL_PHRASES
+[OUTPUT]: 对外提供 system_prompt()（主持人之声的系统提示，可带写法卡目录）、scene_prompt()（一回合的用户提示词）、SOCIAL_LABELS / SOCIAL_PHRASES
           （言语行为交给模型的说法与模板措辞）、render_voice()（一句 NPC 言语的确定性模板）、
           in_words() / lapse_line()（钟点换成时辰文字、一段等待之后的时辰）、CLOCK_ANY（正文里的钟点数字）/ TIMED（正文已交代过时辰）、
           grams()（去掉标点空白后的 n 字片段：复述、谈资说过没有、台词重复都用它）、SAID_SHOWN / REPEAT
 [POS]: language/narrator 的措辞层：主持人之声交给模型的全部文字——系统提示（第二人称、80~250 字、台词归属、只许点名可点名的、
-       不替玩家开口、不写钟点、停在钩子上）与用户提示（最近三段正文每段末尾约 300 字且钟点换成时辰、玩家原话、事实清单、
-       身体状况与身边人的伤、天色、干等时的钩子、意料之外、没人接的话、照录的原话（VoiceLine.said：逐字照录、可截取连续一段、
+       不替玩家开口、不写钟点、停在钩子上；世界、文风与写法卡目录随场景而定）与用户提示（最近三段正文每段末尾约 300 字且钟点换成时辰、玩家原话、事实清单、
+       身体状况与身边人的伤、天色、本回合的看点与写法卡编号（卡文在系统提示的写法卡目录里：静态前缀，便于隐式缓存）、
+       眼前的景象（景观原文，初见外观里不再重列）、这回多看出的细节（四段都没有时一段也不加，旧版逐字不变）、干等时的钩子、意料之外、没人接的话、照录的原话（VoiceLine.said：逐字照录、可截取连续一段、
        只添神态动作；没有时提示词逐字不变）、要说出口的话（按叙述者给的顺序；腔调/谈资/来历/近来经历/回应/初次见面可自报姓名/可点名）、
        本回合开口的人最近说过的原话（至多 SAID_SHOWN 句，与这回合要说的三字片段重合 ≥REPEAT 的加注“换个说法”）、
        初见外观、眼下处境、收幕、已写好的开头），以及没有模型时台词的模板措辞。提示词只是请求，闸门在 narrator 里验收；
@@ -17,7 +18,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from tianlong.core import Op, Social, derive_seed
 from tianlong.language.render import RenderPlan
@@ -49,9 +50,12 @@ _GM = (
 )
 
 
-def system_prompt(setting: str = "", style: str = "") -> str:
-    """系统提示 = 主持规矩 + 场景的世界前提与文风。"""
-    return _GM + (f"\n世界：{setting}" if setting else "") + (f"\n文风：{style}" if style else "")
+def system_prompt(setting: str = "", style: str = "", cards: Mapping[str, str] | None = None) -> str:
+    """系统提示 = 主持规矩 + 场景的世界前提与文风 + 写法卡目录：整段只随场景变，放在最前便于隐式缓存；
+    没有写法卡（旧版）时逐字不变。"""
+    catalog = "".join(f"\n- {k}：{v}" for k, v in (cards or {}).items())
+    return (_GM + (f"\n世界：{setting}" if setting else "") + (f"\n文风：{style}" if style else "")
+            + (f"\n写法卡目录（只加修辞、不加事实；只在本回合的“写法”点到编号时才用）：{catalog}" if catalog else ""))
 
 
 # 言语行为的中文说法（交给模型）与模板措辞（无模型时的台词引子；{to} 是听者，没有听者时是“众人”）
@@ -165,6 +169,7 @@ def scene_prompt(brief: SceneBrief, command: str, when: Sequence[str], facts: Se
         parts.append(f"玩家以为自己此刻在：{around}")
     if brief.sky is not None:
         parts.append(f"天色（日头、月亮只照这个写，别写早了或晚了）：{brief.sky.text}")
+    parts += _staged(brief)
     if brief.condition:
         parts.append(f"玩家自己的身体状况（记在心里，不要写得像没事人，也不要加重；只在这一步吃力——走动攀爬、出手、挨打——"
                      f"或刚受伤时带一笔，别每回合都写疼）：{brief.condition}")
@@ -196,6 +201,7 @@ def scene_prompt(brief: SceneBrief, command: str, when: Sequence[str], facts: Se
             parts.append("要说出口的话（按这个顺序，逐句写成对白）：\n"
                          + "\n".join(_describe(i, vl, fits) for i, vl in enumerate(told, 1)))
     parts += _said_before(brief)
+    looks = [x for x in looks if x not in brief.spectacle]      # 景观另起一段写，不再当初见的外观列一遍
     if looks:
         parts.append("玩家初次看清的人与物（仅作外观描写的依据）：\n" + "\n".join(looks))
     if brief.stakes:
@@ -207,6 +213,20 @@ def scene_prompt(brief: SceneBrief, command: str, when: Sequence[str], facts: Se
         parts.append(f"开头一句已经写好，玩家已经看到了：{lead}\n"
                      "从下一句接着写：不要复述这一句，也不要再交代玩家这一步做成没有，直接写旁人的反应、言语与周遭。")
     return "\n\n".join(parts)
+
+
+def _staged(brief: SceneBrief) -> list[str]:
+    """看点四段：本回合的看点、写法卡、眼前的景象、细节（都没有时一段也不加：旧版提示词逐字不变）。"""
+    out = []
+    if brief.focus:
+        out.append(f"本回合的看点（围绕它写，其余一笔带过）：{brief.focus}")
+    if brief.cards:
+        out.append("写法（只加修辞，不加事实；卡文见系统提示的写法卡目录）：" + "、".join(brief.cards))
+    if brief.spectacle:
+        out.append("眼前的景象（照这段描写写，它说到的都可以写）：\n" + "\n".join(brief.spectacle))
+    if brief.details:
+        out.append("这回多看出的一处细节（看得见的静物，写进去；别的不要添）：" + "".join(brief.details))
+    return out
 
 
 def _verbatim(i: int, vl: VoiceLine) -> str:
