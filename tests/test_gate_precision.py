@@ -4,7 +4,7 @@
 [OUTPUT]: M1 闸门精度验收：run6 的五句误杀过闸门为空；误杀语料里每条 FP 都放行、每条 TP 仍被拦；
           植入的硬事实错误按类别被拦对（违规种类与类别对得上，KINDS）的比例 ≥95%（报出实际比例）、阴性对照全部放行
           （M3 起含硬事实审计：易手 possession、被制者的肢体动作 affordance、天色 sky）；
-          语料与植入条目的形状自检
+          语料与植入条目的形状自检；M3 走查的误杀：照抄清单里他自己那一行带字的姿态不是 voice（挪到别人嘴里、念了清单里没有的字照拦）
 [POS]: tests 的闸门精度规格。只依赖核心（不 import langgraph 等可选包），核心零依赖 CI 同样跑。
        每一条放宽（比喻、回忆、否定的去向、陈设件数、拟声、物件上的字、眼神、照着出处写的景、声音的主人、复述意图、
        当作以为、破折号、省略的主语、通道）都在 tests/data/gate_seeded.json 里配着“相似但应拦”的植入条目
@@ -91,3 +91,20 @@ def test_fixture_shape():
     assert kinds <= set(KINDS)
     audit = Counter(c.verdict for c in seeds if c.reason.startswith("M3 审计"))
     assert audit["TP"] >= 15 and audit["OK"] >= 8, "M3 硬事实审计：植入 ≥15 条、阴性对照 ≥8 条"
+
+
+def test_pose_words_copied_from_the_list_are_not_a_new_voice():
+    """M3 走查里的误杀（scripts/walk_commoner）：照抄清单里那一行带字的姿态（“口中念念有词：……”）——姿态不是开口，
+    字却是他亲口念的，不算凭空多出的话；同样的字挪到别人嘴里（“钟灵道：……”）、或他念了清单里没有的字，照旧是 voice。"""
+    from tianlong.language.render import RenderPlan
+    from tianlong.language.scene import SceneBrief
+    pose = "看见段誉对着玉像跪倒，口中念念有词：“神仙姐姐在上……”"
+    plan = RenderPlan("ashun", (pose,), frozenset({"段誉", "钟灵", "玉像", "阿顺"}), frozenset(), frozenset(), frozenset(),
+                      (), (), source=pose, viewer_name="阿顺",
+                      people=(("阿顺", "阿顺"), ("段誉", "段誉"), ("段公子", "段誉"), ("钟灵", "钟灵")))
+
+    def kinds(piece: str) -> set[str]:
+        return {v.kind for v in violations(piece, piece, "", plan, SceneBrief(), frozenset(plan.names), "")}
+    assert "voice" not in kinds(pose + "。") and "voice" not in kinds("段公子对着玉像跪倒，口中念念有词：“神仙姐姐在上……”")
+    assert "voice" in kinds("钟灵道：“神仙姐姐在上……”"), "别人的字挪到她嘴里"
+    assert "voice" in kinds("段誉对着玉像跪倒，口中念念有词：“神仙姐姐，救我出去。”"), "清单里没有的字"

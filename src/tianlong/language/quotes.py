@@ -3,19 +3,27 @@
          _clause_after / _clause_before / _post_attribution / _persons）与词表（STATUS_LEXICON / STATUS_EXCLUSIONS / MIN_ALIAS / SPEECH_MARKS /
          PRONOUNS / POST_WINDOW / QUOTE_OPEN），language/scene 的 SceneBrief / VoiceLine
 [OUTPUT]: 对外提供 check_quotes()（台词闸门：引语归属、替玩家开口、NPC 越界点名、凭空多出的说话者）、voiced()（正文里确有归属引语的说话者，
-          供叙述者查台词是否讲到）、said_by()（正文里确凿归到本回合有台词的人名下、且本名就在这段引语引子里的原话，供会话记台词账本）、unspoken()（不是话的引语的起点，交给叙述闸门照叙述查）、
-          台词词表 OBJECT_MARKERS / SUBJECT_LEADS / PERCEPTION / PLAYER_MIND / VOICED / SEQUENCE / PRETEND / DOUBTED / SOUNDS
+          供叙述者查台词是否讲到）、said_by()（正文里确凿归到本回合有台词的人名下、且本名——或会话交来的别称 brief.people——就在这段引语引子里的原话，供会话记台词账本）、unspoken()（不是话的引语的起点，交给叙述闸门照叙述查）、
+          introduces()（一句话里说话者自报了姓名：我叫/在下/本姑娘 + 名或带名的别称，我姓/在下姓/本姑娘姓 + 姓；相识账本与主持层共用）、
+          recites()（正文里有一段引语照录了某句录入的原话，叙述者查 said 台词讲到没有）、
+          台词词表 OBJECT_MARKERS / SUBJECT_LEADS / PERCEPTION / PLAYER_MIND / VOICED / SEQUENCE / PRETEND / DOUBTED / SOUNDS / SELF_INTRO /
+          SURNAME_INTRO / NEGATIONS
 [POS]: language 的台词闸门，与 render.check()、deeds.check_deeds() 并用。每段引语（含无引号的“某某道：……”与“某某说……”式转述）
        归到说话者：引子小句的主语、句首引语之后的“某某喝道”、上一段引语的说话者、上一句的主语（句首引语紧跟在谁的动作之后，
-       读者就听成是谁说的——这也算确凿）；归到“你”名下的只能是玩家本回合的原话，NPC 只许点名自己认识的名字、只许说出计划里有的状态。
+       读者就听成是谁说的——这也算确凿）；归到“你”名下的只能是玩家本回合的原话，NPC 只许点名自己认识的名字、只许说出计划里有的状态；
+       说话者本回合只有录入的原话（VoiceLine.said，话即事实）时，归到他名下的引语须是其中一句的连续一段、或字二元组按原句的先后
+       有六成对得上且否定字一个不添、对得上的那一截里一个不少（“我便不救他”“你们再为难”、挪前挪后都算另编），否则 fidelity；
+       “她道：”这类代词引子接上一句的主语，他本回合只有录入的原话（或本回合的台词全是录入的原话）时照样查。
        刻着、写着、题作、绣着的字（“门楣上刻着四个字：“琅嬛福地””）是物件上的字，不归给任何人。
        不是话的引语不归给任何人，这里不查、交给叙述闸门照叙述查（unspoken）：一两个象声字后跟“地/的一声”（“嗒”的一声）、
        引子以“辨认得出/认出/读出”收尾（中间不点名人）且与玩家见过的外观描写逐字相同的字（蒲团绣字）、
        眼神里的问话（“那目光分明在问：”后跟无引号的话；“目光一沉问：“……””是开了口）、无引号冒号之后照着出处写的景；
        “龚光杰的声音远远传来：”里声音的主人是说话者；“你打定主意熬到天黑”只是复述玩家自己输入的意图（覆盖过半且收尾相同、
        不点名谁、不添先后说法），不算替他拿主意；引语里“当作/以为”之后的状态词是假设，不算说出的状态
-       （“别以为我不知道……”“还当我瞧不出……”是反话，照查）。
-       局限（如实）：主语靠词法近似（宾语标记、“的”字结构、感知动词、“你”只在小句开头或承接词、状语之后才是主语），复杂句式可能归错；
+       （“别以为我不知道……”“还当我瞧不出……”是反话，照查）；确凿归到没开口的人名下的引语是 voice——除非清单里正有他那一行
+       带字的姿态、字就在那一行里（_posed：“口中念念有词：……”照抄不算凭空多出的话，挪到别人嘴里照拦）。
+       局限（如实）：代词不分男女，“钟灵瞪了段誉一眼。他道：”会接到钟灵身上——只会多丢一句（录入的原话随后照补），不会多交付一句；
+       主语靠词法近似（宾语标记、“的”字结构、感知动词、“你”只在小句开头或承接词、状语之后才是主语），复杂句式可能归错；
        转述只认“说/告诉/提到/透露/低语”后面直接跟着的内容，且须找得到具名的说话者；替玩家起念头只认“决定/打定主意/心想”等少数说法
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -120,12 +128,60 @@ _READ = re.compile(r"(?:辨认得出|辨认出|认得出|认出|读出|看清|�
 _GAZE = re.compile(r"(?:目光|眼神|眼光|眼色|神色|神情)(?:分明|似乎|像是|仿佛|都|也)?在问[：:]$")
 LEAD_WINDOW = 16
 SCENIC = 0.6
+# 照录：说话者本回合只有录入的原话（VoiceLine.said）时，归到他名下的引语须有这么多字二元组按先后出自其中一句（截取连续一段照放），
+# 否定字不许添、对得上的那一截里不许少——“你们不再为难”说成“你们再为难”、“我便救他”说成“我便不救他”都是另编
+FIDELITY = 0.6
+NEGATIONS = frozenset("不没别莫未非勿休无否")
+# 自报姓名：“我叫钟灵”“在下段誉”——引子之后紧跟名或带名的别称；单一个姓只认“姓”字引子之后（“本姑娘姓钟”），
+# “我是干什么吃的”“叫我干啥”“在下司马”里的头一个字不是姓
+SELF_INTRO = ("我叫", "我是", "我姓", "在下", "本姑娘", "叫我")
+SURNAME_INTRO = ("我姓", "在下姓", "本姑娘姓", "免贵姓")
 
 
 @dataclass(frozen=True, slots=True)
 class _Voice:
     names: frozenset[str]   # 可点名：may_name ∪ 说话者 ∪ 听者 ∪ 玩家
     source: str             # 说法与模板原话：其中本就有的名字与状态词算有出处
+
+
+def introduces(words: str, forms: Iterable[str]) -> bool:
+    """一句话里说话者自报了姓名：自报的引子（我叫/在下/本姑娘……）之后紧跟他的名或别称，“姓”字引子之后紧跟姓（名的头一个字）。"""
+    full = {f for f in forms if f}
+    surnames = {f[0] for f in full if len(f) >= 2}
+    return any(words.startswith(h, i + len(lead)) for leads, heads in ((SELF_INTRO, full), (SURNAME_INTRO, surnames))
+               for lead in leads for i in _at(words, lead) for h in heads)
+
+
+def _at(text: str, word: str) -> list[int]:
+    return [m.start() for m in re.finditer(re.escape(word), text)]
+
+
+def _faithful(words: str, said: Sequence[str]) -> bool:
+    """引语照着录入的原话说：是其中一句的连续一段；或换了几个字而大意不变（_close）。"""
+    return any(words in s or _close(words, s) for s in said)
+
+
+def recites(text: str, line: str) -> bool:
+    """正文里有一段引语照录了这句录入的原话（叙述者查 said 台词讲到没有）。"""
+    return any(_faithful(w, [_norm(line)]) for q in _quotes(text) if (w := _norm(q.words)))
+
+
+def _close(words: str, line: str) -> bool:
+    """换了几个字（“我便救他”说成“我就救他”）：字二元组按原句的先后有 FIDELITY 对得上（挪前挪后的不算），
+    且否定字一个不添、对得上的那一截里一个不少——“你们再为难”“我便不救他”都是另编。"""
+    pairs = [words[i:i + 2] for i in range(len(words) - 1)]
+    hits, at = [], 0
+    for p in pairs:
+        k = line.find(p, at)
+        if k >= 0:
+            hits.append(k)
+            at = k + 1
+    if not pairs or len(hits) < FIDELITY * len(pairs):
+        return False
+    added = any(p not in line for p in pairs if NEGATIONS & set(p))
+    dropped = any(line[i] in NEGATIONS and line[max(0, i - 1):i + 1] not in words and line[i:i + 2] not in words
+                  for i in range(hits[0], hits[-1] + 2))
+    return not added and not dropped
 
 
 def _norm(s: str) -> str:
@@ -155,6 +211,14 @@ def _subject(masked: str, forms: Iterable[str], selves: set[str], lo: int, hi: i
     if embedded and any(seen for _, seen in found):
         return [w for w, seen in found if seen][-1]
     return found[0][0] if found else None
+
+
+def _antecedent(masked: str, forms: Iterable[str], selves: set[str], spans: Sequence[tuple[int, int]],
+                at: int) -> str | None:
+    """at 处引语的代词接的是谁：本句引语之前、再往前一句里离得最近的、不是代词的主语。"""
+    s = next((i for i, (a, b) in enumerate(spans) if a <= at < b), len(spans) - 1)
+    lo = spans[max(0, s - 1)][0] if spans else 0
+    return _speaker_in(masked, set(forms) - set(PRONOUNS), selves, lo, at)
 
 
 def _speaker_in(masked: str, forms: Iterable[str], selves: set[str], lo: int, hi: int) -> str | None:
@@ -296,16 +360,18 @@ def said_by(text: str, brief: SceneBrief) -> tuple[tuple[str, str], ...]:
     """交付的正文里确凿归到本回合有台词的人名下的引语：(本名, 原话)，按先后。转述、不是话的引语、归属不明的都不算。
     只认 brief 里说话者的本名（会话手里没有计划，别称认不出）；所以还须他的本名就在这段引语自己的引子里
     （同一句里、上一段引语之后，或句首引语紧跟的“某某道”），或紧接着他上一段记下的引语说——
-    “左掌门沉声喝道：”“一个清脆的声音道：”“段誉拱手道：”里认不出的人不会被往前找、记到龚光杰名下。宁可少记。"""
+    “左掌门沉声喝道：”“一个清脆的声音道：”“段誉拱手道：”里认不出的人不会被往前找、记到龚光杰名下。宁可少记。
+    会话交来的 brief.people（开口者的别称 → 称呼，相识账本过滤过：叫不出名字的人只有不带名的称呼）同样认得（“钟姑娘道：”）。"""
     names = {vl.speaker_name for vl in brief.lines}
+    people = {**{n: n for n in names}, **{f: n for f, n in brief.people if n in names}}
     plan = RenderPlan("", (), frozenset(), frozenset(), frozenset(), frozenset(), (), (),
-                      people=tuple((n, n) for n in sorted(names)))
+                      people=tuple(sorted(people.items())))
     quotes, _, whos, inert = _speakers(text, plan, names)
     spans = _spans(text)
     out: list[tuple[str, str]] = []
     kept: set[int] = set()
     for k, (q, (who, sure)) in enumerate(zip(quotes, whos, strict=True)):
-        if not (sure and who in names and k not in inert and not q.indirect and _norm(q.words)):
+        if not (sure and who in people and k not in inert and not q.indirect and _norm(q.words)):
             continue
         a = next((a for a, b in spans if a <= q.start < b), 0)
         lead = text[max(a, quotes[k - 1].end if k else 0):q.start]
@@ -313,7 +379,7 @@ def said_by(text: str, brief: SceneBrief) -> tuple[tuple[str, str], ...]:
         chained = k - 1 in kept and whos[k - 1][0] == who and not text[quotes[k - 1].end:q.start].strip()
         if named or chained:
             kept.add(k)
-            out.append((who, q.words.strip()))
+            out.append((people[who], q.words.strip()))
     return tuple(out)
 
 
@@ -339,6 +405,7 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
     universe = (set(known_names) | plan.names | plan.aliases | plan.hidden | set(people) | set(voices)
                 | {n for v in voices.values() for n in v.names}) - {"你"}
     said = [s for s in (_norm(brief.player_line or ""), _norm(command)) if s]
+    verbatim = {name: [_norm(vl.template or "") for vl in vls] for name, vls in lines.items() if all(vl.said for vl in vls)}
     source = _norm(plan.source)
     quotes, masked, whos, inert = _speakers(text, plan, voices)
     spans = _spans(text)
@@ -357,14 +424,25 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
         if name not in voices and name in plan.speakers:
             continue                                # 确实开口、却没交来台词的人：由 check() 把关
         if name not in voices and sure and name and name not in PRONOUNS:
-            out.append(Violation("voice", name))    # 别人的原话照搬到他嘴里也算：谁说了什么同样是事实
+            if not _posed(words, name, plan):       # 他自己那行带字的姿态照着写（“口中念念有词：……”）不是凭空多出的话
+                out.append(Violation("voice", name))    # 别人的原话照搬到他嘴里也算：谁说了什么同样是事实
             continue
         if len(words) >= MIN_ALIAS and words in source:
             continue
         if name in voices:
             out += _judge(q.words, [voices[name]], name, universe, plan.statuses)
+            if name in verbatim and not _faithful(words, verbatim[name]):
+                out.append(Violation("fidelity", f"{name}:{q.words.strip()}"))   # 录入的原话另编一套词
         elif voices:
             out += _judge(q.words, list(voices.values()), "?", universe, plan.statuses)
+            # “她道：”这类归属不明却确是开了口的：代词接的是上一句的主语（“梁上的青衫少女把瓷瓶一扬。她道：”），
+            # 他本回合只有录入的原话，或本回合的台词全是录入的原话，照样须照录其中一句
+            if sure:
+                prior = _antecedent(masked, {f for f, _ in plan.people} | set(voices), selves, spans, q.start)
+                pool = verbatim.get(people.get(prior, prior) if prior else "") or (
+                    [x for v in verbatim.values() for x in v] if len(verbatim) == len(voices) else None)
+                if pool is not None and not _faithful(words, pool):
+                    out.append(Violation("fidelity", f"{prior or '?'}:{q.words.strip()}"))
 
     # ---- 替玩家起念头、拿主意 ----
     typed = f"{brief.player_line or ''}{command}"
@@ -379,6 +457,14 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
             continue
         out.append(Violation("puppet", m.group(0)))
     return tuple(dict.fromkeys(out))
+
+
+def _posed(words: str, name: str, plan: RenderPlan) -> bool:
+    """这段字就在清单里他自己那一行带字的姿态里：那一行以他开头（“看见段誉对着玉像跪倒，口中念念有词：“神仙姐姐在上……””）。
+    姿态不是开口（plan.speakers 不算它），可字是他亲口念的；别人那行里的字（“扑过去要抓段公子的袖子：……”）照旧不许挪到他嘴里。"""
+    forms = tuple({name, *(f for f, n in plan.people if n == name)})
+    return len(words) >= MIN_ALIAS and any(words in _norm(line) and line.removeprefix("看见").startswith(forms)
+                                           for line in plan.lines)
 
 
 def _restates(masked: str, i: int, mine: str, names: Iterable[str]) -> bool:

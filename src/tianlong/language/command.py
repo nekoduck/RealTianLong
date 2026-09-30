@@ -6,7 +6,9 @@
 [POS]: language 的语态分析层：在“选哪个操作”之前先回答“这句话是不是玩家此刻要做的一件事”。
        否定（我不攻击守卫）、条件（如果……才）、计划与斟酌（再决定是否）、转述（守卫刚刚攻击了我）、引语、复合指令、
        疑问都被识别为非即时语态——规则快路径只接受明确的单一、肯定、即时指令，其余交给受约束的语义解析或追问澄清。
-       言语行为词与姿态词也是行动词：“打招呼”盖住“打”、“救命”盖住“救”、“坐下”盖住“下”，于是也受否定与条件约束。
+       言语行为词与姿态词也是行动词：“打招呼”盖住“打”、“救命”盖住“救”、“坐下”盖住“下”，于是也受否定与条件约束；
+       “笑道/低声道：……”是说话、“赔笑”是赔罪（单个“道”太泛，“拱手道”仍是姿态）；“对那姑娘说”里介词与人之间的指示词不挡住介词；
+       嵌在更长的人物提及里的称呼不当主语（“对梁上的青衫少女说”里的“少女”、“对钟姑娘说”里的“姑娘”）。
        parser 在此之上做实体与角色绑定；本模块不引用任何实体表以外的知识
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -33,7 +35,7 @@ SOCIAL_WORDS: tuple[tuple[str, Social], ...] = (
     ("聊聊天", _S.GREET), ("聊会儿天", _S.GREET), ("聊几句", _S.GREET), ("说说话", _S.GREET), ("说会儿话", _S.GREET),
     ("道谢", _S.THANK), ("谢谢", _S.THANK), ("多谢", _S.THANK), ("致谢", _S.THANK), ("感谢", _S.THANK),
     ("赔罪", _S.APOLOGIZE), ("赔礼", _S.APOLOGIZE), ("赔不是", _S.APOLOGIZE), ("道歉", _S.APOLOGIZE),
-    ("认错", _S.APOLOGIZE), ("对不起", _S.APOLOGIZE),
+    ("认错", _S.APOLOGIZE), ("对不起", _S.APOLOGIZE), ("赔笑", _S.APOLOGIZE), ("陪笑", _S.APOLOGIZE),
     ("求饶", _S.PLEAD), ("讨饶", _S.PLEAD), ("求情", _S.PLEAD), ("求救", _S.PLEAD), ("呼救", _S.PLEAD),
     ("救命", _S.PLEAD),
     ("称赞", _S.PRAISE), ("夸奖", _S.PRAISE), ("恭维", _S.PRAISE), ("奉承", _S.PRAISE), ("久仰", _S.PRAISE),
@@ -66,7 +68,8 @@ GESTURE_WORDS: tuple[tuple[str, Social | None], ...] = (
 
 ACTION_WORDS: tuple[tuple[Op, tuple[str, ...]], ...] = (
     (Op.ASK, ("问", "打听", "ask")),
-    (Op.TELL, ("告诉", "说", "tell", *(w for w, _ in SOCIAL_WORDS))),
+    # “笑道/低声道：……”带冒号引出原话：是说话；单个“道”太泛（知道、道路），“拱手道”仍是姿态（拱手）
+    (Op.TELL, ("告诉", "说", "tell", "笑道", "低声道", "轻声道", "小声道", *(w for w, _ in SOCIAL_WORDS))),
     (Op.UNLOCK, ("开锁", "解锁", "打开", "unlock")),
     (Op.LOCK, ("锁上", "上锁", "lock")),
     (Op.ATTACK, ("出手", "动手", "还手", "攻击", "偷袭", "一掌", "出招", "揍", "打", "attack")),
@@ -148,6 +151,7 @@ _QUOTES = (("“", "”"), ("「", "」"), ("『", "』"), ('"', '"'), ("‘", "
 _PREPOSITIONS = ("向", "对", "朝", "跟", "和", "与", "给", "把", "将", "找", "同", "往", "冲", "替", "帮", "从", "在", "问",
                  "被", "让", "叫", "请")
 _POSSESSIVE = ("的", "身上", "手里", "手中", "那里", "那儿", "这里", "处")
+_DEMONSTRATIVES = ("那位", "这位", "那个", "这个", "那", "这")    # “对那姑娘说”：介词与人之间的指示词不挡住介词
 _MODAL_Q = ("能不能", "可不可以", "行不行", "该不该", "是不是", "能否", "可否", "可以", "能")
 _Q_END = ("吗", "么", "？", "?")
 
@@ -242,12 +246,17 @@ def _clause_of(t: str, pos: int) -> tuple[int, int]:
 
 
 def _subject(t: str, action_pos: int, clause_start: int, mentions: Sequence[Mention], owner: str) -> str | None:
-    """行动词之前、同一分句里、不带介词也不作定语的人物提及就是主语。"""
+    """行动词之前、同一分句里、不带介词也不作定语的人物提及就是主语；嵌在更长的人物提及里的不算
+    （“对梁上的青衫少女说”里的“青衫少女”“少女”，“对钟姑娘说”里的“姑娘”）。"""
+    people = [(m.pos, m.pos + m.length) for m in mentions if m.kind == Kind.PERSON]
     subj = None
     for m in mentions:
         if not (clause_start <= m.pos < action_pos) or m.kind != Kind.PERSON:
             continue
-        before = t[max(0, m.pos - 2):m.pos]
+        if any(a <= m.pos and m.pos + m.length <= b and b - a > m.length for a, b in people):
+            continue
+        before = t[max(0, m.pos - 4):m.pos]
+        before = next((before[:-len(d)] for d in _DEMONSTRATIVES if before.endswith(d)), before)
         after = t[m.pos + m.length:m.pos + m.length + 2]
         if any(before.endswith(p) for p in _PREPOSITIONS) or any(after.startswith(p) for p in _POSSESSIVE):
             continue

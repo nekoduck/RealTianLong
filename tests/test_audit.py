@@ -6,8 +6,9 @@
           affordance（钟灵被制时“拍手笑道”违规、“眼珠一转，笑道”通过，代词不判、省略主语往前找；先出手后被制的人不判；
           感知/期盼之后的人才是施动者、“脚步声渐渐走远”不回溯）、possession 的逗号小句后省略主语照拦、只认宾语位置的东西、
           sky（18:20 月出之前“一轮明月升起”违规；19:45 月已在天上“月亮从峭壁后探出”违规、“月光洒在湖面”通过；
-          sky=None 整项不查；lore 原文与引语不查；“还没落下/快要落下”是还在、比方里的月光不算），每条拦截都配着“相似但应通过”的阴性对照
-[POS]: tests 的硬事实审计规格。只依赖核心，核心零依赖 CI 同样跑。每一条都走 gate.violations，测的是线上那条路
+          sky=None 整项不查；lore 原文与引语不查；“还没落下/快要落下”是还在、比方里的月光不算），每条拦截都配着“相似但应通过”的阴性对照；
+          sky 的端到端版：普通人版会话里 18:20 模型写“一轮明月升起”被拦、不交付（缺 LangGraph/Qdrant 跳过）
+[POS]: tests 的硬事实审计规格。只依赖核心（端到端那一条除外，先跳过再导入会话），核心零依赖 CI 同样跑。每一条都走 gate.violations，测的是线上那条路
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -223,3 +224,24 @@ def test_sky_ignores_quotes_lore_and_old_worlds():
     lore = replace(PLAN, scenery=(("玉璧", "月光照在玉璧上，壁上隐隐有人影"),))
     assert "sky" not in _kinds("月光照在玉璧上，壁上隐隐有人影。", lore, SceneBrief(sky=DUSK)), "lore 原文逐字"
     assert "sky" in _kinds("月光照在湖面上。", lore, SceneBrief(sky=DUSK)), "lore 之外的月光照拦"
+
+
+def test_sky_end_to_end_in_the_commoner_session():
+    """普通人版会话里天色真的接通了（runtime/staging.sky → SceneBrief.sky）：18:20 模型写“一轮明月升起”被拦、不交付。
+    缺 LangGraph/Qdrant 跳过（会话要它们）。"""
+    pytest.importorskip("langgraph")
+    pytest.importorskip("qdrant_client")
+    from tianlong.core import at
+    from tianlong.language.llm import ScriptedLLM
+    from tianlong.runtime.session import GameSession
+    from tianlong.scenarios import build_wuliang_commoner
+
+    from .test_commoner import stage
+
+    sc = build_wuliang_commoner(7)
+    s = GameSession(stage(sc, {"ashun": "houyuan"}, at(1, 18, 20)), llm=ScriptedLLM(lambda *_: "一轮明月升起，照得满院银白。"),
+                    pipeline=False)
+    s.narrator.lead_after = None
+    r = s.turn("四下打量一番")
+    assert r.brief.sky is not None and r.brief.sky.moon == MOON_NONE and not r.brief.sky.night
+    assert "sky" in {v.kind for v in r.render.violations} and "明月" not in r.narration

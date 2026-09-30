@@ -1,7 +1,8 @@
 """
 [INPUT]: 依赖 tianlong.kernel / cognition / scenarios，conftest 的 make_intent
 [OUTPUT]: 认知隔离的性质测试：扰动角色未观察到的世界事实，其认知与认知视图必须逐字节不变；
-          看点识别（runtime/staging）只收玩家的感知、引擎里只由会话调用，从不进入 NPC 的决策路径
+          看点识别（runtime/staging）只收玩家的感知、引擎里只由会话调用，从不进入 NPC 的决策路径；
+          相识账本（runtime/names）同样只由会话调用、Situation 里没有它
 [POS]: tests 的隔离层；“没收到消息的人不能提前知道结果”被写成可证伪的断言
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -81,3 +82,15 @@ def test_staging_reads_only_the_players_percepts_and_is_called_only_by_the_sessi
     from tianlong.runtime import staging
     for fn in (staging.recognize, staging.stops_wait, staging.witnessed):
         assert "WorldState" not in str(inspect.signature(fn)), "只收感知，不收世界"
+
+
+def test_names_are_called_only_by_the_session_and_never_reach_a_situation():
+    """相识账本与展示用的外貌称呼只为呈现：引擎里只有会话调用 runtime/names，NPC 的决策路径（agents、cognition）从不碰它，
+    Situation 里没有账本——NPC 叫得出谁的名字只影响主持人替他写的台词，不影响他做什么。"""
+    src = Path(__file__).resolve().parents[1] / "src" / "tianlong"
+    users = sorted(str(p.relative_to(src)) for p in src.rglob("*.py")
+                   if p.name != "names.py" and re.search(
+                       r"^from tianlong\.runtime import .*\bnames\b|tianlong\.runtime\.names", p.read_text("utf-8"), re.M))
+    assert users == ["runtime/session.py"], users
+    from tianlong.agents.policy_kit import Situation
+    assert not any("names" in f.name or "acq" in f.name or "Acquaintance" in str(f.type) for f in fields(Situation))

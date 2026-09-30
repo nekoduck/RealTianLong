@@ -10,7 +10,7 @@
           带驱力标记的会话读档接续与连续运行逐项相同；
           Flee 不撞认为锁着的门；多一条单向捷径不让绕开它的 Go 放弃开锁；台词在长时间窗里一直轮换；
           Saw(here=True) 只认此处发生的事、Near 只认刚才亲眼见过（传闻与早先的不算）、Unlock/Lock 只在会改变什么时才转钥匙；
-          lint（普通人版）：台词与姿态不命中 SECRETS_C、每条有 gloss、点的名字说话者在条件成立时都已认识（例外逐条写明理由），
+          lint（普通人版）：台词与姿态不命中 SECRETS_C、每条有 gloss、姿态引号外不用 NPC 口吻里的昵称（书呆子、酸秀才……）、点的名字说话者在条件成立时都已认识（例外逐条写明理由），
           一夜里 once 的驱力至多兑现一次
 [POS]: tests 的驱力层：“驱力只读自己的认知、只是意图、由内核裁定”被写成可证伪的断言
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -665,6 +665,21 @@ def test_lint_lines_never_say_a_secret():
     assert not leaks, leaks
     glossed = [d.key for ds in DRIVES_C.values() for d in ds if not d.gloss]
     assert not glossed, f"每条驱力都要有给对照组圣经的 gloss：{glossed}"
+
+
+def test_lint_poses_use_no_npc_nicknames():
+    """姿态是叙述看得见的那一行（“看见钟灵护在……”）：引号外不许用只在某个 NPC 口吻里的昵称（书呆子、酸秀才、挑茶的……）——
+    那是他嘴里的话，不是旁人眼里的样子；引号里的原话照旧由他说。"""
+    from tianlong.scenarios import build_wuliang_commoner
+    from tianlong.scenarios.tianlong.drives_c import DRIVES_C
+    sc = build_wuliang_commoner(7)
+    nicknames = {w for a in sc.npcs for w in re.findall(r"“([^”]+)”", sc.profiles[a].voice)}
+    assert {"书呆子", "酸秀才", "挑茶的", "小伙计"} <= nicknames
+    poses = [t for ds in DRIVES_C.values() for d in ds if any(isinstance(a, Pose) for a in d.do)
+             for t in (*d.lines, *(a.text for a in d.do if isinstance(a, Pose)))]
+    assert len(poses) >= 15
+    bad = [(t, w) for t in poses for w in nicknames if w in re.sub(r"“[^”]*”", "", t)]
+    assert not bad, bad
 
 
 # 条件最早成立那一刻说话者凭自己的认知推不出、却点得出的名字：逐条写明为什么说得出口

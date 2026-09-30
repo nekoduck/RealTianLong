@@ -3,10 +3,10 @@
          language/llm 的 LLMClient / LLMUnavailable，language/scene 的 SceneBrief / TextSink，
          language/sheet 的 Row / scene_rows / compose / voices / lines / patches / prose（节目单与补句），
          language/render 的 fact_lines / build_plan / check / sentence_ends / Violation / Rendered / RenderStatus，
-         language/gate 的 violations（逐句判定），language/quotes 的 voiced，language/lead 的 lead_line / restates，
+         language/gate 的 violations（逐句判定），language/quotes 的 voiced / recites，language/lead 的 lead_line / restates，
          language/voice_prompt 的 system_prompt / scene_prompt / render_voice / lapse_line / TIMED（措辞层）
 [OUTPUT]: 对外提供 Narrator（narrate_scene() 主持人之声：流式生成、逐句过闸门、通过即交付；narrate_rendered() / narrate()
-          以空 SceneBrief 委托之；secrets 是场景的秘密词表；deadline 是迟到先声的绝对时限）、MAX_DROPS、MAX_CHARS、LEAD_AFTER、
+          以空 SceneBrief 委托之；secrets 是场景的秘密词表；cards 是写法卡目录，进系统提示；deadline 是迟到先声的绝对时限）、MAX_DROPS、MAX_CHARS、LEAD_AFTER、
           HOLD_AFTER、lore_keys()，
           再导出 render / voice_prompt 的 fact_lines()、render_voice()、grams()、SOCIAL_PHRASES / SOCIAL_LABELS 与 _when（= lapse_line）
 [POS]: language 的输出层（主持人之声）。输入只有玩家自己的感知与会话交来的 SceneBrief（要替 NPC 说出口的话、最近几回合正文、
@@ -42,6 +42,10 @@
        玩家的姿态不是必讲之事；动手时顺口喝的一声（VoiceLine.act）可写可不写、没有模板；起因句被丢，紧跟着的台词余波
        （“她说完……”，只跟被丢的台词）与反应句（“钟灵的笑声一下子断了”）一并略过（_REACTION）
        先声之后，别的必讲之事讲到没有只看模型自己交付的正文；有台词时引语里的名字与状态词交给台词闸门按说话者查。
+       narrate_scene/narrate_rendered/narrate 可另收这一回合的闸门别称 aliases（会话按相识账本给：玩家还叫不出名字的人，
+       本名与带名的别称只用于拒绝），不给就用场景的那一份；录入原话的动作台词（said）漏写照补、不当吆喝；said 台词须有一段引语照录了它（quotes.recites）才算讲到——开了口却另说一套照补；
+       看点（SceneBrief 的 focus / cards / spectacle / details / allowed，旧版全空）：景观与细节原文算出处、许可词只进可点名的名字；
+       写法卡目录（cards）进系统提示的静态前缀、本回合只点编号；模板与回退把这回多看出的细节照印在所见之后，景观原本就在初见外观里
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -60,7 +64,7 @@ from tianlong.core import Modality, Op, Outcome, Percept, is_night
 from tianlong.language.gate import violations
 from tianlong.language.lead import lead_line, restates
 from tianlong.language.llm import LLMClient, LLMUnavailable
-from tianlong.language.quotes import voiced
+from tianlong.language.quotes import recites, voiced
 from tianlong.language.render import (
     Rendered,
     RenderPlan,
@@ -133,12 +137,15 @@ def lore_keys(viewer: str, percepts: Sequence[Percept], lore: Mapping[str, str])
 def _with_lines(plan: RenderPlan, brief: SceneBrief, forms: Mapping[str, Sequence[str]] | None = None) -> RenderPlan:
     """会话交来的上下文本身有出处：台词的说话者与听者可以点名，原话、说法与说话者近来的经历算出处；
     前后照应（玩家的身体状况、本回合的意外与变化、眼前的地点与人、近旁叫得出名字的东西）同样算出处，其中的状态说出来不算升级，
-    玩家自己与他以为身边的人身上的伤毒被制算落在对的人身上。forms 是名字 → 别称：近旁的东西说别称（“北冥神功”）同样可以。"""
+    玩家自己与他以为身边的人身上的伤毒被制算落在对的人身上。forms 是名字 → 别称：近旁的东西说别称（“北冥神功”）同样可以。
+    看点的景观与细节原文算出处，许可词（“仙人”“小貂”）只进可点名的名字。"""
     names = {n for vl in brief.lines for n in (vl.speaker_name, vl.listener_name) if n and n != "你"}
     names |= set(brief.present) | set(brief.nearby)
     also = frozenset(a for n in names for a in (forms or {}).get(n, ()))
     said = [x for vl in brief.lines for x in (vl.template, vl.claim) if x]   # 谈资、近来经历与来历只在他自己的引语里算数（台词闸门）
     said += [x for x in (brief.condition, *brief.notes, "、".join(brief.present)) if x]
+    said += [*brief.spectacle, *brief.details]          # 景观与细节是外观原文：算出处
+    names |= brief.allowed                              # 看点的许可词只许点名，不许状态
     if not said and not names and not brief.statuses:
         return plan
     return replace(plan, names=plan.names | names, aliases=plan.aliases | also, source="\n".join([plan.source, *said]),
@@ -155,6 +162,8 @@ def _spoken(row: Row, text: str, said: frozenset[str]) -> bool:
     """这句台词正文里讲到了没有：有原话或说法的，须有一段归到说话者名下的引语（或名字后紧跟言说动词）；闲话提到其人即可。"""
     vl = row.voice
     assert vl is not None
+    if vl.said and vl.template:
+        return recites(text, vl.template)          # 录入的原话：须有一段引语照录了它，开了口却另说一套不算讲到
     return vl.speaker_name in said if (vl.template or vl.claim) else vl.speaker_name in text
 
 
@@ -174,7 +183,7 @@ def _missing(rows: Sequence[Row], text: str, plan: RenderPlan, brief: SceneBrief
     for r in rows:
         if r.voice is not None:
             vl = r.voice                    # 没有原话、没有说法、也不是回应玩家的闲话：漏写了就算了，不补一句空洞的“某某打趣你”
-            ok = _spoken(r, text, said) or vl.act or not (vl.template or vl.claim or vl.answering)
+            ok = _spoken(r, text, said) or (vl.act and not vl.said) or not (vl.template or vl.claim or vl.answering)
         elif r.must or (strict and r.keys):
             ok = (_named(text, r.keys) if r.keys else dropped == 0) or _echoes(r.said, text)
         else:
@@ -361,7 +370,7 @@ class Narrator:
 
     def __init__(self, llm: LLMClient | None = None, setting: str = "", lore: Mapping[str, str] | None = None,
                  style: str = "", aliases: Mapping[str, Sequence[str]] | None = None, secrets: Sequence[str] = (),
-                 lead_after: float | None = LEAD_AFTER) -> None:
+                 lead_after: float | None = LEAD_AFTER, cards: Mapping[str, str] | None = None) -> None:
         self.llm = llm
         self.lead_after = lead_after
         self._pump: ThreadPoolExecutor | None = None      # 迟到先声的读流线程（常驻：模型客户端的每线程长连接才用得上）
@@ -370,42 +379,48 @@ class Narrator:
         self.lore = dict(lore or {})
         self.aliases = dict(aliases or {})
         self.secrets = tuple(secrets)
+        self.cards = dict(cards or {})                    # 写法卡目录（编号 → 卡文）：进系统提示，本回合只点编号
 
     def narrate(self, viewer: str, percepts: Sequence[Percept], names: Names, show_scene: bool = False,
-                fresh: Sequence[str] = (), command: str = "", lapse: str = "", known: Iterable[str] = ()) -> str:
-        return self.narrate_rendered(viewer, percepts, names, show_scene, fresh, command, lapse, known).text
+                fresh: Sequence[str] = (), command: str = "", lapse: str = "", known: Iterable[str] = (),
+                aliases: Mapping[str, Sequence[str]] | None = None) -> str:
+        return self.narrate_rendered(viewer, percepts, names, show_scene, fresh, command, lapse, known, aliases).text
 
     def narrate_rendered(self, viewer: str, percepts: Sequence[Percept], names: Names, show_scene: bool = False,
                          fresh: Sequence[str] = (), command: str = "", lapse: str = "",
-                         known: Iterable[str] = ()) -> Rendered:
+                         known: Iterable[str] = (), aliases: Mapping[str, Sequence[str]] | None = None) -> Rendered:
         """没有要替 NPC 说的话、也没有最近正文时的叙述：以空 SceneBrief 委托 narrate_scene()。"""
         return self.narrate_scene(viewer, percepts, names, brief=SceneBrief(), show_scene=show_scene, fresh=fresh,
-                                  command=command, lapse=lapse, known=known)
+                                  command=command, lapse=lapse, known=known, aliases=aliases)
 
     def narrate_scene(self, viewer: str, percepts: Sequence[Percept], names: Names, *, brief: SceneBrief,
                       show_scene: bool = False, fresh: Sequence[str] = (), command: str = "", lapse: str = "",
                       known: Iterable[str] = (), on_text: TextSink | None = None,
-                      familiar: Iterable[str] = (), since: str = "", deadline: float | None = None) -> Rendered:
+                      familiar: Iterable[str] = (), since: str = "", deadline: float | None = None,
+                      aliases: Mapping[str, Sequence[str]] | None = None) -> Rendered:
         """familiar 是玩家此前已知下落的东西（再翻出来不算“发现”）；command 是玩家原话（让“跳下断崖”读起来像跳，成败仍以清单为准）；lapse 是一段等待之后的时辰，排在事实之前；
         known 是闸门用来拒绝的名字全集（玩家认识的 + 场景全部实体）；on_text 收到每一段交付的文字（通过闸门即交付）；
         since 是这段等待开始时的时辰（还在同一个时辰里就说过了多久，不说“到了某时”）；
         deadline 是迟到先声的时限（time.monotonic() 口径的绝对时刻，会话按回车时刻 + lead_after 算）：
-        给出时先声只等剩下的时间（可能已经是 0），不给就从这里起等 lead_after 秒。"""
+        给出时先声只等剩下的时间（可能已经是 0），不给就从这里起等 lead_after 秒。
+        aliases 是这一回合交给闸门的别称（会话按相识账本给：玩家还叫不出名字的人，名字只用于拒绝）；None 用场景的那一份。"""
         known, familiar = frozenset(known), frozenset(familiar)
+        aliases = self.aliases if aliases is None else aliases
         looks = [self.lore[k] for k in fresh if k in self.lore]
+        shown = [*looks, *brief.details]                   # 模板与回退照印的外观：初见描写 + 这回多看出的细节
         passed = [f"（不觉已是{lapse}）"] if lapse else []
-        forms = {sk.name: tuple(self.aliases.get(eid, ())) for eid, sk in names.items()}
-        plan = _with_lines(build_plan(viewer, percepts, names, show_scene, looks, "".join(passed), self.aliases,
+        forms = {sk.name: tuple(aliases.get(eid, ())) for eid, sk in names.items()}
+        plan = _with_lines(build_plan(viewer, percepts, names, show_scene, looks, "".join(passed), aliases,
                                       self.secrets, familiar, self.lore), brief, forms)
         salt = brief.recent[-1] if brief.recent else ""
-        sheet = compose(scene_rows(plan, viewer, percepts, names, brief, salt, self.aliases, familiar), brief)
+        sheet = compose(scene_rows(plan, viewer, percepts, names, brief, salt, aliases, familiar), brief)
         rows = [r for s in sheet for r in s.rows]           # 节目单的先后：模板回退、补句与提示词里的事实清单都按它排
         scene = [x for s in sheet for x in s.lines]
         out = _Delivery(on_text)
         if not scene and not looks and (self.llm is None or not brief.present):
             out.emit("\n".join(["时间悄悄过去，什么也没有发生。", *passed]))
             return Rendered(out.text, RenderStatus.TEMPLATE)
-        plain = "\n".join(passed + scene + [f"（{x}）" for x in looks])
+        plain = "\n".join(passed + scene + [f"（{x}）" for x in shown])
         if self.llm is None:
             out.emit(plain)
             return Rendered(out.text, RenderStatus.TEMPLATE)
@@ -476,11 +491,11 @@ class Narrator:
         elif out.text:                                # 已交付过正文：只补正文没讲到的（一句正文都没有就整张清单）
             untold = _missing(rows, body, plan, brief, gate.dropped, strict=True) if body.strip() else rows
             tail = ([] if TIMED.search(out.text) else when) + lines(untold, brief)
-            tail = tail if rows or gate.lead else [f"（{x}）" for x in looks]
+            tail = tail if rows or gate.lead else [f"（{x}）" for x in shown]
             if tail:
                 out.emit("\n" + "\n".join(prose(x) for x in tail))
         elif scene or looks:
-            out.emit("\n".join(prose(x) for x in [*when, *scene, *(f"（{x}）" for x in looks)]))
+            out.emit("\n".join(prose(x) for x in [*when, *scene, *(f"（{x}）" for x in shown)]))
         else:
             out.emit("\n".join(["时间悄悄过去，什么也没有发生。", *passed]))     # 安静的回合、模型又没交出话来
         if status == RenderStatus.GATED_FALLBACK:
@@ -505,4 +520,4 @@ class Narrator:
             yield self.llm.generate(prompt, system=system, temperature=0.7)
 
     def _system(self) -> str:
-        return system_prompt(self.setting, self.style)
+        return system_prompt(self.setting, self.style, self.cards)
