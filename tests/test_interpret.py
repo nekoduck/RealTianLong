@@ -419,6 +419,19 @@ def test_template_mode_greeting_and_looking_are_not_attacks(world, duanyu):
     assert (frisk.candidate.op, frisk.candidate.target) == (Op.INSPECT, "gongguangjie"), "明说要搜才是搜身"
 
 
+def test_template_mode_glancing_idling_and_asking_the_way_are_understood(world, duanyu):
+    """模型不可用时退回规则：张望是四下看看（不是要走路），发呆出神是姿态，看一个人是打量，“接下来该往哪儿走”是问主持人。"""
+    it = _interp(world)
+    for text in ("四下张望", "探头往崖下望了望", "看了看四周"):
+        p = it.interpret(text, duanyu)
+        assert p.kind == MoveKind.ACT and p.candidate.op == Op.INSPECT, text
+    for text in ("发呆", "望着湖水发了会儿呆", "出神地望着房梁", "闭目养神"):
+        p = it.interpret(text, duanyu)
+        assert p.kind == MoveKind.GESTURE and p.candidate.op == Op.WAIT, text
+    assert it.interpret("看了看钟灵", duanyu).candidate.op == Op.WAIT, "看人仍是打量，不是搜身"
+    assert it.interpret("接下来该往哪儿走？", duanyu).kind == MoveKind.ASK_GM
+
+
 def test_template_mode_cries_and_covering_the_face_are_not_use(world, duanyu):
     it = _interp(world)
     cry = it.interpret("大喊救命", duanyu)

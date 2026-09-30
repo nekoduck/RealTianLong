@@ -206,6 +206,7 @@ def consequences(p: Percept, names: Names, viewer: str, me: str) -> list[str]:
     """事件带来的看得见的后果：谁受伤中毒被制、学成了什么、发现了什么暗道与藏匿之物。"""
     out: list[str] = []
     hidden = {f.prop.subject for f in p.facts if f.prop.is_attr and f.prop.attr_key == "hidden" and f.holds}
+    found: dict[str, list[str]] = {}          # 藏匿之物按藏处归拢：“发现蒲团里藏着北冥神功帛卷、凌波微步帛卷”
     for f in p.facts:
         prop = f.prop
         if prop.is_attr and prop.attr_key in _NOTABLE and f.holds:
@@ -214,7 +215,11 @@ def consequences(p: Percept, names: Names, viewer: str, me: str) -> list[str]:
             if prop.predicate == Rel.CONNECTS.value and prop.value != (p.event.place if p.event else None):
                 out.append(f"发现一处暗道：{_n(names, prop.subject, viewer, me)}通往{_n(names, str(prop.value), viewer, me)}")
             elif prop.predicate == Rel.AT.value:
-                out.append(f"发现{_n(names, prop.subject, viewer, me)}藏在{_where(names, str(prop.value), viewer, me)}")
+                found.setdefault(str(prop.value), []).append(_n(names, prop.subject, viewer, me))
+    for where, things in found.items():
+        sk = names.get(where)
+        spot = _where(names, where, viewer, me) + ("里" if sk is not None and sk.kind == Kind.PLACE else "")
+        out.append(f"发现{spot}藏着{'、'.join(things)}")
     return out
 
 

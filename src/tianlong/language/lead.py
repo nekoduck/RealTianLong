@@ -1,5 +1,5 @@
 """
-[INPUT]: 依赖 core 的 Percept / Modality / Op / Outcome / Kind / derive_seed，language/templates 的 Names / REASONS / SOCIAL_VERBS / consequences
+[INPUT]: 依赖 core 的 Percept / Modality / Op / Outcome / Kind / Social / derive_seed，language/templates 的 Names / REASONS / SOCIAL_VERBS / consequences
 [OUTPUT]: 对外提供 lead_line(percepts, names, viewer) -> str：本回合“你这一步的结果”写成的一两句人话（没有可说的返回空串）、
           restates(sentence, percepts, names, viewer) -> bool：模型的一句是不是在换个说法复述先声（同一动作的动词 + 同一对象，
           或玩家原话/姿态原样再现）
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from tianlong.core import Kind, Modality, Op, Outcome, PerceivedEvent, Percept, derive_seed
+from tianlong.core import Kind, Modality, Op, Outcome, PerceivedEvent, Percept, Social, derive_seed
 from tianlong.language.templates import REASONS, SOCIAL_VERBS, Names, consequences
 
 MAX_SENTENCES = 3        # 一回合至多三步计划：每步一句
@@ -34,6 +34,7 @@ _DONE: dict[Op, tuple[str, ...]] = {
 _LOOK = {Kind.PLACE: ("你四下细细打量。", "你把{t}里里外外看了一遍。"),
          Kind.SURFACE: ("你凑近{t}细看。", "你仔细查看{t}。"),
          Kind.PERSON: ("你上前搜查{t}。",)}
+_BOW = ("你伏身下拜，恭恭敬敬地磕了几个头。", "你跪倒在地，一个头接一个头地磕下去。")
 _STUDY_NOTE = {"progress": "若有所悟，却还未能融会贯通。", "mastered": "豁然贯通！"}
 # 失败的说法：先说想做什么，再说为什么不成
 _TRY: dict[Op, str] = {
@@ -101,7 +102,9 @@ def _sentence(p: Percept, names: Names, viewer: str) -> str | None:
         return _say(ev, t)
     if op == Op.WAIT:
         return _pose(ev.utterance) if ev.utterance else None             # 姿态照写；干等不抢先
-    if op == Op.INSPECT:
+    if op == Op.INSPECT and ev.social == Social.SUBMIT:                # 伏地叩拜（原著路线的“细看”）
+        text = _pick(_BOW, ev, p.tick)
+    elif op == Op.INSPECT:
         sk = names.get(ev.target) if ev.target else None
         text = _pick(_LOOK.get(sk.kind if sk else Kind.PLACE, _LOOK[Kind.PLACE]), ev, p.tick).format(t=t)
     elif op == Op.USE:
