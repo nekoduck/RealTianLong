@@ -9,10 +9,11 @@
 [POS]: language 的输出层（主持人之声）。输入只有玩家自己的感知与会话交来的 SceneBrief（要替 NPC 说出口的话、最近几回合正文、
        玩家原话、眼下的钩子），不是世界真相；台词本身算出处（说话者与听者可点名，原话与说法照搬不算违规）。
        模板先写成事实清单，清单里听见的言语换成带言语行为的台词（“龚光杰冷笑着向你叫阵：……”；只看见的耳语照旧），措辞按语义输入确定地轮换。
-       有模型时先交付先声（lead_line：玩家自己这一步的结果，确定的句子，照样过闸门）——首字不等模型；模型被告知开头已写好、
-       清单里不再列玩家自己的行动，它开头 ECHO_WINDOW 句里换个说法复述先声的（三字片段重合过半或 restates()）悄悄略过、
-       夹带了错的照样丢句记账；收尾补模板时先声讲过的行不再重复。
-       随后逐句流式生成：每句对“已交付的文字 + 这一句”跑 check()、逐句传闻 restated_hearsay()、人事闸门 check_deeds()
+       先声（lead_line：玩家自己这一步的结果，确定的句子，照样过闸门）两种用法：lead_after>0（默认 LEAD_AFTER 秒）只在模型
+       迟迟不交付第一句时顶上、自成一段——模型不知道它，照常铺陈这一步，悬念留给模型快的回合；lead_after=0 立即交付，
+       模型被告知开头已写好、清单里不再列玩家自己的行动；None 不用。先声之后模型开头 ECHO_WINDOW 句里复述它的
+       （三字片段重合过半；立即模式另加 restates() 的同一动作）悄悄略过，夹带了错的照样丢句记账；收尾补模板时先声讲过的行不再重复。
+       读流在常驻线程里边读边计时（_deadline）。随后逐句流式生成：每句对“已交付的文字 + 这一句”跑 check()、逐句传闻 restated_hearsay()、人事闸门 check_deeds()
        与台词闸门 check_quotes()，再查钟点数字（含“19点20分”“七点二十分”）；通过即经 on_text 交付，违规即丢弃并记下；
        交付满 MAX_CHARS 字即停止读流。收尾：传闻有没有归属整段查；台词没说出口、玩家自己的行动与后果、冲着玩家来的事、
        听见的话一个参与者都没提的，补上模板行、状态记为 gated_fallback（违规 omitted）；一句都没通过、丢满 MAX_DROPS 句或
@@ -27,8 +28,12 @@
 from __future__ import annotations
 
 import logging
+import queue
 import re
+import threading
+import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 from tianlong.core import Modality, Op, Percept, Social, derive_seed, is_night
@@ -62,6 +67,7 @@ RECENT_KEEP = 3            # 提示词里最近几回合的正文：只留最后
 RECENT_CHARS = 300         # 每段只留末尾这么多字
 ECHO = 0.5                 # 模型的一句与先声的三字片段重合过半：是在复述先声，悄悄略过（不算违规）
 ECHO_WINDOW = 2            # 只在模型开头这么多句里找复述：后文再提到同一件事是正常的接续
+LEAD_AFTER = 1.5           # 模型这么多秒还没交付一句，先声顶上（0 = 立即交付并告诉模型开头已写好；None = 不用先声）
 
 # ============================================================
 #  主持人之声的系统提示：第二人称、有限长度、台词归属、不替玩家开口、停在钩子上
@@ -293,6 +299,49 @@ def _grams(text: str, n: int = 3) -> frozenset[str]:
     return frozenset(t[i:i + n] for i in range(len(t) - n + 1))
 
 
+def _deadline(pieces: Iterator[str], after: float, on_late: Callable[[], None], pool: ThreadPoolExecutor) -> Iterator[str]:
+    """边读流边计时：读流放到常驻线程，after 秒一到就调用 on_late 一次（由它自己看要不要让先声顶上），其余原样转交。
+    调用方中途不读了（丢满、写够长、出错），读流线程在下一段字到达时关掉底层的流。"""
+    box: queue.Queue = queue.Queue()
+    stop = threading.Event()
+
+    def pump() -> None:
+        try:
+            for piece in pieces:
+                if stop.is_set():
+                    break
+                box.put(("chunk", piece))
+            else:
+                box.put(("end", None))
+        except Exception as e:  # noqa: BLE001 —— 原样交给读的一方
+            box.put(("error", e))
+        finally:
+            close = getattr(pieces, "close", None)
+            if callable(close):
+                close()
+
+    pool.submit(pump)
+    due = time.monotonic() + after
+    fired = False
+    try:
+        while True:
+            if not fired and time.monotonic() >= due:
+                fired = True
+                on_late()
+            try:
+                kind, value = box.get(timeout=None if fired else max(0.0, due - time.monotonic()))
+            except queue.Empty:
+                continue
+            if kind == "chunk":
+                yield value
+            elif kind == "end":
+                return
+            else:
+                raise value
+    finally:
+        stop.set()
+
+
 # ============================================================
 #  流式交付与逐句闸门
 # ============================================================
@@ -331,13 +380,14 @@ class _Gate:
         self._echo: Callable[[str], bool] = lambda _: False
         self._judged = 0                        # 先声之后模型交来的句数
 
-    def admit(self, lead: str, echo: Callable[[str], bool]) -> bool:
-        """先声：内核结果写成的确定句子，照样过一遍闸门（不计丢句）；通过即交付。此后模型开头 ECHO_WINDOW 句里复述它的
-        （三字片段重合过半，或 echo 判定是同一动作）悄悄略过，不算违规。"""
-        if not lead or self._found(lead, lead, ""):
+    def admit(self, lead: str, echo: Callable[[str], bool], sep: str = "") -> bool:
+        """先声：内核结果写成的确定句子，照样过一遍闸门（不计丢句）；通过即交付（sep 接在后面：迟到的先声自成一段）。
+        此后模型开头 ECHO_WINDOW 句里复述它的（三字片段重合过半，或 echo 判定是同一动作）悄悄略过，不算违规。"""
+        if not lead or self.lead or self._found(lead, self.out.text + lead, self.out.text):
             return False
-        self.out.emit(lead)
-        self.lead, self._lead_grams, self._echo = lead, _grams(lead), echo
+        self.out.emit(lead + sep)
+        self.lead, self._lead_grams, self._echo = lead + sep, _grams(lead), echo
+        self._judged = 0
         return True
 
     def feed(self, piece: str) -> bool:
@@ -403,8 +453,11 @@ class Narrator:
     aliases 是场景别称全表，只供闸门使用：识别“走进大殿”这类以别称说出的抵达，并拒绝本回合未出场实体的别称（“神仙姐姐”）。"""
 
     def __init__(self, llm: LLMClient | None = None, setting: str = "", lore: Mapping[str, str] | None = None,
-                 style: str = "", aliases: Mapping[str, Sequence[str]] | None = None, secrets: Sequence[str] = ()) -> None:
+                 style: str = "", aliases: Mapping[str, Sequence[str]] | None = None, secrets: Sequence[str] = (),
+                 lead_after: float | None = LEAD_AFTER) -> None:
         self.llm = llm
+        self.lead_after = lead_after
+        self._pump: ThreadPoolExecutor | None = None      # 迟到先声的读流线程（常驻：模型客户端的每线程长连接才用得上）
         self.setting = setting
         self.style = style
         self.lore = dict(lore or {})
@@ -444,15 +497,24 @@ class Narrator:
             out.emit(plain)
             return Rendered(out.text, RenderStatus.TEMPLATE)
 
-        # ---- 先声：玩家自己这一步的结果不等模型，结算一完成就交付；模型从下一句接着写 ----
+        # ---- 先声：玩家自己这一步的结果。lead_after=0 立即交付并告诉模型开头已写好（模型从下一句接着写）；
+        #      lead_after>0 只在模型迟迟不交付第一句时顶上（模型不知道它，照常铺陈这一步——悬念留给模型快的回合） ----
         gate = _Gate(plan, brief, known, command, out)
-        gate.admit(lead_line(percepts, names, viewer), lambda x: restates(x, percepts, names, viewer))
+        lead = lead_line(percepts, names, viewer) if self.lead_after is not None else ""
+        if lead and self.lead_after is not None and self.lead_after <= 0:
+            gate.admit(lead, lambda x: restates(x, percepts, names, viewer))
         # ---- 模型：逐句生成、逐句过闸门，通过即交付（先声讲过的玩家自己的行动不再列给模型，免得它照着再讲一遍） ----
         told = {r.text for r in rows if r.mine} if gate.lead else set()
         facts = [x for x in plan.lines if x not in covered and x not in told]
         prompt = self._prompt(brief, command, lapse, facts, looks, plan, known, gate.lead)
         failed = False
         pieces = self._pieces(prompt, self._system())
+        if lead and not gate.lead:
+            def late() -> None:
+                if not out.text:
+                    log.info("模型 %.1f 秒没交付一句，先声顶上", self.lead_after)
+                    gate.admit(lead, lambda _: False, sep="\n")
+            pieces = _deadline(pieces, self.lead_after or 0.0, late, self._pool())
         try:
             for piece in pieces:
                 if not gate.feed(piece) or len(out.text) >= MAX_CHARS:
@@ -502,6 +564,11 @@ class Narrator:
     # ------------------------------------------------------------
     #  提示词
     # ------------------------------------------------------------
+
+    def _pool(self) -> ThreadPoolExecutor:
+        if self._pump is None:
+            self._pump = ThreadPoolExecutor(max_workers=2, thread_name_prefix="narrate")
+        return self._pump
 
     def _pieces(self, prompt: str, system: str) -> Iterator[str]:
         """有流式接口就边生成边交付，没有就一次拿全文（同样逐句过闸门）。"""

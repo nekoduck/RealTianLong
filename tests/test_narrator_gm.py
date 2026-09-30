@@ -252,32 +252,58 @@ def test_npc_line_left_out_or_dropped_is_appended(view, stream):
     assert got == [G1, G2, G3] and r.status == RenderStatus.LLM, "讲到了就不补"
 
 
-def test_players_own_outcome_is_told_first_and_never_restated():
-    """先声：玩家自己这一步的结果不等模型、第一个交付；模型忘了讲也不必补，换个说法再讲一遍的那句悄悄略过，
-    复述里夹带了错的照样记账丢掉。"""
+def _lead_run(view, llm, lead_after):
+    percepts, names = view
+    got: list[str] = []
+    r = Narrator(llm, SC.setting, SC.lore, SC.style, SC.aliases, lead_after=lead_after).narrate_scene(
+        "duanyu", percepts, names, brief=SceneBrief(), show_scene=True, known=KNOWN, on_text=got.append)
+    assert r.text == "".join(got)
+    return r, got
+
+
+def test_instant_lead_is_told_first_and_never_restated():
+    """lead_after=0：先声立即交付，模型被告知开头已写好；漏讲不必补，换个说法复述的那句悄悄略过，夹带错的照样丢句。"""
     view = _settle(("duanyu", Op.ATTACK, "gongguangjie", None, Manner.NORMAL))
     lead = lead_line(view[0], view[1], "duanyu")
     assert lead.startswith("你") and "龚光杰" in lead and "挡了开去" in lead, "落空照实写出，而且写明原因"
     calm = "满堂目光都落在你身上，谁也没有作声。"
     for stream in (calm, "你一掌拍向龚光杰，却被他挡了开去。" + calm):
-        r, got = _run(view, _script(stream), SceneBrief())
+        r, got = _lead_run(view, _script(stream), 0)
         assert got == [lead, calm] and r.status == RenderStatus.LLM and r.dropped == 0
-    r, got = _run(view, _script("你猛地向龚光杰出手，他侧身一让，你便被震得受了伤。" + calm), SceneBrief())
+    r, got = _lead_run(view, _script("你猛地向龚光杰出手，他侧身一让，你便被震得受了伤。" + calm), 0)
     assert got == [lead, calm] and r.dropped == 1, "伤落错了人：照样丢句记账"
     prompt = _script(calm)
-    _run(view, prompt, SceneBrief())
+    _lead_run(view, prompt, 0)
     sent = prompt.prompts[-1][1]
     assert lead in sent and "不要复述" in sent, "模型知道开头已经写好"
     assert "但没有成功（被对方挡了开去）" not in sent, "先声讲过的那一行不再列给模型"
 
 
-def test_lead_waits_for_nothing_and_template_mode_is_unchanged():
+def test_late_lead_only_steps_in_when_the_model_is_slow():
+    """默认：模型快，先声不出场，模型照常铺陈这一步（悬念留给模型）；模型迟迟不交付第一句，先声到点顶上、自成一段，
+    模型此后几乎逐字重复它的句子略过，其余照常；模型不知道先声的存在。"""
     view = _settle(("duanyu", Op.ATTACK, "gongguangjie", None, Manner.NORMAL))
     lead = lead_line(view[0], view[1], "duanyu")
-    r, got = _run(view, _script("满堂目光都落在你身上。", first_delay=0.3), SceneBrief())
-    assert got[0] == lead
+    drama = "你一掌拍向龚光杰，却被他挡了开去。满堂目光都落在你身上。"
+    fast = _script(drama)
+    r, got = _lead_run(view, fast, 1.0)
+    assert lead not in r.text and r.text.startswith("你一掌拍向龚光杰") and r.status == RenderStatus.LLM
+    assert "开头一句已经写好" not in fast.prompts[-1][1]
+    t0 = time.perf_counter()
+    r, got = _lead_run(view, _script(lead + "满堂目光都落在你身上。", first_delay=0.6), 0.1)
+    assert got[0] == lead + "\n" and time.perf_counter() - t0 < 2
+    assert r.text == lead + "\n" + "满堂目光都落在你身上。", "逐字复述的那句略过"
+    r, got = _lead_run(view, _script(drama, first_delay=0.6), 0.1)
+    assert got[0] == lead + "\n" and "你一掌拍向龚光杰" in r.text, "换个说法的铺陈照常交付：模型本不知道先声"
+
+
+def test_lead_is_never_used_without_a_model_or_when_disabled():
+    view = _settle(("duanyu", Op.ATTACK, "gongguangjie", None, Manner.NORMAL))
+    lead = lead_line(view[0], view[1], "duanyu")
     r, got = _run(view, None, SceneBrief())
     assert r.status == RenderStatus.TEMPLATE and lead not in r.text, "没有模型时的模板照旧"
+    r, got = _lead_run(view, _script("满堂目光都落在你身上。", first_delay=0.3), None)
+    assert lead not in r.text
 
 
 def test_fallback_template_lines_read_as_sentences(view):

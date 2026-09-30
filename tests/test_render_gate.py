@@ -27,7 +27,6 @@ from tianlong.core import (
 )
 from tianlong.core.profiles import Profile
 from tianlong.kernel.perception import sketches_for
-from tianlong.language.lead import lead_line
 from tianlong.language.llm import LLMUnavailable
 from tianlong.language.narrator import Narrator
 from tianlong.language.render import RenderStatus, build_plan, check
@@ -345,19 +344,15 @@ def test_narrator_reports_render_source(authority):
     percepts, names = _player_view(authority, ("player", Op.TAKE, "key"))
     args = ("player", percepts, names)
     assert Narrator().narrate_rendered(*args).status == RenderStatus.TEMPLATE
-    lead = lead_line(*args[1:], "player")                 # 先声：玩家这一步的结果，不等模型
-    assert "钥匙" in lead and lead.endswith("。")
-    good = Narrator(FakeLLM("钥匙入手冰凉，门外静悄悄的。")).narrate_rendered(*args, known=KNOWN)
-    assert good.status == RenderStatus.LLM and good.text == lead + "钥匙入手冰凉，门外静悄悄的。"
-    again = Narrator(FakeLLM("你屏住呼吸，从桌面上拿起钥匙。")).narrate_rendered(*args, known=KNOWN)
-    assert again.text == lead and again.dropped == 0, "换个说法复述先声的句子悄悄略过"
+    good = Narrator(FakeLLM("你屏住呼吸，从桌面上拿起钥匙。")).narrate_rendered(*args, known=KNOWN)
+    assert good.status == RenderStatus.LLM and good.text == "你屏住呼吸，从桌面上拿起钥匙。"
     bad = Narrator(FakeLLM("你拿起钥匙，又顺手摸到另一把钥匙，转身走进内仓。")).narrate_rendered(*args, known=KNOWN)
-    assert bad.status == RenderStatus.GATED_FALLBACK and bad.text == lead, "先声已讲过玩家自己的行动，回退不再重复"
+    assert bad.status == RenderStatus.GATED_FALLBACK and bad.text == "你拿起钥匙。", "回退的模板行读起来是句子"
     assert {v.kind for v in bad.violations} == {"duplicate", "teleport"} and bad.dropped == 1
     down = Narrator(FakeLLM(fail=True)).narrate_rendered(*args)
-    assert down.status == RenderStatus.LLM_UNAVAILABLE and down.text == lead
+    assert down.status == RenderStatus.LLM_UNAVAILABLE and down.text == "你拿起钥匙。"
     assert Narrator(FakeLLM("  ")).narrate_rendered(*args).status == RenderStatus.GATED_FALLBACK
-    assert Narrator(FakeLLM("你拿起两把钥匙。")).narrate(*args) == lead, "narrate() 仍返回文字"
+    assert Narrator(FakeLLM("你拿起两把钥匙。")).narrate(*args) == "你拿起钥匙。", "narrate() 仍返回文字"
     assert Narrator().narrate(*args) == "你拿起钥匙", "没有模型时的模板照旧"
 
 
@@ -371,7 +366,7 @@ def test_session_records_settlement_and_render_separately():
     r = s.turn("拿走桌上的钥匙")
     assert r.advanced and s.authority.head().version == 1, "世界照常结算，且只结算一次"
     assert s.authority.head().target("key", Rel.AT) == "player"
-    assert r.render.status == RenderStatus.GATED_FALLBACK and "钥匙" in r.narration and "内仓" not in r.narration
+    assert r.render.status == RenderStatus.GATED_FALLBACK and r.narration == "你拿起钥匙。"
     assert {v.kind for v in r.render.violations} >= {"entity", "teleport"}
     assert s.store.events(s.ref) == r.events, "文字被拦不会让行动重跑"
 

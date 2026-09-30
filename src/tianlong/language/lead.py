@@ -57,9 +57,27 @@ def _pick(options: tuple[str, ...], ev: PerceivedEvent, tick: int) -> str:
     return options[derive_seed("lead", tick, ev.kind, ev.target, ev.obj) % len(options)]
 
 
+_ENDS = "。！？…!?~～"
+
+
+def _closed(words: str) -> str:
+    """引号里的话以句末标点收尾（“多谢姑娘仗义。”）；玩家没打标点就补一个句号——只补标点，不动字。"""
+    words = words.rstrip()
+    return words if not words or words[-1] in _ENDS else words + "。"
+
+
+def _pose(pose: str) -> str:
+    """姿态写成一句：带着原话的（“拱手道：“……””）把句号补进引号里，否则句末补句号。"""
+    pose = pose.rstrip()
+    if pose.endswith("”"):
+        return "你" + pose[:-1].rstrip() + ("" if pose[:-1].rstrip()[-1:] in _ENDS else "。") + "”"
+    return f"你{pose}" + ("" if pose[-1:] in _ENDS else "。")
+
+
 def _say(ev: PerceivedEvent, t: str) -> str | None:
     if ev.utterance:
-        return f"你对{t}道：“{ev.utterance}”" if ev.kind == Op.TELL.value else f"你问{t}：“{ev.utterance}”"
+        words = _closed(ev.utterance)
+        return f"你对{t}道：“{words}”" if ev.kind == Op.TELL.value else f"你问{t}：“{words}”"
     if ev.social is not None:
         return "你" + SOCIAL_VERBS[ev.social].format(t=t) + "。"
     return None
@@ -82,7 +100,7 @@ def _sentence(p: Percept, names: Names, viewer: str) -> str | None:
     if op in (Op.TELL, Op.ASK):
         return _say(ev, t)
     if op == Op.WAIT:
-        return f"你{ev.utterance}。" if ev.utterance else None          # 姿态照写；干等不抢先
+        return _pose(ev.utterance) if ev.utterance else None             # 姿态照写；干等不抢先
     if op == Op.INSPECT:
         sk = names.get(ev.target) if ev.target else None
         text = _pick(_LOOK.get(sk.kind if sk else Kind.PLACE, _LOOK[Kind.PLACE]), ev, p.tick).format(t=t)
