@@ -1,7 +1,7 @@
 """
 [INPUT]: 依赖 core 的 EntitySketch / Kind / Fact / PerceivedEvent / Percept / Modality / Op / Outcome / Rel / Social
 [OUTPUT]: 对外提供 Names 类型、render_fact()、render_event()、render_experience()、render_percept()、consequences()（事件的看得见的后果；familiar——此前已知下落的——只说“仍在”）、
-          REASONS / SUCCESS_NOTES / ATTR_WORDS、
+          REASONS / SUCCESS_NOTES / ATTR_WORDS / UNCHARTED（门那头没见过的说法）、
           SOCIAL_VERBS（没有原话的言语按言语行为写成动作：“向钟灵打了个招呼”）
 [POS]: language 的确定性文本层（无 LLM）；memory 用它生成经历文本，narrator 在无模型时用它兜底——同一套措辞，两处复用。
        所见清单按所在处归拢成人话（也是交给声音模型的事实清单：更短、更像话，每条事实照旧都在）。
@@ -71,6 +71,7 @@ ATTR_WORDS: dict[str, tuple[str, str]] = {
 }
 # 事件之后值得一提的后果（状态、技能、暗道）
 _NOTABLE = frozenset({"wounded", "poisoned", "subdued", "evasion", "absorb"})
+UNCHARTED = "不知通往何处"     # 门那头没亲眼见过：只说有这么一条路（闸门据此拦“回廊通向后院”）
 
 
 def _n(names: Names, eid: str | None, viewer: str | None = None, me: str = "我") -> str:
@@ -210,7 +211,7 @@ def _scene(p: Percept, names: Names, viewer: str, me: str) -> str:
     # 门那头没亲眼见过的地方不点名（山腹隧道黑洞洞的，看不出通往澜沧江畔），只说有这么一条路
     def far(o: str) -> str:
         sk = names.get(o)
-        return f"连着{sk.name}" if sk is not None and sk.seen else "不知通往何处"
+        return f"连着{sk.name}" if sk is not None and sk.seen else UNCHARTED
     ways = [f"{_n(names, d, viewer, me)}{far(o)}" for d, places in ends.items() if here in places for o in places if o != here]
     rows = [f"{'、'.join(who)}{'都' if len(who) > 1 else ''}在{_where(names, where, viewer, me)}"
             for where, who in groups.items()]

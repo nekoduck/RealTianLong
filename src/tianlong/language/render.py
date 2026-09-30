@@ -1,15 +1,21 @@
 """
-[INPUT]: 依赖 core 的 Percept / Modality / Op / Outcome / Kind / Rel / SKILLS / STATUS_ATTRS，language/templates 的 Names / render_percept
-[OUTPUT]: 对外提供 fact_lines()（本回合允许讲的事实清单；familiar 里的东西再翻出来不算发现）、RenderPlan / build_plan()（渲染计划）、Violation / check()（叙述闸门）、
+[INPUT]: 依赖 core 的 Percept / Modality / Op / Outcome / Kind / Rel / SKILLS / STATUS_ATTRS，language/templates 的 Names / render_percept / UNCHARTED
+[OUTPUT]: 对外提供 fact_lines()（本回合允许讲的事实清单；familiar 里的东西再翻出来不算发现）、RenderPlan / build_plan()（渲染计划；另记玩家亲眼见过的地方 seen 与见过的实体的外观描写 scenery）、
+          Violation / check()（叙述闸门；recall=收幕段落）、
           restated_hearsay()（逐句查传闻：这一句替只闻其说的说法作保）、check_utterance()（对白闸门）、
           sentence_ends()（流式分句）、RenderStatus / Rendered（渲染结果与来源、丢句数）、
           词表 STATUS_LEXICON / DENIALS / COMMITMENT_WORDS / ARRIVAL_VERBS / ATTRIBUTION_VERBS / NEGATIONS / QUANTIFIERS / EXTRA_MARKERS
           及其排除表（STATUS_EXCLUSIONS / COMMITMENT_EXCLUSIONS / ATTRIBUTION_EXCLUSIONS / NOT_NEGATION）、MIN_ALIAS、
+          语境词表 LIKENESS / RECALL / PLACING / LEADS_TO / FIXTURE_WINDOW、
           SPEECH_MARKS / POST_MARKS / POST_WINDOW / PRONOUNS，以及台词闸门（quotes.py）与人事闸门（deeds.py）共用的词法积木
           （_mentions / _lexical / _negated / _quotes / _mask / _clauses……，含无引号的“某某道：……”与“某某说……”式转述）
 [POS]: language 的“文字 ≠ 事实”闸门。提示词约束拦不住一次成功调用返回的错误非空文本，这里用确定性的词法检查拦：
        点名清单外的人与物（名或别称）、状态升级（受伤→被制、略有所得→学成，含“吐了一口血”“嘴唇发紫”“悟透”这类武侠说法）、
-       瞬移（有台词时引语里说话者讲自己的来路不算）、物品复制、编造承诺、把传闻说成叙述者确认的事实、场景秘密（私奔、投神农帮）——命中即丢句或回退确定模板。
+       瞬移（有台词时引语里说话者讲自己的来路不算）、物品复制、编造承诺、把传闻说成叙述者确认的事实、场景秘密（私奔、投神农帮）、
+       门那头没见过却说它通向哪里（清单写着“回廊不知通往何处”）——命中即丢句或回退确定模板。
+       语境（每一条都只豁免点名或件数，状态、瞬移、易手照查）：比喻里的物品（“手中似握着长剑”，句首点了人就不算）、
+       回忆里玩家亲眼见过的地点通道与陈设（收幕段落或同句有“想起/记得/方才”：名字收住小句，不定位、不写动作）、
+       否定的去向（“你没有往回廊那边去”）、紧挨着点到见过的陈设时照它的外观描写说件数（“兵器架上那几柄长剑”；“又一柄”照拦）。
        宁可错杀：误报只让这一句（或这一回合）的文字退回模板，世界结算不受任何影响。状态落在谁身上、谁做成了什么、
        玩家此刻在哪由 deeds.check_deeds() 查，引语归到谁、谁能说什么由 quotes.check_quotes() 查，渲染计划为它们记下
        谁身上有什么状态、谁做成了什么、玩家在哪、谁身上有什么东西、只闻其说的传闻里提到了谁。
@@ -35,7 +41,7 @@ from enum import StrEnum
 from functools import cache
 
 from tianlong.core import SKILLS, STATUS_ATTRS, Kind, Modality, Op, Outcome, Percept, Rel
-from tianlong.language.templates import Names, render_percept
+from tianlong.language.templates import UNCHARTED, Names, render_percept
 
 # ============================================================
 #  词表：闸门的全部语言知识集中在这里，改词表不改逻辑
@@ -92,6 +98,20 @@ ANOTHER: tuple[str, ...] = ("又一", "另一")
 EXTRA_MARKERS: tuple[str, ...] = ("还有", "另有", "也有", "另外", "又", "再")
 EXTRA_WINDOW = 8
 CLASSIFIERS = "把个只件枚支柄瓶卷本块串颗粒张根份对双"
+# 陈设里本来就有的件数（“兵器架上那几柄长剑”：兵器架的外观描写写着“插着几柄长剑”）：陈设须在数量说法之前这么多字以内点到
+FIXTURE_WINDOW = 12
+# 比喻与幻象（“手中似握着长剑”“竟像有仙人在壁上舞剑”）：同一小句里物品名之前有这些词，只是个比方，不算点名；
+# “似乎/似的”“好像”“玉像/图像”不算比喻
+LIKENESS = re.compile(r"似(?![乎的])|(?<![玉图画神佛塑石肖影偶雕人好])像|仿佛|宛如|宛若|犹如|恍如|恍若|如同|好似")
+LIKENESS_WINDOW = 12
+# 回忆（收幕段落，或同一句前文有这些词）：玩家亲眼见过的地点、通道与陈设可以点名
+RECALL: tuple[str, ...] = ("记得", "想起", "忆起", "回想", "方才", "先前")
+# 回忆里不许给它定位或写动作：名字须收住所在的小句，小句里也不许有别的名字、“在”与抵达动词（“那尊玉像就立在江边”照拦）
+PLACING: tuple[str, ...] = ("在", "来到", "到了", "走进", "进入", "回到", "去了")
+# 否定的去向（“你没有往回廊那边去”）：玩家亲眼见过的地点与通道可以点名
+_AVOIDED = re.compile(r"(?:没有?|未曾?|并未|不曾)(?:往|朝|向|去|进|回)$")
+# 门那头没亲眼见过（清单写着“回廊不知通往何处”）：不许说它通向哪里
+LEADS_TO: tuple[str, ...] = ("通向", "通往", "通到", "通着", "连着", "直通", "接着")
 # 别称至少两个字才作拒绝依据：单字别称（“貂”）太泛
 MIN_ALIAS = 2
 _PUNCT = "，。；！？、,.;!?：:“”\"'（）()\n"
@@ -151,15 +171,18 @@ class RenderPlan:
     holdings: tuple[tuple[str, str], ...] = ()     # (持有者本名, 物品本名)：亲眼所见、身上确有的东西
     claims: tuple[tuple[str, tuple[frozenset[str], ...]], ...] = ()   # 只闻其说的传闻：(说话者本名, 说法里每个实体的称呼)
     secrets: tuple[str, ...] = ()                  # 场景的秘密词表（正则片段）：计划与出处里没有就不许说
+    seen: frozenset[str] = frozenset()             # 玩家亲眼见过的地点、通道与陈设（名与别称）：回忆里、没往那里去时可以点名
+    scenery: tuple[tuple[str, str], ...] = ()      # (称呼, 外观描写原文)：玩家亲眼见过的实体——物件上的字、陈设里的件数以此为出处
 
 
 def build_plan(viewer: str, percepts: Sequence[Percept], names: Names, show_scene: bool = False,
                looks: Sequence[str] = (), lapse: str = "",
                aliases: Mapping[str, Sequence[str]] | None = None, secrets: Sequence[str] = (),
-               familiar: Container[str] = ()) -> RenderPlan:
+               familiar: Container[str] = (), lore: Mapping[str, str] | None = None) -> RenderPlan:
     """与 fact_lines() 同样的输入：观察者、本回合感知、观察者的名称表。looks/lapse 是一并交给 LLM 的外观描写与时辰；
-    aliases 是场景别称全表（实体 ID → 别称）：本回合出场实体的别称可说，其余的只用于拒绝；secrets 是场景的秘密词表。"""
-    aliases = aliases or {}
+    aliases 是场景别称全表（实体 ID → 别称）：本回合出场实体的别称可说，其余的只用于拒绝；secrets 是场景的秘密词表；
+    lore 是场景的外观描写全表（"id" 与 "id@night" 等变体）：名称表里亲眼见过（sketch.seen）的实体的那几段记进 scenery，不进出处。"""
+    aliases, lore = aliases or {}, lore or {}
     table: dict[str, tuple[str, Kind]] = {sk.id: (sk.name, sk.kind) for p in percepts for sk in p.sketches}
     table.update({eid: (sk.name, sk.kind) for eid, sk in names.items()})
     ids: set[str] = {viewer}
@@ -229,6 +252,7 @@ def build_plan(viewer: str, percepts: Sequence[Percept], names: Names, show_scen
     def named(pairs: Iterable[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
         return tuple(sorted({(n, x) for e, x in pairs if (n := name(e))}))
 
+    eyed = {e for e, sk in names.items() if sk.seen and sk.kind != Kind.PERSON}     # 亲眼见过的东西与地方（人不算）
     items = Counter(n for e in ids if (n := name(e)) and table[e][1] == Kind.ITEM)
     lines = fact_lines(viewer, percepts, names, show_scene, familiar)
     allowed = frozenset(n for e in ids if (n := name(e)))
@@ -258,6 +282,9 @@ def build_plan(viewer: str, percepts: Sequence[Percept], names: Names, show_scen
         claims=tuple((n, tuple(forms(e) for e in es)) for who, es in dict.fromkeys(rumors)
                      if (n := name(who)) and all(e in table for e in es)),
         secrets=tuple(secrets),
+        seen=with_aliases(e for e in eyed if table[e][1] != Kind.ITEM),
+        scenery=tuple(sorted({(n, text) for key, text in lore.items() if (e := key.split("@")[0]) in eyed
+                              for n in with_aliases((e,))})),
     )
 
 
@@ -359,11 +386,11 @@ def _clause_after(text: str, i: int, width: int) -> str:
     return window
 
 
-def _quantified(text: str, item: str, count: int) -> list[tuple[int, str]]:
-    """“两把钥匙”“另一把铜钥匙”“两把一模一样的钥匙”“桌下还有一把钥匙”：返回 (暗示的件数, 原文)。“又一个人拿起钥匙”不算。"""
+def _quantified(text: str, item: str, count: int) -> list[tuple[int, str, int]]:
+    """“两把钥匙”“另一把铜钥匙”“两把一模一样的钥匙”“桌下还有一把钥匙”：返回 (暗示的件数, 原文, 位置)。“又一个人拿起钥匙”不算。"""
     nums = "|".join(sorted([*QUANTIFIERS, *ANOTHER], key=lambda q: -len(q)))
     pat = re.compile(f"({nums}|一)[{CLASSIFIERS}](?:{_FREE}{{0,5}}的|{_FREE}{{0,2}}){re.escape(item)}")
-    out: list[tuple[int, str]] = []
+    out: list[tuple[int, str, int]] = []
     for m in pat.finditer(text):
         q = m.group(1)
         if q == "一":
@@ -372,7 +399,7 @@ def _quantified(text: str, item: str, count: int) -> list[tuple[int, str]]:
             implied = count + 1
         else:
             implied = count + 1 if q in ANOTHER else QUANTIFIERS[q]
-        out.append((implied, m.group(0)))
+        out.append((implied, m.group(0), m.start()))
     return out
 
 
@@ -399,10 +426,11 @@ def _unsourced(text: str, source: str, patterns: Iterable[str], exclusions: Iter
 
 
 def check(text: str, plan: RenderPlan, known_names: Iterable[str] = (),
-          quoted: frozenset[str] | None = None) -> tuple[Violation, ...]:
+          quoted: frozenset[str] | None = None, recall: bool = False) -> tuple[Violation, ...]:
     """known_names 是“可能被点名”的全集（玩家认识的 + 场景里所有实体），只用于拒绝：不在计划里的名字出现即违规。
     quoted：本回合有 NPC 台词时，交来要说台词的人可以点名的名字全集——引语里的这些名字与状态词交给台词闸门按说话者查
-    （他认识的、他那句说法与谈资里有的才许），这里只管叙述者自己的口吻；None 表示没有台词，引语同样由这里把关。"""
+    （他认识的、他那句说法与谈资里有的才许），这里只管叙述者自己的口吻；None 表示没有台词，引语同样由这里把关。
+    recall：这是收幕段落（写远去的回忆）——玩家亲眼见过的地点、通道与陈设可以点名，但不许给它定位或写动作。"""
     out: list[Violation] = []
     allowed = plan.names | plan.aliases
     universe = set(known_names) | allowed | plan.hidden
@@ -410,9 +438,11 @@ def check(text: str, plan: RenderPlan, known_names: Iterable[str] = (),
     spans = [(q.start, q.end) for q in _quotes(text)] if quoted is not None else []
     narration = _mask(text, _quotes(text)) if spans else text     # 叙述者自己的口吻：引语遮住
 
-    # ---- 1. 点名：清单外的人与物（名或别称）----
+    # ---- 1. 点名：清单外的人与物（名或别称）；比喻里的物品、回忆里与没往那里去的见过的地方不算点名 ----
     for i, n in _mentions(text, universe):
         if n in allowed or n in sourced or (quoted and n in quoted and any(a <= i < b for a, b in spans)):
+            continue
+        if _likened(text, i, n, plan) or _recalled(text, i, n, plan, universe, recall) or _avoided(text, i, n, plan):
             continue
         out.append(Violation("entity", n))
 
@@ -437,17 +467,70 @@ def check(text: str, plan: RenderPlan, known_names: Iterable[str] = (),
                 and verb + hits[0][1] not in plan.source):
             out.append(Violation("teleport", verb + hits[0][1]))
 
-    # ---- 5. 物品复制（外观描写本就写着“插着几柄长剑”的，照此说不算）----
+    # ---- 5. 物品复制（外观描写本就写着“插着几柄长剑”的，照此说不算；紧挨着点到见过的兵器架，照它的外观描写说也不算）----
     for item, count in plan.items:
-        ceiling = max([count, *(implied for implied, _ in _quantified(plan.source, item, count))])
-        out += [Violation("duplicate", phrase) for implied, phrase in _quantified(text, item, count) if implied > ceiling]
+        ceiling = max([count, *(implied for implied, _, _ in _quantified(plan.source, item, count))])
+        out += [Violation("duplicate", phrase) for implied, phrase, at in _quantified(text, item, count)
+                if implied > max(ceiling, _displayed(text, at, phrase, item, count, plan))]
 
     # ---- 6. 传闻不得变成叙述者确认的事实 ----
     out += [Violation("hearsay", who) for who in plan.hearsay if not _attributed(text, *_forms_of(plan, who))]
 
     # ---- 7. 场景的秘密（私奔、投神农帮）：计划与出处里没有，就是凭空泄露 ----
     out += [Violation("secret", w) for w in _unsourced(text, plan.source, plan.secrets)]
+
+    # ---- 8. 门那头没见过（清单写着“回廊不知通往何处”）：不许说它通向哪里（通向此刻所在处不算）----
+    for door in set(re.findall(f"([^{re.escape(_PUNCT)}]+?){UNCHARTED}", plan.source)) & universe:
+        for i, _ in _mentions(narration, (door,)):
+            way = _clause_after(narration, i + len(door), ARRIVAL_WINDOW)
+            hits = _mentions(way, plan.places)
+            if way.startswith(LEADS_TO) and hits and hits[0][1] not in plan.here:
+                out.append(Violation("topology", door + way))
     return tuple(dict.fromkeys(out))
+
+
+# ============================================================
+#  语境：比喻、回忆、否定的去向、陈设里本来就有的件数
+# ============================================================
+
+
+def _sentence_head(text: str, i: int) -> str:
+    """同一句里 i 之前的文字。"""
+    return text[max(text.rfind(c, 0, i) for c in SENTENCE_ENDS + "\n") + 1:i]
+
+
+def _likened(text: str, i: int, n: str, plan: RenderPlan) -> bool:
+    """“手中似握着长剑”：物品名前、同一小句里有比喻词，且句首到这里没点名任何人（“钟灵手中似握着长剑”照拦）。"""
+    persons = {f for f, _ in plan.people} | {"你", *PRONOUNS}
+    return (n in dict(plan.goods) and bool(LIKENESS.search(_clause_before(text, i, LIKENESS_WINDOW)))
+            and not _mentions(_sentence_head(text, i), persons))
+
+
+def _recalled(text: str, i: int, n: str, plan: RenderPlan, universe: Iterable[str], recall: bool) -> bool:
+    """回忆里见过的地方（“石室里那尊玉像，此刻都隔在了身后”）：收幕段落或同句前文有回忆词；名字收住小句、下一小句
+    也不拿代词接着写它（“……玉像，它朝你一笑”），小句里没有“在”与抵达、也没有见过的地方以外的名字（人、物、没见过的地方）
+    ——只点名，不定位、不写动作。"""
+    if n not in plan.seen or not (recall or any(w in _sentence_head(text, i) for w in RECALL)):
+        return False
+    end = i + len(n)
+    head = _clause_before(text, i, ARRIVAL_WINDOW * 2)
+    return (not _clause_after(text, end, ARRIVAL_WINDOW) and text[end + 1:end + 2] not in ("它", "他", "她")
+            and not any(w in head for w in PLACING) and all(m in plan.seen for _, m in _mentions(head, universe)))
+
+
+def _avoided(text: str, i: int, n: str, plan: RenderPlan) -> bool:
+    """“你没有往回廊那边去”：否定的去向只说没去，见过的地方可以点名。"""
+    return n in plan.seen and bool(_AVOIDED.search(text[max(0, i - 4):i]))
+
+
+def _displayed(text: str, at: int, phrase: str, item: str, count: int, plan: RenderPlan) -> int:
+    """数量说法紧前头点到了玩家见过的陈设，这件陈设的外观描写里本来就有的件数（“插着几柄长剑”）；
+    只认直接的“数词 + 量词”——“又一柄”“还有一柄”照旧以实体件数为上限。"""
+    if phrase.startswith(("一", *ANOTHER)):
+        return 0
+    near = _sentence_head(text, at)[-FIXTURE_WINDOW:]
+    named = {n for _, n in _mentions(near, (n for n, _ in plan.scenery))}
+    return max((k for n, lore in plan.scenery if n in named for k, _, _ in _quantified(lore, item, count)), default=0)
 
 
 def _forms_of(plan: RenderPlan, who: str) -> tuple[str, ...]:

@@ -2,11 +2,13 @@
 [INPUT]: 依赖 language/render 的 RenderPlan / Violation / 词法积木（_mentions / _lexical / _negated / _short_of / _quotes / _mask /
          _clauses / _clause_after）与词表（STATUS_LEXICON / STATUS_EXCLUSIONS / DENIALS / PRONOUNS / ARRIVAL_WINDOW）
 [OUTPUT]: 对外提供 check_deeds()（人事闸门：状态落在谁身上、谁做成了什么、东西在谁手里、玩家此刻在哪），
-          词表 BODILY / DEED_LEXICON / DEED_LICENSE / POSSESSION / POSITION_VERBS / DEPARTURE_VERBS / MOODS
+          词表 BODILY / DEED_LEXICON / DEED_LICENSE / POSSESSION / POSITION_VERBS / DEPARTURE_VERBS / MOODS / DASH
 [POS]: language 的人事闸门，与 render.check()、quotes.check_quotes() 并用。check() 只问“这个状态、这个地点本回合有没有”，
        这里再问“落在谁身上”：状态词、动作结果词（拍中/打倒/拿起/抽出/得手）、持有说法（握在你手中）、站位（已身在/站在）
        与离开（溜出/出了），都要找到说的是谁——同一句里、从关键词所在小句往前，第一个提到人的小句里的称呼
-       （状态词所在的小句整句都算，动作只看关键词之前；“被”字句取“被”之后的施动者）——再与内核结算对照：
+       （状态词所在的小句整句都算，动作只看关键词之前；“被”字句取“被”之后的施动者；状态词往前找人不越过破折号——
+       “脸色阴沉——被制在这里，你……”说的是破折号之后、下一小句开头的你；关键词所在小句一个人也没点名时，
+       下一小句开头的称呼也算——“两处穴道一麻，你手脚僵住”）——再与内核结算对照：
        受伤的是你不是龚光杰、没挡开就不是拍中、没拿到就不在手里、没走成就还在大殿。
        宽松原则（宁可放过也不错杀好句子）：小句里有他/她这类代词、或“被”后面不是人，就不猜；提到的人里有一个对得上就放行；
        问句与“若/想/要/不妨/险些”等假设、意图说法，“原以为/莫非/难道”这类旧认知与疑问不查；否认只在提到的人个个都确有伤毒被制时才算。
@@ -67,6 +69,7 @@ MOODS: tuple[str, ...] = ("若", "如果", "倘若", "要是", r"想(?![必来])
                           "何不", "不如", "该", "能否", "试图", "企图", "妄图", "险些", "差点", "几乎", "正待", "未及",
                           "以为", "只道", "还当", "莫非", "难道")      # 原以为/莫非：说的是心里的旧认知与疑问
 _STOPS = "。！？!?\n"
+DASH = "——"                   # 破折号之后另起话头：状态词往前找人不越过它
 
 
 # ============================================================
@@ -82,7 +85,8 @@ def _sentence(masked: str, i: int) -> tuple[int, int]:
 
 def _who(masked: str, i: int, forms: Iterable[str], people: dict[str, str], whole: bool) -> list[str] | None:
     """[i, …) 处的关键词说的是谁（本名）。同一句里从关键词所在的小句往前，取第一个提到人的小句里的全部称呼；
-    whole=True 时关键词所在的小句整句都算（“受了伤的龚光杰”），否则只看它之前（施动者在前）。
+    whole=True 时关键词所在的小句整句都算（“受了伤的龚光杰”），否则只看它之前（施动者在前）；
+    whole=True 且小句里关键词之前有破折号（“脸色阴沉——被制在这里，你……”）：破折号之后另起话头，那里没有人就取下一小句开头的称呼。
     “被”字句取“被”之后的人；有代词、或“被”后面不是人：说不清是谁，返回 None。"""
     lo, hi = _sentence(masked, i)
     parts = _clauses(masked, lo, hi)
@@ -90,6 +94,11 @@ def _who(masked: str, i: int, forms: Iterable[str], people: dict[str, str], whol
     if own is None:
         return []
     forms = tuple(forms)
+    if whole and (d := masked.rfind(DASH, parts[own][0], i)) >= 0:
+        found = [w for _, w in _mentions(masked[d + len(DASH):parts[own][1]], forms)]
+        if found:
+            return None if any(w in PRONOUNS for w in found) else [people.get(w, w) for w in found]
+        return _next_subject(masked, i, forms, people) or None
     for k in range(own, -1, -1):
         a, b = parts[k]
         seg = masked[a:b] if whole or k != own else masked[a:i]
@@ -100,6 +109,22 @@ def _who(masked: str, i: int, forms: Iterable[str], people: dict[str, str], whol
         if found:
             return None if any(w in PRONOUNS for w in found) else [people.get(w, w) for w in found]
     return []
+
+
+def _next_subject(masked: str, i: int, forms: Iterable[str], people: dict[str, str]) -> list[str]:
+    """同一句里关键词所在小句的下一小句，开头就是的称呼（“两处穴道一麻，你手脚僵住”的“你”）；没有或是代词即空。"""
+    lo, hi = _sentence(masked, i)
+    nxt = next((a for a, _ in _clauses(masked, lo, hi) if a > i), None)
+    hits = _mentions(masked[nxt:hi], forms) if nxt is not None else []
+    return [people.get(hits[0][1], hits[0][1])] if hits and hits[0][0] == 0 and hits[0][1] not in PRONOUNS else []
+
+
+def _elided(masked: str, i: int, forms: Iterable[str], people: dict[str, str]) -> list[str]:
+    """关键词所在的小句一个人也没点名（主语省略：“两处穴道一麻，你手脚僵住”）：下一小句开头的称呼也可能是它说的人。"""
+    lo, hi = _sentence(masked, i)
+    own = next(((a, b) for a, b in _clauses(masked, lo, hi) if a <= i < b), None)
+    forms = tuple(forms)
+    return _next_subject(masked, i, forms, people) if own and not _mentions(masked[own[0]:own[1]], forms) else []
 
 
 def _hedged(masked: str, i: int) -> bool:
@@ -141,7 +166,7 @@ def check_deeds(text: str, plan: RenderPlan, known_names: Iterable[str] = ()) ->
             if not who:
                 continue
             if not _denied(masked, i, w):
-                if not any((n, status) in afflicted for n in who):
+                if not any((n, status) in afflicted for n in (*who, *_elided(masked, i, persons, people))):
                     out.append(Violation("status", f"{status}:{'/'.join(who)}:{w}"))
             elif status in BODILY and all((n, status) in afflicted for n in who):
                 out.append(Violation("status", f"denied:{'/'.join(who)}:{w}"))

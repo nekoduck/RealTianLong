@@ -1,9 +1,9 @@
 """
 [INPUT]: 依赖 core 的 Percept / Modality / Op / Outcome / is_night，language/templates 的 Names / render_percept，
          language/llm 的 LLMClient / LLMUnavailable，language/scene 的 VoiceLine / SceneBrief / TextSink，
-         language/render 的 fact_lines / build_plan / check / restated_hearsay / sentence_ends / Violation / Rendered / RenderStatus，
-         language/deeds 的 check_deeds，language/quotes 的 check_quotes / voiced，language/lead 的 lead_line / restates，
-         language/voice_prompt 的 system_prompt / scene_prompt / render_voice / lapse_line / CLOCK_ANY / TIMED（措辞层）
+         language/render 的 fact_lines / build_plan / check / sentence_ends / Violation / Rendered / RenderStatus，
+         language/gate 的 violations（逐句判定），language/quotes 的 voiced，language/lead 的 lead_line / restates，
+         language/voice_prompt 的 system_prompt / scene_prompt / render_voice / lapse_line / TIMED（措辞层）
 [OUTPUT]: 对外提供 Narrator（narrate_scene() 主持人之声：流式生成、逐句过闸门、通过即交付；narrate_rendered() / narrate()
           以空 SceneBrief 委托之；secrets 是场景的秘密词表）、MAX_DROPS、MAX_CHARS、LEAD_AFTER、lore_keys()、grams()（三字片段：复述与谈资说过没有都用它），
           再导出 render / voice_prompt 的 fact_lines()、render_voice()、SOCIAL_PHRASES / SOCIAL_LABELS 与 _when（= lapse_line）
@@ -14,8 +14,9 @@
        迟迟不交付第一句时顶上、自成一段——模型不知道它，照常铺陈这一步，悬念留给模型快的回合；lead_after=0 立即交付，
        模型被告知开头已写好、清单里不再列玩家自己的行动；None 不用。先声之后模型开头 ECHO_WINDOW 句里复述它的
        （三字片段重合过半；立即模式另加 restates() 的同一动作）悄悄略过，夹带了错的照样丢句记账；收尾补模板时先声讲过的行不再重复。
-       读流在常驻线程里边读边计时（_deadline）。随后逐句流式生成：每句对“已交付的文字 + 这一句”跑 check()、逐句传闻 restated_hearsay()、人事闸门 check_deeds()
-       与台词闸门 check_quotes()，再查钟点数字（含“19点20分”“七点二十分”）；通过即经 on_text 交付，违规即丢弃并记下；
+       读流在常驻线程里边读边计时（_deadline）。随后逐句流式生成：每句对“已交付的文字 + 这一句”跑 gate.violations()（check()、逐句传闻
+       restated_hearsay()、人事闸门 check_deeds()、台词闸门 check_quotes()、钟点数字，同一个纯函数也是语料测试走的路）；
+       build_plan 另收场景的外观描写全表（玩家见过的实体那几段记进计划，只作物件上的字与陈设件数的出处）；通过即经 on_text 交付，违规即丢弃并记下；
        交付满 MAX_CHARS 字即停止读流。收尾：传闻有没有归属整段查；台词没说出口、玩家自己的行动与后果、冲着玩家来的事、
        听见的话一个参与者都没提的，补上模板行、状态记为 gated_fallback（违规 omitted）——一行写出的后果里的东西（翻出的帛卷）
        也算参与者，玩家的原话或姿态照着写了出来也算讲到；一句都没通过、丢满 MAX_DROPS 句或传闻没有归属，补上模板
@@ -47,10 +48,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 from tianlong.core import Modality, Op, Outcome, Percept, is_night
-from tianlong.language.deeds import check_deeds
+from tianlong.language.gate import violations
 from tianlong.language.lead import lead_line, restates
 from tianlong.language.llm import LLMClient, LLMUnavailable
-from tianlong.language.quotes import check_quotes, voiced
+from tianlong.language.quotes import voiced
 from tianlong.language.render import (
     QUOTE_CLOSE,
     SENTENCE_ENDS,
@@ -61,13 +62,11 @@ from tianlong.language.render import (
     build_plan,
     check,
     fact_lines,
-    restated_hearsay,
     sentence_ends,
 )
 from tianlong.language.scene import SceneBrief, TextSink, VoiceLine
 from tianlong.language.templates import Names, render_percept
 from tianlong.language.voice_prompt import (
-    CLOCK_ANY,
     SOCIAL_LABELS,
     SOCIAL_PHRASES,
     TIMED,
@@ -411,12 +410,7 @@ class _Gate:
         self.out.emit(piece)
 
     def _found(self, piece: str, text: str, before: str) -> list[Violation]:
-        found = [v for v in check(text, self.plan, self.known, self.quoted) if v.kind != "hearsay"]   # 传闻有没有归属：收尾整段查
-        found += restated_hearsay(piece, text, self.plan)                                  # 这一句替传闻作保：当场丢
-        found += check_deeds(text, self.plan, self.known)
-        found += check_quotes(text, self.brief, self.plan, self.known, command=self.command, since=len(before))
-        found += [Violation("clock", m.group(0)) for m in CLOCK_ANY.finditer(piece)]
-        return found
+        return violations(piece, text, before, self.plan, self.brief, self.known, self.command)
 
 
 # ============================================================
@@ -463,7 +457,7 @@ class Narrator:
         passed = [f"（不觉已是{lapse}）"] if lapse else []
         forms = {sk.name: tuple(self.aliases.get(eid, ())) for eid, sk in names.items()}
         plan = _with_lines(build_plan(viewer, percepts, names, show_scene, looks, "".join(passed), self.aliases,
-                                      self.secrets, familiar), brief, forms)
+                                      self.secrets, familiar, self.lore), brief, forms)
         rows, covered = _scene_lines(plan, viewer, percepts, names, brief, brief.recent[-1] if brief.recent else "",
                                      self.aliases, familiar)
         scene = [r.text for r in rows]
