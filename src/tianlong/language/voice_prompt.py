@@ -2,10 +2,12 @@
 [INPUT]: 依赖 core 的 Op / Social / derive_seed，language/render 的 RenderPlan，language/scene 的 VoiceLine / SceneBrief
 [OUTPUT]: 对外提供 system_prompt()（主持人之声的系统提示）、scene_prompt()（一回合的用户提示词）、SOCIAL_LABELS / SOCIAL_PHRASES
           （言语行为交给模型的说法与模板措辞）、render_voice()（一句 NPC 言语的确定性模板）、
-          in_words() / lapse_line()（钟点换成时辰文字、一段等待之后的时辰）、CLOCK_ANY（正文里的钟点数字）/ TIMED（正文已交代过时辰）
+          in_words() / lapse_line()（钟点换成时辰文字、一段等待之后的时辰）、CLOCK_ANY（正文里的钟点数字）/ TIMED（正文已交代过时辰）、
+          grams()（去掉标点空白后的 n 字片段：复述、谈资说过没有、台词重复都用它）、SAID_SHOWN / REPEAT
 [POS]: language/narrator 的措辞层：主持人之声交给模型的全部文字——系统提示（第二人称、80~250 字、台词归属、只许点名可点名的、
        不替玩家开口、不写钟点、停在钩子上）与用户提示（最近三段正文每段末尾约 300 字且钟点换成时辰、玩家原话、事实清单、
-       身体状况与身边人的伤、干等时的钩子、意料之外、没人接的话、要说出口的话（按叙述者给的顺序；腔调/谈资/来历/近来经历/回应/可点名）、
+       身体状况与身边人的伤、天色、干等时的钩子、意料之外、没人接的话、要说出口的话（按叙述者给的顺序；腔调/谈资/来历/近来经历/回应/可点名）、
+       本回合开口的人最近说过的原话（至多 SAID_SHOWN 句，与这回合要说的三字片段重合 ≥REPEAT 的加注“换个说法”）、
        初见外观、眼下处境、收幕、已写好的开头），以及没有模型时台词的模板措辞。提示词只是请求，闸门在 narrator 里验收；
        模型只见时辰文字，不见钟点数字（钟点的样子与闸门同一份 CLOCK_ANY）
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -22,6 +24,8 @@ from tianlong.language.scene import SceneBrief, VoiceLine
 
 RECENT_KEEP = 3            # 提示词里最近几回合的正文：只留最后几段
 RECENT_CHARS = 300         # 每段只留末尾这么多字
+SAID_SHOWN = 3             # 本回合开口的人最近说过的原话：提示词里至多列这么多句（新的在后）
+REPEAT = 0.6               # 旧话与这回合要说的原话/说法三字片段重合（按较短的一方算）到这个比例：加注“换个说法”
 
 # ============================================================
 #  主持人之声的系统提示：第二人称、有限长度、台词归属、不替玩家开口、停在钩子上
@@ -40,6 +44,7 @@ _GM = (
     "7. 不写数字钟点，时辰与天色一律用文字描述。\n"
     "8. 结尾自然收住，停在一个钩子上：某人的问话或动作、一声响动、一个显露出来的代价、一处引人注意的细节。"
     "不要替玩家列选项，不要用“你是……还是……？”这种句式（最近几段正文用过的收尾方式就换一种），不替玩家选。"
+    "不编造征兆、突然的静默、来历不明的影子；钩子只落在本回合给出的事实、台词、看点或眼前可做的事上。"
 )
 
 
@@ -86,6 +91,12 @@ CLOCK_ANY = re.compile(rf"第\s*\d+\s*[日天]|\d{{1,2}}\s*[:：]\s*\d{{2}}|\d{{
 _BRANCHES = "子丑寅卯辰巳午未申酉戌亥"
 _SKY = ("夜半", "深夜", "黎明前", "破晓", "清晨", "上午", "正午", "午后", "下午", "傍晚", "入夜", "夜深")
 TIMED = re.compile(f"[{_BRANCHES}]时|{'|'.join(_SKY)}")     # 正文已经交代过时辰
+
+
+def grams(text: str, n: int = 3) -> frozenset[str]:
+    """去掉标点空白后的 n 字片段：判断复述、判断谈资说过没有、判断台词重复，都用它。"""
+    t = re.sub(r"[^\w]", "", text)
+    return frozenset(t[i:i + n] for i in range(len(t) - n + 1))
 
 
 def _span(minutes: int) -> str:
@@ -149,6 +160,8 @@ def scene_prompt(brief: SceneBrief, command: str, when: Sequence[str], facts: Se
     if brief.present:
         around = f"{brief.present[0]}" + (f"，身边有{'、'.join(brief.present[1:])}" if len(brief.present) > 1 else "，身边没有别人")
         parts.append(f"玩家以为自己此刻在：{around}")
+    if brief.sky is not None:
+        parts.append(f"天色（日头、月亮只照这个写，别写早了或晚了）：{brief.sky.text}")
     if brief.condition:
         parts.append(f"玩家自己的身体状况（记在心里，不要写得像没事人，也不要加重；只在这一步吃力——走动攀爬、出手、挨打——"
                      f"或刚受伤时带一笔，别每回合都写疼）：{brief.condition}")
@@ -173,6 +186,7 @@ def scene_prompt(brief: SceneBrief, command: str, when: Sequence[str], facts: Se
         lines_text = "\n".join(x for vl in brief.lines for x in (vl.knows, vl.lately, vl.about) if x)
         parts.append("要说出口的话（按这个顺序，逐句写成对白）：\n"
                      + "\n".join(_describe(i, vl, fits) for i, vl in enumerate(brief.lines, 1)))
+    parts += _said_before(brief)
     if looks:
         parts.append("玩家初次看清的人与物（仅作外观描写的依据）：\n" + "\n".join(looks))
     if brief.stakes:
@@ -217,3 +231,23 @@ def _describe(i: int, vl: VoiceLine, fits: Callable[[str], bool]) -> str:
         rows.append("   （不是在回应玩家的某句话：不要写成是在接玩家的话头）")
     rows.append("   台词里可点名：" + ("、".join(names) if names else "（除说话对象与玩家外，谁也不提）"))
     return "\n".join(rows)
+
+
+def _said_before(brief: SceneBrief) -> list[str]:
+    """本回合要开口的人最近说过的原话（至多 SAID_SHOWN 句）：与他这回合要说的原话或说法重合 ≥REPEAT 的，加注换个说法。
+    他这回合只是顺口喝一声（act）或没有台词，就不列。"""
+    out: list[str] = []
+    for name, said in brief.said_before:
+        mine = [vl for vl in brief.lines if vl.speaker_name == name]
+        if not mine or not said:
+            continue
+        now = [g for vl in mine if (g := grams(vl.template or vl.claim or ""))]
+        rows = [f"- “{old}”" + ("（与这回合要说的几乎一样：换个说法）" if _echoes(grams(old), now) else "")
+                for old in said[-SAID_SHOWN:]]
+        out.append(f"{name}最近说过的话（别重复）：\n" + "\n".join(rows))
+    return out
+
+
+def _echoes(was: frozenset[str], now: Sequence[frozenset[str]]) -> bool:
+    """旧话与这回合要说的某一句三字片段重合（按较短的一方算）≥ REPEAT。"""
+    return bool(was) and any(len(was & g) >= REPEAT * min(len(was), len(g)) for g in now)

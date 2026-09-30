@@ -9,7 +9,8 @@
           谈资说过一回就不再给（账本随会话运行态落库、读档恢复）、没人接的话照实记下、等待被打断照实说、提醒写明是谁制住的且许说“被制”、
           被制住的同伴不说“没跟来”、近来的经历留着挨的那一下、提示从玩家所在之处说起；第三轮回归——故事里的自问不标场外、
           谁制住的与挨过的那一下从经历记录里找、身边人的伤、同一时辰里说过了多久、干等时的钩子、换了说法的谈资也记账；
-          第四轮回归——同一刻的寒暄答不了同一刻的问话、同伴当场跟上、所见里有路、闸门按状态算出处
+          第四轮回归——同一刻的寒暄答不了同一刻的问话、同伴当场跟上、所见里有路、闸门按状态算出处；
+          M3——台词账本随会话运行态落库、读档恢复，本回合又开口的人最近说过的原话进提示词“别重复”
 [POS]: tests 的前后照应：证伪“人被点了穴，下一幕毫发无伤地走来却没人觉得奇怪”“挨了一掌此后再没人提”“NPC 每开口就背一遍设定”
        “问了人没人答却像答了”“身在崖底还提开场的事”
        “等到天黑被闲聊打断得原地打转”“到了结局还问要不要回头”
@@ -168,6 +169,22 @@ def test_asking_about_someone_brings_what_the_speaker_knows_of_them_and_topics_a
     assert "万劫谷" not in line.knows and line.knows == "养着一只貂；爱吃瓜子", "说过的不再交给叙述者"
     again = GameSession(s.scenario, store=s.store, policies={a: Script() for a in s.scenario.npcs})
     assert again.session_state()["told"] == {"ling": [0]}, "读档恢复谈资账本"
+
+
+def test_said_before_ledger_reaches_the_prompt_and_survives_a_reload():
+    """M3 台词账本：钟灵上回合说过的原话记进会话运行态，这回合她又开口时进提示词“别重复”，随下一次提交落库、读档恢复。"""
+    s = _talky()
+    prompts = []
+    s.narrator.llm = ScriptedLLM(lambda p, sy, sc: prompts.append(p) or "钟灵笑道：“我家住万劫谷，你呢？”")
+    first = s.turn("灵儿，龚光杰是什么来头？")
+    assert first.brief.said_before == () and "最近说过的话" not in prompts[-1]
+    assert s.session_state()["said"] == {"ling": ["我家住万劫谷，你呢？"]}
+    second = s.turn("灵儿，龚光杰是什么来头？")
+    assert second.brief.said_before == (("钟灵", ("我家住万劫谷，你呢？",)),)
+    assert "钟灵最近说过的话（别重复）：\n- “我家住万劫谷，你呢？”" in prompts[-1]
+    again = GameSession(s.scenario, store=s.store, policies={a: Script() for a in s.scenario.npcs})
+    assert again.session_state()["said"] == {"ling": ["我家住万劫谷，你呢？"]}, "随下一次提交落库、读档恢复"
+    assert s.session_state()["said"] == {"ling": ["我家住万劫谷，你呢？"] * 2}
 
 
 def test_a_question_nobody_answers_is_noted_not_invented():

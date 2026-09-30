@@ -7,8 +7,8 @@
          language/voice_prompt 的 system_prompt / scene_prompt / render_voice / lapse_line / TIMED（措辞层）
 [OUTPUT]: 对外提供 Narrator（narrate_scene() 主持人之声：流式生成、逐句过闸门、通过即交付；narrate_rendered() / narrate()
           以空 SceneBrief 委托之；secrets 是场景的秘密词表；deadline 是迟到先声的绝对时限）、MAX_DROPS、MAX_CHARS、LEAD_AFTER、
-          HOLD_AFTER、lore_keys()、grams()（三字片段：复述与谈资说过没有都用它），
-          再导出 render / voice_prompt 的 fact_lines()、render_voice()、SOCIAL_PHRASES / SOCIAL_LABELS 与 _when（= lapse_line）
+          HOLD_AFTER、lore_keys()，
+          再导出 render / voice_prompt 的 fact_lines()、render_voice()、grams()、SOCIAL_PHRASES / SOCIAL_LABELS 与 _when（= lapse_line）
 [POS]: language 的输出层（主持人之声）。输入只有玩家自己的感知与会话交来的 SceneBrief（要替 NPC 说出口的话、最近几回合正文、
        玩家原话、眼下的钩子），不是世界真相；台词本身算出处（说话者与听者可点名，原话与说法照搬不算违规）。
        模板先写成事实清单，清单里听见的言语换成带言语行为的台词（“龚光杰冷笑着向你叫阵：……”；只看见的耳语照旧），措辞按语义输入确定地轮换；
@@ -21,7 +21,7 @@
        模型被告知开头已写好、清单里不再列玩家自己的行动；None 不用。先声之后模型开头 ECHO_WINDOW 句里复述它的
        （三字片段重合过半；立即模式另加 restates() 的同一动作）悄悄略过，夹带了错的照样丢句记账；收尾补模板时先声讲过的行不再重复。
        读流在常驻线程里边读边计时（_deadline）。随后逐句流式生成：每句对“已交付的文字 + 这一句”跑 gate.violations()（check()、逐句传闻
-       restated_hearsay()、人事闸门 check_deeds()、台词闸门 check_quotes()、钟点数字，同一个纯函数也是语料测试走的路）；
+       restated_hearsay()、人事闸门 check_deeds()、台词闸门 check_quotes()、硬事实审计 audit()、钟点数字，同一个纯函数也是语料测试走的路）；
        build_plan 另收场景的外观描写全表（玩家见过的实体那几段记进计划，只作物件上的字与陈设件数的出处）；通过即经 on_text 交付，违规即丢弃并记下；
        交付满 MAX_CHARS 字即停止读流。收尾：传闻有没有归属整段查；台词没说出口、玩家自己的行动与后果、冲着玩家来的事、
        听见的话、离开玩家所在地的人一个参与者都没提的，补成人话（sheet.patches）、状态记为 gated_fallback（违规 omitted）；
@@ -78,6 +78,7 @@ from tianlong.language.voice_prompt import (
     SOCIAL_LABELS,
     SOCIAL_PHRASES,
     TIMED,
+    grams,
     render_voice,
     scene_prompt,
     system_prompt,
@@ -181,12 +182,6 @@ def _missing(rows: Sequence[Row], text: str, plan: RenderPlan, brief: SceneBrief
         if not ok:
             out.append(r)
     return out
-
-
-def grams(text: str, n: int = 3) -> frozenset[str]:
-    """去掉标点空白后的 n 字片段：判断复述、判断谈资说过没有，都用它。"""
-    t = re.sub(r"[^\w]", "", text)
-    return frozenset(t[i:i + n] for i in range(len(t) - n + 1))
 
 
 def _echoes(said: str, text: str) -> bool:

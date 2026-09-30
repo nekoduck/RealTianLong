@@ -6,7 +6,8 @@
          language/scene 的 SceneBrief / VoiceLine，language/templates 的 SOCIAL_VERBS / render_event / render_experience / render_fact，
          persistence 的 TurnEnvelope，scenarios 的 Scenario，runtime/continuity 的 continuity / lately，runtime/talk 的 fresh
 [OUTPUT]: 对外提供 gm_command()（元指令与“GM：”前缀）、companions()（玩家的同伴 = 自己人 + DEFEND 目标）、salient()（等待该不该被打断）、
-          build_brief()（SceneBrief：要替 NPC 说出口的话——谈资只给没说过的、被问到的人附上来历——+ 前后照应 + 没人接的话 + 是否收幕）、
+          build_brief()（SceneBrief：要替 NPC 说出口的话——谈资只给没说过的、被问到的人附上来历——+ 前后照应 + 没人接的话 + 是否收幕
+          + 本回合开口者最近说过的原话 said_before + 本回合动过手脚的人 astir）、
           self_view() / goal_text() / aside_prompt()（场外问答只用玩家自己的认知）、PLAYER_GOALS（玩家目标的口吻表：goal_text 与
           scripts/bench_rival 的世界圣经同一口径）、gated_stream()（场外回答逐句过名字闸门、边生成边交付）、
           closing_prompt()（终章只取玩家亲历）、leaked() / leaks()（名字闸门：玩家不认识的实体不许出现在模型写的文字里，玩家亲口说出的名字除外）、
@@ -61,6 +62,8 @@ from tianlong.scenarios import Scenario
 TALK = frozenset({Op.TELL.value, Op.ASK.value})
 MAX_BARKS = 2        # 一回合至多给这么多个动手的人顺口喝一声：一场混战里人人都喊，读来吵
 _EXERT = frozenset({Op.MOVE, Op.ATTACK, Op.TAKE, Op.GIVE, Op.PUT, Op.USE, Op.UNLOCK, Op.LOCK})   # 吃力的一步：伤会牵扯到
+_BODILY = frozenset(op.value for op in _EXERT)          # 动了手脚的一步（成败不论）：本回合先动后被制，写他的动作不算越权
+_SEEN = frozenset({Modality.SELF, Modality.SIGHT})
 # 叫阵、讥讽、辱骂、威胁、喝令、回绝时不交谈资：龚光杰当面挑衅时背一段“东西二宗五年一比剑”，读来是在念设定
 _NO_SMALLTALK = frozenset({Social.CHALLENGE, Social.TAUNT, Social.INSULT, Social.THREATEN, Social.COMMAND, Social.REFUSE})
 META_HELP = "可用的指令：/hint 提示、/recap 前情回顾、/beliefs 你所知道的；场外提问请以“GM：”开头。"
@@ -164,14 +167,16 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
                 recent: Sequence[str], before: BeliefStore | None = None, closing: bool = False,
                 told: Mapping[str, Collection[int]] | None = None,
                 memories_of: Callable[[str], Sequence[MemoryRecord]] | None = None,
-                hooks: Sequence[str] = ()) -> SceneBrief:
+                hooks: Sequence[str] = (), said: Mapping[str, Sequence[str]] | None = None) -> SceneBrief:
     """要替 NPC 说出口的话（本回合玩家听见的每一句 NPC 言语、看见的每一个 NPC 姿态）、最近几段正文、玩家原话，
     以及前后照应（continuity：玩家自己的身体状况、本回合的意外与变化、身在何处身边有谁；出人意料地出现的人带上他近来的经历）。
     耳语（只看见在交谈、没听见内容）不算：玩家没听见的话，叙述者也不该替它编出来。
     answering：NPC 冲着玩家、且在玩家开口（或冲他摆了姿态、赔了罪道了谢）之后说的话，带上玩家这一步作回话的由头。
     before 是本回合之前玩家的认知（重试补写时没有）；closing 表示这是这一幕的最后一段；
     told 是谈资账本（每个 NPC 已经说过的谈资条目）：只把还没说过的交给叙述者；memories_of 取某人自己的经历记录
-    （早先是谁制住了谁、他挨过的那一下，短期经历里早已滚掉）；hooks 是行动建议，只在玩家干等、身边没人说话时交给叙述者。
+    （早先是谁制住了谁、他挨过的那一下，短期经历里早已滚掉）；hooks 是行动建议，只在玩家干等、身边没人说话时交给叙述者；
+    said 是台词账本（NPC ID → 最近说过的原话）：本回合开口的人那几句放进 said_before，别让他把同一句话再说一遍；
+    astir 记下玩家亲眼看见（或自己）本回合动过手脚的人——成败不论，因被制而落空的不算——审计不拿“被制”管他们的动作。
     玩家问到的人（原话里点了名、说话者认识的），附上说话者所知的公开来历；玩家冲着谁说了话、他本回合却没接话，记在 unanswered；
     普通等待被身边的事打断，前后照应里添一句“你本想再等下去”。"""
     player = me.owner
@@ -230,10 +235,15 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
     if env.done and env.intent.op == Op.WAIT and not env.followups and not env.reaction \
             and len(env.ticks) < env.planned_ticks:
         notes = (*notes, "你本想再等下去，却被眼前的事打断了")
+    speaking = {vl.speaker: vl.speaker_name for vl in lines}
+    astir = {sk.name for p in env.percepts if (ev := p.event) is not None and p.modality in _SEEN and ev.kind in _BODILY
+             and ev.reason != "subdued" and ev.actor and (sk := me.sketch(ev.actor))}
     return SceneBrief(tuple(lines), tuple(recent), mine.utterance if mine is not None else None,
                       condition=condition, notes=notes, present=ctx.present, statuses=ctx.statuses,
                       afflicted=ctx.afflicted, closing=closing, nearby=ctx.nearby, unanswered=unanswered, hurt=hurt,
-                      hooks=tuple(hooks) if env.intent.op == Op.WAIT and not lines and not closing else ())
+                      hooks=tuple(hooks) if env.intent.op == Op.WAIT and not lines and not closing else (),
+                      said_before=tuple((n, tuple(said[a])) for a, n in speaking.items() if (said or {}).get(a)),
+                      astir=tuple(sorted(astir)))
 
 
 def _cue(ev: PerceivedEvent, me: BeliefStore) -> str | None:

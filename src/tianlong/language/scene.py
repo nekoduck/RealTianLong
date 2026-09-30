@@ -3,11 +3,13 @@
 [OUTPUT]: 对外提供 VoiceLine（一句要替 NPC 说出口的话：结构来自内核与说话者的认知，措辞交给主持人之声）、
           SceneBrief（一回合叙述所需的上下文：要说出口的话、最近几回合的正文、玩家本回合的原话/姿态、眼下的钩子，
           以及前后照应——玩家自己的身体状况、本回合的意外与变化、身在何处身边有谁、此地叫得出名字的东西、
-          是否这一幕的最后一段、玩家的话有没有人接）、
-          TextSink（流式叙述的交付回调）
+          是否这一幕的最后一段、玩家的话有没有人接；天色与开口者最近说过的原话）、
+          Sky / MOON_NONE / MOON_RISING / MOON_UP（此刻的天色：文字、是否入夜、月亮在哪），TextSink（流式叙述的交付回调）
 [POS]: language 的主持层契约：会话（runtime）只用已落库的数据拼出 SceneBrief，叙述者（narrator）据此写出本回合的正文。
        台词的事实内容只能是 claim（说话者相信的命题）；其余一切——腔调、客套、叫阵、讥讽——都是修辞。
-       may_name 是台词闸门的依据：说话者没听说过的人与物，不许出现在他嘴里
+       may_name 是台词闸门的依据：说话者没听说过的人与物，不许出现在他嘴里；sky 是天色审计（audit.check_sky）的依据，
+       None = 场景没给天色（旧版），天色一项整个不查；said_before 只交给提示词（别让他把同一句话再说一遍）；
+       astir 是动作能力审计（audit.check_affordance）的豁免：本回合先动了手、后被制住的人
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -19,6 +21,16 @@ from dataclasses import dataclass
 from tianlong.core import Social
 
 TextSink = Callable[[str], None]     # 流式叙述：每通过闸门一句就交付一句（CLI 逐字打印，Web 端推送）
+
+# 月亮在哪：月出之前 / 本回合正是月出 / 已在天上
+MOON_NONE, MOON_RISING, MOON_UP = "none", "rising", "up"
+
+
+@dataclass(frozen=True, slots=True)
+class Sky:
+    text: str                       # 天色的文字（原样进提示词）：“酉时将尽，天色已暗，月亮还没出来”
+    night: bool                     # 已经入夜：不许再有日头
+    moon: str = MOON_NONE           # MOON_NONE / MOON_RISING / MOON_UP：只有 rising 才许写月亮升起
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,3 +68,7 @@ class SceneBrief:
     unanswered: str | None = None            # 玩家冲着谁说了话、本回合他却没接话（“马五德”）：别替他编答案，写出他没顾上回答的样子
     hurt: tuple[str, ...] = ()               # 身边的人玩家以为的伤毒被制（“钟灵受了伤”）：写他们的举动别像没事人
     hooks: tuple[str, ...] = ()              # 玩家干等、眼前却有可做的事（行动建议的原话）：可把他的目光引过去，不替他决定
+    sky: Sky | None = None                   # 此刻的天色；None = 不给天色、天色不查
+    said_before: tuple[tuple[str, tuple[str, ...]], ...] = ()   # (说话者本名, 他最近说过的原话，旧→新)：本回合要开口的人
+    astir: tuple[str, ...] = ()              # 本回合自己动过手脚的人（本名；出手、走动、拿放，成败不论，因被制落空的不算）：
+                                             # 被制也许是这之后的事，审计不拿“被制”管他的动作（“你挥拳打去……随即被点了穴道”）

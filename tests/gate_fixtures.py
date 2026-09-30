@@ -1,11 +1,12 @@
 """
 [INPUT]: 依赖 core 的 Social，language/render 的 RenderPlan，language/scene 的 SceneBrief / VoiceLine，
          tests/data 的 gate_corpus.json（误杀语料）与 gate_seeded.json（植入错误与阴性对照）
-[OUTPUT]: 对外提供 decode()（按 dataclasses.fields 与类型注解把 JSON 还原成 RenderPlan / SceneBrief / VoiceLine：
+[OUTPUT]: 对外提供 decode()（按 dataclasses.fields 与类型注解把 JSON 还原成 RenderPlan / SceneBrief / VoiceLine / Sky：
           tuple 与 frozenset 分得清，Social 还原成枚举）、Case（一条闸门输入 + 期望）、corpus() / seeded()（读出全部条目）
 [POS]: tests 的闸门语料解码器，只被 test_gate_precision 使用（不进 src：只有测试要把冻结的闸门输入读回来）。
        语料里同一次叙述调用的 plan / brief 去重存放在 "plans" / "briefs" 表里，条目按下标引用；
-       植入条目以语料里的某条为底（base），只换掉本句与此前正文
+       植入条目以语料里的某条为底（base），换掉本句与此前正文；可另给 "plan" / "brief" 两个对象，按字段覆盖底里的计划与
+       叙述上下文（M3 审计的植入：天色 sky、被制的人 afflicted、谁身上有什么 holdings、本回合做成了什么 done），其余照底
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -75,6 +76,14 @@ class Case:
         return self.before + self.piece
 
 
+def _patched(obj: typing.Any, over: dict | None) -> typing.Any:
+    """按字段覆盖一个冻结的数据类：值照字段的类型注解解码（"sky": {...} 还原成 Sky）。"""
+    if not over:
+        return obj
+    hints = typing.get_type_hints(type(obj))
+    return dataclasses.replace(obj, **{k: decode(hints[k], v) for k, v in over.items()})
+
+
 def _cases(path: Path) -> list[Case]:
     raw = json.loads(path.read_text("utf-8"))
     plans = [decode(RenderPlan, p) for p in raw["plans"]]
@@ -90,10 +99,12 @@ def corpus() -> tuple[Case, ...]:
 
 @cache
 def seeded() -> tuple[Case, ...]:
-    """植入条目：底（base 指向语料里的一条）+ 换掉的本句与此前正文。"""
+    """植入条目：底（base 指向语料里的一条）+ 换掉的本句与此前正文 + 按字段覆盖的计划与叙述上下文。"""
     base = {c.id: c for c in corpus()}
     raw = json.loads((DATA / "gate_seeded.json").read_text("utf-8"))
     return tuple(dataclasses.replace(base[r["base"]], id=r["id"], piece=r["piece"], before=r.get("before", ""),
                                      command=r.get("command", base[r["base"]].command), verdict=r["verdict"],
-                                     category=r["category"], reason=r["reason"])
+                                     category=r["category"], reason=r["reason"],
+                                     plan=_patched(base[r["base"]].plan, r.get("plan")),
+                                     brief=_patched(base[r["base"]].brief, r.get("brief")))
                  for r in raw["cases"])

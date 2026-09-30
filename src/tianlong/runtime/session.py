@@ -1,5 +1,5 @@
 """
-[INPUT]: 依赖 runtime/authority 的 WorldAuthority / Settlement，runtime/versions 的 current_versions / check_save，runtime/talk 的谈资账本，
+[INPUT]: 依赖 runtime/authority 的 WorldAuthority / Settlement，runtime/versions 的 current_versions / check_save，runtime/talk 的谈资账本与台词账本，
          runtime/gm 的主持层纯函数（gm_command / companions / salient / build_brief），runtime/aside 的 AsideMixin / ENDED（不推进的回合），
          runtime/endings 的 EndingMixin（落幕与终章），agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
          memory 的 QdrantMemoryIndex / Recall / MemoryIndexer / MemoryScope，language 的 IntentParser / MoveKind / Parsed / Narrator /
@@ -8,7 +8,7 @@
          RequestConflict / VersionConflict，scenarios 的 Scenario / Ending，cognition 的 Candidate / believed_place，
          language/templates 的 render_fact，memory/view 的 MemoryView（NPC 的长期记忆摘要，增量汇总——水位含边界、按记录 ID 去重，与读档后重建逐项相同）
 [OUTPUT]: 对外提供 GameSession（可玩会话：turn() 一回合、intro()/epilogue() 开场与终章、belief_lines() 玩家自己的认知；
-          读档接续并恢复调度标记、已描写实体、最近几段正文、提示进度与谈资账本；请求幂等、存档版本闸门）、
+          读档接续并恢复调度标记、已描写实体、最近几段正文、提示进度、谈资账本与台词账本；请求幂等、存档版本闸门）、
           TurnReport（一回合的全部产物：世界侧与文字侧分开记录，含这句话的类别、结局、首字耗时、分阶段耗时与叙述上下文）、
           ENDED（再导出自 runtime/aside）
 [POS]: runtime 的装配中心（主持层的回合循环）：一回合 = 解释玩家输入（后台同时算好本 tick 的 NPC 决策；元指令与“GM：”一眼认得，不算）→ 按类别推进：
@@ -243,6 +243,7 @@ class GameSession(AsideMixin, EndingMixin):
         self._recent: list[str] = []        # 最近几段正文（派生数据：叙述之后更新，随下一次提交落库）
         self._hint = 0                      # 已给出的逐级提示条数
         self._told: dict[str, set[int]] = {}   # 谈资账本：每个 NPC 已经出现在正文里的谈资条目（派生数据，随下一次提交落库）
+        self._said: dict[str, list[str]] = {}  # 台词账本：每个 NPC 最近说过的原话（同上）
         self._asides: dict[str, tuple[str, TurnReport]] = {}   # 带 request_id 的不推进回合：ID → (原文摘要, 报告)
         self._restore(session_state)
         self.llm = llm
@@ -285,7 +286,8 @@ class GameSession(AsideMixin, EndingMixin):
 
     def _state(self, sched: Scheduler, described: set[str]) -> dict:
         return {"scheduler": sched.to_state(), "described": sorted(described), "recent": list(self._recent),
-                "hint": self._hint, "told": {k: sorted(v) for k, v in sorted(self._told.items()) if v}}
+                "hint": self._hint, "told": {k: sorted(v) for k, v in sorted(self._told.items()) if v},
+                **({"said": dict(sorted(self._said.items()))} if self._said else {})}
 
     def _restore(self, state: Mapping | None) -> None:
         """会话运行态以落库的那一份为准：读档时，以及一次请求被同一请求的另一次投递越过之后。"""
@@ -295,6 +297,7 @@ class GameSession(AsideMixin, EndingMixin):
         self._recent = [str(x) for x in state.get("recent", ())][-RECENT_KEEP:]
         self._hint = int(state.get("hint", 0))
         self._told = {str(k): {int(i) for i in v} for k, v in (state.get("told") or {}).items()}
+        self._said = talk.said(state.get("said") or {}, "", None)
 
     def _opening_keys(self) -> list[str]:
         """开场讲的初始认知里应当描写外观的实体：新游戏的 intro() 描写它们，建档后尚无提交就读档时据此补回“已描写”。"""
@@ -502,7 +505,7 @@ class GameSession(AsideMixin, EndingMixin):
         me = self.beliefs(self.player)
         lapse = clock_label(env.ticks[-1]) if _interruptible(env) and env.planned_ticks > 1 and env.ticks else ""
         brief = gm.build_brief(env, me, self.scenario, self.beliefs, self._recent, before, closing, self._told,
-                               lambda a: self.store.recent_memories(self.ref, a, 0), suggestions(me))
+                               lambda a: self.store.recent_memories(self.ref, a, 0), suggestions(me), self._said)
         # 此前已知下落的东西：再翻出来不算“发现”（重试补写时没有 before，照旧）
         familiar = frozenset(e for e in before.entities if before.location_of(e) is not None) if before else frozenset()
         scene = getattr(self.narrator, "narrate_scene", None)
@@ -520,9 +523,10 @@ class GameSession(AsideMixin, EndingMixin):
         return render, brief
 
     def _remember(self, narration: str, brief: SceneBrief | None = None) -> None:
-        """最近几段正文与谈资账本：叙述写成之后更新（派生数据），随下一次提交落库。
+        """最近几段正文、谈资账本与台词账本：叙述写成之后更新（派生数据），随下一次提交落库。
         交给叙述者的谈资（brief 里的台词）换了说法也认得出来：说话者开了口、这条谈资的字眼大半出现了，就算说过。"""
         self._recent = [*self._recent, narration][-RECENT_KEEP:]
+        self._said = talk.said(self._said, narration, brief)
         offered = {vl.speaker: vl.knows for vl in (brief.lines if brief else ()) if vl.speaker_name in narration}
         for npc in self.scenario.npcs:
             said = talk.told(self.scenario.profiles[npc].knows, narration, offered.get(npc, ""))
