@@ -8,8 +8,9 @@
 [POS]: agents 的驱力层：性情不是剧本。条件只读该角色自己的认知（Situation）与自己的驱力标记，行动只落到 PolicyKit 已有的积木上——
        在候选集中挑、沿自己的地图走一步、对眼前的人开口、带字的姿态（等待 + 原话）、临时目标交给 MartialTactics 的寻仇/护人。
        驱力的原话挂在 Choice.line 上（chosen() 之后），随意图落库；实现不了就返回 None，退回里面那个策略的选择。
-       优先级：一次性提议 → URGENT（表序第一条：成立、不在冷却、实现得了）→ 里面的策略 → 它闲着（等待或闲谈）时试 IDLE →
-       对最终结果套 VETO。没有驱力时 Driven 恒等于里面那个策略。
+       优先级：一次性提议 → URGENT（表序第一条：成立、不在冷却、实现得了）→ 里面的策略 →
+       它闲着（等待原因或闲谈；学得的策略选中等待时也标 "idle"）时试 IDLE → 对最终结果套 VETO。
+       没有驱力时 Driven 恒等于里面那个策略。
        平手与台词轮换一律由 derive_seed 派生；不 import kernel / persistence / runtime（测试钉死导入图）
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -76,8 +77,11 @@ def oneway_doors(b: BeliefStore) -> frozenset[str]:
 
 
 class _Wary(MartialTactics):
-    """追人、赶路时不走认为单向的门：把它们当作过不去的门（探索与带路都绕开），也不拿钥匙去试；
-    以为非经单向门到不了的地方就不去。"""
+    """追人、赶路时不走认为单向的门：把它们当作过不去的门（探索与带路都绕开，连去面对锁门的退路也绕开），
+    也不拿钥匙去试；以为非经单向门到不了的地方就不去。"""
+
+    def _hard_avoid(self, sit: Situation) -> frozenset[str]:
+        return oneway_doors(sit.beliefs)
 
     def _blocked_doors(self, sit: Situation) -> frozenset[str]:
         return super()._blocked_doors(sit) | oneway_doors(sit.beliefs)
@@ -260,13 +264,14 @@ def _go(a: Go, sit: Situation, key: str = "", target: str | None = None) -> Choi
 
 @realize.register(Flee)
 def _flee(a: Flee, sit: Situation, key: str = "", target: str | None = None) -> Choice | None:
-    """在认为走得通的门里逃：不走单向的门，不往（以为）有仇人的地方去；先按 prefer，再按没去过的，平手由种子定。"""
+    """在认为走得通的门里逃：不走单向的门、不撞认为锁着的门，不往（以为）有仇人的地方去；
+    先按 prefer，再按没去过的，平手由种子定；无路可逃返回 None。"""
     b = sit.beliefs
     feared = {believed_place(b, p) for p, sk in b.entities.items()
               if sk.kind == Kind.PERSON and p != sit.agent and b.attitude(p) <= -2}
-    steep = oneway_doors(b)
+    shut = oneway_doors(b) | _KIT._blocked_doors(sit)
     options = [(i, c) for i, c in enumerate(sit.candidates) if c.op == Op.MOVE and c.manner == Manner.NORMAL
-               and c.obj not in steep and c.target not in feared]
+               and c.obj not in shut and c.target not in feared]
     if not options:
         return None
     rng = random.Random(derive_seed("drive", sit.agent, key, sit.now))

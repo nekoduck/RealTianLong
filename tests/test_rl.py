@@ -4,7 +4,7 @@
 [OUTPUT]: 强化学习层测试：观测合乎空间、掩码只屏蔽空位；奖励分项语义（任务跃迁/塑形/成本、搜身落空）；
           验收 T01–T04（场景配置贯通到环境、寻仇按 until 给任务奖励、持续保护按窗口判定、未注册目标显式失败）
           与 B01–B04（等待权重边界无 NaN、批组成不改变贡献、专家在不知下落时去探索、留出世界上的分动作指标）；
-          学得的策略接入决策图；训练期消融（预测/记忆列）在环境、tag、上线策略里是同一个定义；PPO 冒烟（slow）
+          学得的策略接入决策图、选中等待时标 idle；训练期消融（预测/记忆列）在环境、tag、上线策略里是同一个定义；PPO 冒烟（slow）
 [POS]: tests 的 RL 层；PPO 冒烟用例标记 slow（默认不跑，`pytest -m slow` 显式运行）
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -298,6 +298,25 @@ def test_learned_policy_plugs_into_npc_pipeline():
     ds = Orchestrator().decide(ctx)
     assert all("策略网络" in d.rationale for d in ds)
     auth.settle([d.intent for d in ds])   # 学得的策略产出的意图照样只能经内核结算
+
+
+def test_learned_policy_tags_its_waits_idle():
+    from tianlong.learning.rl.observation import build_observation
+    from tianlong.learning.rl.policy import LearnedPolicy
+
+    env = TianlongEnv({"task": {"jianghu": 1.0, "horizon": 4}})
+    env.reset(seed=5)
+    sit = env.situation(env.agents[0])
+    policy = LearnedPolicy(GraphPolicyNet(32))
+    shown = build_observation(sit.beliefs, sit.now, sit.profile, sit.candidates, sit.predictions, policy.spec,
+                              sit.memory).candidates
+    for k, cand in enumerate(shown):
+        policy.net = lambda batch, k=k: (torch.nn.functional.one_hot(torch.tensor([k]), len(batch["action_mask"][0])
+                                                                     ).float(), None)
+        choice = policy.choose(sit)
+        assert sit.candidates[choice.index] == cand
+        assert choice.tag == ("idle" if cand.op == Op.WAIT else ""), "选中等待标 idle，外层驱力层据此试 IDLE"
+    assert any(c.op == Op.WAIT for c in shown)
 
 
 @pytest.mark.slow

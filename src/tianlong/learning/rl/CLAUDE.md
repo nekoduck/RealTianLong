@@ -16,7 +16,7 @@ imitation.py: 模仿学习：Demo（观测、动作、示范者标签、世界�
 evaluation.py: 跑局与事件口径：行为计数只读事件与事前认知（与奖励权重无关）——搜身落空/无证据；动手得手/落空/被拒，缘由分目标所驱（寻仇、守地/潜逃时对非盟友、为护/取/送的物品对自己认定的持有者）/还手护人/无端；误指控；repeat_kind() 把重复确定性失败算无效循环、招架闪避后再出手算随机重掷；目标分开局即满足/新达成/持续守住并报用时与可达性；策略都可 pickle：RandomPolicy（无状态：每步随机数由种子、世界种子与局内步数派生，复用对象、换执行顺序都不变）、永远等待、脚本、NetPolicy（可测试期消融）；evaluate(workers) 各局分给子进程，与顺序评测逐项相同；统计推断转自 stats
 stats.py: 统计口径（纯 numpy）：METRICS 分子分母定义、EpisodeLog（一局一个世界，可 JSON 往返）、cluster_ci 以世界为单位重采样、compare 在同一批世界上配对并按预先声明的容许差判等效（世界少于 MIN_WORLDS 不下结论）；算不出来的一律 None，报告是严格 JSON
 train.py: 流水线 CLI（python -m tianlong.learning.rl.train）：模仿学习（示范世界与留出世界分开）→ PPO（所有角色共享参数、各自观测，env_config 携带同一份 TaskConfig）→ 同一批留出世界上评测 随机/永远等待/脚本/模仿/PPO/测试期置零预测 并两两配对比较。RLConfig 含展平的 TaskConfig 字段、γ、评测种子、等效容许差与训练期消融 --ablate-predictions / --ablate-memory（ablations() 进 env_config、检查点与报告；tag() 给出 policy_ppo[_noPred][_noMem]_s{种子}；训练期已无预测时不再做测试期置零）；--resume true 续用模仿学习权重与 PPO 断点（配置不符即拒绝，只许改轮数/评测规模/并行度；不进 run_id）；报告是严格 JSON、带 manifest 与逐世界记录（供 results --pair 跨运行配对），检查点带预测器哈希；--env-runners/--gpus/--workers（评测与示范的并行进程，结果不变、不进 run_id）供 Colab 放大
-policy.py: LearnedPolicy 以 Policy 协议接入 LangGraph 决策图，替换 ScriptedPolicy 而不改图；加载时核对规格指纹并沿用训练时的 ObsSpec 与训练期消融（没见过的输入上线时照样置零），选中的观测下标映射回决策图的候选下标
+policy.py: LearnedPolicy 以 Policy 协议接入 LangGraph 决策图，替换 ScriptedPolicy 而不改图；加载时核对规格指纹并沿用训练时的 ObsSpec 与训练期消融（没见过的输入上线时照样置零），选中的观测下标映射回决策图的候选下标；选中等待时标 "idle"，外层驱力层据此在它闲着时试 IDLE 驱力
 __init__.py: 包入口（ray[rllib] 为可选依赖）
 
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md

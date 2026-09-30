@@ -7,7 +7,8 @@
           的世界指纹与每次决策（候选、预测、Choice.index 与 tag）逐项相同；变形测试——只在角色不相信的事实上不同的两份世界，
           认知相同即驱力选择相同；每类条件的求值、每种行动的落地；优先级（URGENT 先于脚本、IDLE 只在脚本闲着时、VETO 把关）；
           once / cooldown 经 advance_marks 只认兑现成功的；时间窗打开即唤醒；驱力原话随任何行动落库、被在场的人感知；
-          带驱力标记的会话读档接续与连续运行逐项相同
+          带驱力标记的会话读档接续与连续运行逐项相同；
+          Flee 不撞认为锁着的门；多一条单向捷径不让绕开它的 Go 放弃开锁；台词在长时间窗里一直轮换
 [POS]: tests 的驱力层：“驱力只读自己的认知、只是意图、由内核裁定”被写成可证伪的断言
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -56,6 +57,7 @@ from tianlong.core import (
     Holds,
     Inspect,
     Intent,
+    Kind,
     Knows,
     Level,
     Lost,
@@ -353,6 +355,33 @@ def test_realize_flee_prefers_then_unvisited_then_seed():
     assert len(picks) == 1, "平手由 derive_seed 定，重算不变"
 
 
+def test_realize_flee_never_runs_into_a_door_it_believes_locked():
+    locked = ("door_main", "attr.locked", True, True)
+    s = _guard(_at("player", "entrance"), locked, attitudes={"player": -3})
+    for flee in (Flee(prefer=("warehouse",)), Flee()):
+        to = _cand(s, realize(flee, s, "flee"))
+        assert (to.target, to.obj) == ("harbor", "path"), "认为锁着的门不去撞，换一条认为走得通的"
+    shut = _guard(_at("player", "entrance"), locked, ("path", "attr.locked", True, True), attitudes={"player": -3})
+    assert realize(Flee(), shut, "flee") is None, "无路可逃：退回里层策略"
+
+
+def test_wary_unlocks_rather_than_giving_up_when_a_one_way_shortcut_exists():
+    sc = build_warehouse()
+    s = _guard(_at("key", "guard"), ("door_main", "attr.locked", True, True),
+               ("key", Rel.MATCHES.value, "door_main", True))
+    b = s.beliefs
+    beliefs = dict(b.beliefs)
+    for p in (Proposition("a_drop", Rel.CONNECTS.value, "entrance"),
+              Proposition("a_drop", Rel.CONNECTS.value, "warehouse"), Proposition("a_drop", "attr.oneway", "warehouse")):
+        beliefs[p] = Belief(p, True, 1.0, Modality.SIGHT, START)
+    drop = _sit(sc, replace(b, beliefs=beliefs, entities={**b.entities, "a_drop": EntitySketch("a_drop", Kind.DOOR, "陡坡")}))
+    assert oneway_doors(drop.beliefs) == {"a_drop"}
+    go = _cand(drop, realize(Go("warehouse"), drop))
+    assert (go.op, go.target, go.obj) == (Op.UNLOCK, "door_main", "key"), "多一条单向捷径不该让“开锁过去”这条路消失"
+    assert _cand(drop, realize(Go("warehouse", avoid_oneway=False), drop)).obj == "a_drop", "不避单向门就走捷径"
+    assert not holds(Lost("player"), _sit(sc, _with(drop.beliefs, _at("player", "warehouse"))), {}), "有路可走不算追丢"
+
+
 def test_realize_items_and_inspection():
     s = _guard(_at("player", "entrance"), _at("key", "guard"))
     take_sit = _guard(_at("guard", "warehouse"))
@@ -450,6 +479,21 @@ def test_lines_rotate_by_marks():
     assert said[:3] == said[3:] and sorted(said[:3]) == ["一", "三", "二"], "按兑现次数轮换，起点由种子定"
     plain = Drive("plain", URGENT, (), Pose("跺脚"))
     assert Driven(_Fixed(Op.WAIT), (plain,)).choose(s).line == "跺脚", "没有台词时姿态的字就是原话"
+
+
+def test_lines_keep_rotating_through_a_long_window():
+    s = _guard()
+    d = Drive("murmur", URGENT, (), Pose("低语"), lines=("一", "二", "三", "四"))
+    marks: dict = {}
+    said = []
+    for t in range(40):
+        line = Driven(_Fixed(Op.WAIT), (d,), marks.get("guard", {})).choose(replace(s, now=START + t)).line
+        said.append(line)
+        ok = Intent(f"i{t}", "guard", Op.WAIT)
+        settle = SimpleNamespace(events=(Event(f"e{t}", START + t, ok, "entrance", Outcome.SUCCESS),))
+        marks = advance_marks(marks, [_delib("guard", ok.id, "murmur")], settle)
+    assert len(marks["guard"]["murmur"]) == 40, "标记不截断：累计次数准确"
+    assert said[32:36] == said[:4] and len(set(said[36:])) == 4, "兑现三十多次之后照样轮换"
 
 
 def _delib(agent: str, intent_id: str, drive: str = "") -> SimpleNamespace:

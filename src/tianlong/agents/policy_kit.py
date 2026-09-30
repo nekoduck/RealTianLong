@@ -3,7 +3,8 @@
          core/profiles 的 Profile，agents/predictors 的 Prediction，memory/view 的 MemoryView
 [OUTPUT]: 对外提供 Situation（可带主角 player）/ Choice（含结构化标签 tag、言语行为 social、候选之外的言语 free、驱力的原话 line 与出处 drive、
           chosen()）/ Policy 协议、
-          PolicyKit（规则策略共享的“在候选集中挑选”、沿自己的地图带路（认为锁着的门先试着开、打不开就不去撞）、凭个人勘察记录探索、
+          PolicyKit（规则策略共享的“在候选集中挑选”、沿自己的地图带路（认为锁着的门先试着开、打不开就不去撞；
+          子类可经 _hard_avoid() 指定怎样都不走的门）、凭个人勘察记录探索、
           开口积木 _say()（候选之外的闲话）/ _tell()（候选之外、带自己相信的命题的答话），index 都指向 WAIT，
           与 _last_spoke()（最近一次对谁开口）、信念查询积木）、WAIT_REASONS、SPEAK、CHATTER、RECENT、STALE
 [POS]: agents 的决策契约与策略工具箱：策略只能在候选集中选（Choice.index），唯一的例外是 Choice.free——对某人开口：
@@ -138,7 +139,8 @@ class PolicyKit:
             return None
         b = sit.beliefs
         blocked = self._blocked_doors(sit)
-        hop = route_to(b, place, blocked) or route_to(b, place)     # 有绕得开锁门的路就绕，没有才去面对那扇门
+        # 有绕得开锁门的路就绕，没有才去面对那扇门（怎样都不走的门始终绕开）
+        hop = route_to(b, place, blocked) or route_to(b, place, self._hard_avoid(sit))
         if not hop:
             return None
         nxt, door = hop
@@ -149,6 +151,10 @@ class PolicyKit:
                     return choice
             return None
         return self._pick(sit, why, Op.MOVE, nxt, door, manner)
+
+    def _hard_avoid(self, sit: Situation) -> frozenset[str]:
+        """怎样都不走的门（连去面对锁门的退路也不走）：缺省没有；驱力层的 _Wary 用它绕开单向的门。"""
+        return frozenset()
 
     @staticmethod
     def _blocked_doors(sit: Situation) -> frozenset[str]:
