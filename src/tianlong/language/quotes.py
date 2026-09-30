@@ -1,17 +1,20 @@
 """
 [INPUT]: 依赖 language/render 的 RenderPlan / Violation / 词法积木（_mentions / _unsourced / _quotes / _mask / _clauses / _spans /
-         _clause_after / _clause_before / _post_attribution）与词表（STATUS_LEXICON / STATUS_EXCLUSIONS / MIN_ALIAS / SPEECH_MARKS /
+         _clause_after / _clause_before / _post_attribution / _persons）与词表（STATUS_LEXICON / STATUS_EXCLUSIONS / MIN_ALIAS / SPEECH_MARKS /
          PRONOUNS / POST_WINDOW / QUOTE_OPEN），language/scene 的 SceneBrief / VoiceLine
 [OUTPUT]: 对外提供 check_quotes()（台词闸门：引语归属、替玩家开口、NPC 越界点名、凭空多出的说话者）、voiced()（正文里确有归属引语的说话者，
-          供叙述者查台词是否讲到）、台词词表 OBJECT_MARKERS / SUBJECT_LEADS / PERCEPTION / PLAYER_MIND / VOICED / PRETEND / SOUNDS
+          供叙述者查台词是否讲到）、unspoken()（不是话的引语的起点，交给叙述闸门照叙述查）、
+          台词词表 OBJECT_MARKERS / SUBJECT_LEADS / PERCEPTION / PLAYER_MIND / VOICED / SEQUENCE / PRETEND / DOUBTED / SOUNDS
 [POS]: language 的台词闸门，与 render.check()、deeds.check_deeds() 并用。每段引语（含无引号的“某某道：……”与“某某说……”式转述）
        归到说话者：引子小句的主语、句首引语之后的“某某喝道”、上一段引语的说话者、上一句的主语（句首引语紧跟在谁的动作之后，
        读者就听成是谁说的——这也算确凿）；归到“你”名下的只能是玩家本回合的原话，NPC 只许点名自己认识的名字、只许说出计划里有的状态。
        刻着、写着、题作、绣着的字（“门楣上刻着四个字：“琅嬛福地””）是物件上的字，不归给任何人。
-       不是话的引语不归给任何人、也不查：一两个象声字后跟“地/的一声”（“嗒”的一声）、引子以“辨认得出/认出/读出”收尾且与玩家见过的
-       外观描写逐字相同的字（蒲团绣字）、眼神里的问话（“那目光分明在问：”）、无引号冒号之后照着出处写的景；“龚光杰的声音远远传来：”
-       里声音的主人是说话者；“你打定主意熬到天黑”只是复述玩家自己输入的意图（覆盖过半且收尾相同），不算替他拿主意；
-       引语里“当作/以为”之后的状态词是假设，不算说出的状态。
+       不是话的引语不归给任何人，这里不查、交给叙述闸门照叙述查（unspoken）：一两个象声字后跟“地/的一声”（“嗒”的一声）、
+       引子以“辨认得出/认出/读出”收尾（中间不点名人）且与玩家见过的外观描写逐字相同的字（蒲团绣字）、
+       眼神里的问话（“那目光分明在问：”后跟无引号的话；“目光一沉问：“……””是开了口）、无引号冒号之后照着出处写的景；
+       “龚光杰的声音远远传来：”里声音的主人是说话者；“你打定主意熬到天黑”只是复述玩家自己输入的意图（覆盖过半且收尾相同、
+       不点名谁、不添先后说法），不算替他拿主意；引语里“当作/以为”之后的状态词是假设，不算说出的状态
+       （“别以为我不知道……”“还当我瞧不出……”是反话，照查）。
        局限（如实）：主语靠词法近似（宾语标记、“的”字结构、感知动词、“你”只在小句开头或承接词、状语之后才是主语），复杂句式可能归错；
        转述只认“说/告诉/提到/透露/低语”后面直接跟着的内容，且须找得到具名的说话者；替玩家起念头只认“决定/打定主意/心想”等少数说法
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -44,6 +47,7 @@ from tianlong.language.render import (
     _forms_of,
     _mask,
     _mentions,
+    _persons,
     _post_attribution,
     _Quote,
     _quotes,
@@ -89,10 +93,15 @@ MIND_PENDING = frozenset("须得要该需可妨能待还未没不难尚")
 MIND_DEFER = frozenset("由看请等让待任凭听随该")
 _MIND = re.compile(f"你([^{re.escape(_PUNCT)}]{{0,{MIND_WINDOW}}}?)((?:{'|'.join(PLAYER_MIND)}))")
 # 复述自己的意图（输入“等到天黑”，正文“你打定主意熬到天黑”）：主意词之后的小句覆盖玩家输入过半的字二元组、
-# 且以输入的末两字收尾，就不算替他拿主意（“你打定主意等到天黑再去后山崖顶”照拦）
+# 且以输入的末两字收尾，小句里既不点名谁、也没有输入之外的先后说法（SEQUENCE），就不算替他拿主意
+# （“你打定主意等到天黑再去后山崖顶”“丢下钟灵独自等到天黑”“先杀了钟灵再等到天黑”照拦）
 RESTATE = 0.5
-# 当作、以为（“我可要当你也被人点了穴道啦”）：引语里的状态词是打趣的假设，不断言谁被制
+SEQUENCE = re.compile(r"先|再|然后|随后|之后|接着|便|就(?![在这此])")
+# 当作、以为（“我可要当你也被人点了穴道啦”）：引语里的状态词是打趣的假设，不断言谁被制；
+# 前头有“别/莫/休/不”（“别以为我不知道……”）、后头紧跟“我”（“你还当我瞧不出……”）或中间有“不知/瞧不出”的，是反话，照查
 PRETEND: tuple[str, ...] = ("要当", "只当", "还当", "当成", "当作", "当是", "以为", "只道", "还道")
+_PRETEND = re.compile(f"(?<![别莫休不])(?<!不要)(?:{'|'.join(PRETEND)})(?!我)")
+DOUBTED: tuple[str, ...] = ("不知", "不晓", "瞧不出", "看不出", "认不出", "不出来")
 PRETEND_WINDOW = 12
 
 # ============================================================
@@ -107,7 +116,8 @@ SOUNDS = "嗒砰咚嗤哗噗咔啪嘭叮当嗖喀嚓铮锵吱呼嘶哧扑哈嘿�
 _SOUND = re.compile(f"[{SOUNDS}]{{1,2}}")
 SOUND_TAILS: tuple[str, ...] = ("地", "的一声", "一声")
 _READ = re.compile(r"(?:辨认得出|辨认出|认得出|认出|读出|看清|写道|写着|绣着|刻着)[^。！？；“”]{0,4}[：:，,]?$")
-_GAZE = re.compile(r"(?:目光|眼神|眼光|眼色|神色|神情)[^，。！？；“”]{0,4}问[：:]$")
+# 眼神里的问话只认“目光（分明）在问：”后跟无引号的话；“收回目光厉声问：”“神色一沉问：”是开了口
+_GAZE = re.compile(r"(?:目光|眼神|眼光|眼色|神色|神情)(?:分明|似乎|像是|仿佛|都|也)?在问[：:]$")
 LEAD_WINDOW = 16
 SCENIC = 0.6
 
@@ -213,9 +223,15 @@ def _judge(words: str, voices: Sequence[_Voice], who: str, universe: Iterable[st
             if status not in statuses and not _asserted(v.source, lexicon, STATUS_EXCLUSIONS):
                 said = set(_unsourced(words, v.source, lexicon, STATUS_EXCLUSIONS))
                 out += [Violation("quote_status", f"{who}:{status}:{w}")
-                        for i, w in _asserted(words, lexicon, STATUS_EXCLUSIONS)
-                        if w in said and not any(p in _clause_before(words, i, PRETEND_WINDOW) for p in PRETEND)]
+                        for i, w in _asserted(words, lexicon, STATUS_EXCLUSIONS) if w in said and not _supposed(words, i)]
     return out
+
+
+def _supposed(words: str, i: int) -> bool:
+    """i 处的状态词是“要当/以为”之后的假设（“我可要当你也被人点了穴道啦”）；“别以为我不知道……”“还当我瞧不出……”是反话。"""
+    head = _clause_before(words, i, PRETEND_WINDOW)
+    m = next(reversed(list(_PRETEND.finditer(head))), None)
+    return m is not None and not any(d in head[m.end():] for d in DOUBTED)
 
 
 def _inert(text: str, q: _Quote, plan: RenderPlan) -> bool:
@@ -225,11 +241,13 @@ def _inert(text: str, q: _Quote, plan: RenderPlan) -> bool:
         return False
     if _SOUND.fullmatch(words) and text[q.end:].startswith(SOUND_TAILS):
         return True
-    if _READ.search(lead) and len(words) >= MIN_ALIAS and any(words in _norm(lore) for _, lore in plan.scenery):
+    if ((m := _READ.search(lead)) and not _mentions(m.group(0), _persons(plan)) and len(words) >= MIN_ALIAS
+            and any(words in _norm(lore) for _, lore in plan.scenery)):     # “看清了你：……”看的是人，不是字
         return True
-    if _GAZE.search(lead):
+    bare = text[q.start] not in QUOTE_OPEN + '"'
+    if bare and _GAZE.search(lead):
         return True
-    if text[q.start - 1:q.start] in ("：", ":") and text[q.start] not in QUOTE_OPEN + '"':   # 无引号的冒号引语：照着出处写的景
+    if bare and text[q.start - 1:q.start] in ("：", ":"):                   # 无引号的冒号引语：照着出处写的景
         mine = _pairs(words)
         return bool(mine) and len(mine & _pairs(_norm(plan.source))) >= SCENIC * len(mine)
     return False
@@ -238,6 +256,11 @@ def _inert(text: str, q: _Quote, plan: RenderPlan) -> bool:
 def _pairs(s: str) -> set[str]:
     """字二元组。"""
     return {s[i:i + 2] for i in range(len(s) - 1)}
+
+
+def unspoken(text: str, plan: RenderPlan) -> frozenset[int]:
+    """不是话的引语（起点）：叙述闸门 check() 把它们当叙述者自己的口吻查（眼神问话里的“你为何中了毒”照样是状态升级）。"""
+    return frozenset(q.start for q in _quotes(text) if _inert(text, q, plan))
 
 
 def _selves(plan: RenderPlan) -> set[str]:
@@ -326,13 +349,17 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
         span = next((b for a, b in spans if a <= m.start() < b), len(text))
         asking = text[:span].rstrip().rstrip(_CLOSERS + '"')[-1:] in ("？", "?")
         deferred = m.start() > 0 and masked[m.start() - 1] in MIND_DEFER | MIND_PENDING   # “由你决定”“须你拿主意”
-        if MIND_PENDING & set(gap) or deferred or asking or word in typed or _restates(masked, m.end(), mine):
+        if (MIND_PENDING & set(gap) or deferred or asking or word in typed
+                or _restates(masked, m.end(), mine, {*universe, *PRONOUNS})):
             continue
         out.append(Violation("puppet", m.group(0)))
     return tuple(dict.fromkeys(out))
 
 
-def _restates(masked: str, i: int, mine: str) -> bool:
-    """主意词之后的小句只是玩家自己输入的意图换个说法：覆盖输入过半的字二元组，且以输入的末两字收尾。"""
-    said, typed = _norm(_clause_after(masked, i, 40)), _pairs(mine)
-    return bool(typed) and said.endswith(mine[-2:]) and len(typed & _pairs(said)) >= RESTATE * len(typed)
+def _restates(masked: str, i: int, mine: str, names: Iterable[str]) -> bool:
+    """主意词之后的小句只是玩家自己输入的意图换个说法：覆盖输入过半的字二元组、以输入的末两字收尾，
+    且不点名任何人与物、不添输入里没有的先后说法（“先……再……”）。"""
+    clause = _clause_after(masked, i, 40)
+    said, typed = _norm(clause), _pairs(mine)
+    return (bool(typed) and said.endswith(mine[-2:]) and len(typed & _pairs(said)) >= RESTATE * len(typed)
+            and not _mentions(clause, names) and all(w.group() in mine for w in SEQUENCE.finditer(clause)))

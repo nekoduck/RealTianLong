@@ -2,7 +2,8 @@
 [INPUT]: 依赖 language/gate 的 violations（与 narrator._Gate._found 同一条路），tests/gate_fixtures 的 corpus / seeded（冻结的闸门输入），
          tests/test_replay_run6 的 RUN6_DROPS 所钉住的那五句（这里按原句重新列出）
 [OUTPUT]: M1 闸门精度验收：run6 的五句误杀过闸门为空；误杀语料里每条 FP 都放行、每条 TP 仍被拦；
-          植入的硬事实错误被拦比例 ≥95%（报出实际比例）、阴性对照全部放行；语料与植入条目的形状自检
+          植入的硬事实错误按类别被拦对（违规种类与类别对得上，KINDS）的比例 ≥95%（报出实际比例）、阴性对照全部放行；
+          语料与植入条目的形状自检
 [POS]: tests 的闸门精度规格。只依赖核心（不 import langgraph 等可选包），核心零依赖 CI 同样跑。
        每一条放宽（比喻、回忆、否定的去向、陈设件数、拟声、物件上的字、眼神、照着出处写的景、声音的主人、复述意图、
        当作以为、破折号、省略的主语、通道）都在 tests/data/gate_seeded.json 里配着“相似但应拦”的植入条目
@@ -20,6 +21,13 @@ from tianlong.language.gate import violations
 from .gate_fixtures import Case, corpus, seeded
 
 RECALL_FLOOR = 0.95
+# 植入条目的类别 → 算“拦对了”的违规种类：被别的理由碰巧拦下不算召回
+KINDS: dict[str, frozenset[str]] = {
+    "status": frozenset({"status", "quote_status"}), "entity": frozenset({"entity", "quote_entity"}),
+    "possession": frozenset({"outcome"}), "teleport": frozenset({"teleport"}), "duplicate": frozenset({"duplicate"}),
+    "secret": frozenset({"secret"}), "clock": frozenset({"clock"}), "voice": frozenset({"voice"}),
+    "puppet": frozenset({"puppet"}), "topology": frozenset({"topology"}),
+}
 
 # run6 在 M0 代码上被叙述闸门丢掉的五句（test_replay_run6 的基线，全是误杀）
 RUN6_FALSE_POSITIVES = (
@@ -56,10 +64,10 @@ def test_corpus(case: Case):
 
 
 def test_seeded_recall():
-    """植入的硬事实错误（TP）被拦比例 ≥95%，阴性对照（OK）全部放行。"""
+    """植入的硬事实错误（TP）按它的类别被拦下（违规种类对得上）的比例 ≥95%，阴性对照（OK）全部放行。"""
     bad = [c for c in seeded() if c.verdict == "TP"]
     good = [c for c in seeded() if c.verdict == "OK"]
-    missed = [(c.id, c.piece) for c in bad if not _found(c)]
+    missed = [(c.id, c.piece, _found(c)) for c in bad if not {v.kind for v in _found(c)} & KINDS[c.category]]
     rate = 1 - len(missed) / len(bad)
     print(f"植入召回 {len(bad) - len(missed)}/{len(bad)} = {rate:.1%}；阴性对照 {len(good)} 条")
     assert rate >= RECALL_FLOOR, missed
@@ -76,3 +84,4 @@ def test_fixture_shape():
     assert len({c.id for c in seeds}) == len(seeds)
     kinds = {c.category for c in seeds if c.verdict == "TP"}
     assert {"status", "teleport", "possession", "duplicate", "entity", "secret", "clock", "voice", "puppet"} <= kinds
+    assert kinds <= set(KINDS)

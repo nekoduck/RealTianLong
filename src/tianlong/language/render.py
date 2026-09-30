@@ -1,21 +1,22 @@
 """
 [INPUT]: 依赖 core 的 Percept / Modality / Op / Outcome / Kind / Rel / SKILLS / STATUS_ATTRS，language/templates 的 Names / render_percept / UNCHARTED
 [OUTPUT]: 对外提供 fact_lines()（本回合允许讲的事实清单；familiar 里的东西再翻出来不算发现）、RenderPlan / build_plan()（渲染计划；另记玩家亲眼见过的地方 seen 与见过的实体的外观描写 scenery）、
-          Violation / check()（叙述闸门；recall=收幕段落）、
+          Violation / check()（叙述闸门；recall=收幕段落，unspoken=不是话的引语照叙述查）、
           restated_hearsay()（逐句查传闻：这一句替只闻其说的说法作保）、check_utterance()（对白闸门）、
           sentence_ends()（流式分句）、RenderStatus / Rendered（渲染结果与来源、丢句数）、
           词表 STATUS_LEXICON / DENIALS / COMMITMENT_WORDS / ARRIVAL_VERBS / ATTRIBUTION_VERBS / NEGATIONS / QUANTIFIERS / EXTRA_MARKERS
           及其排除表（STATUS_EXCLUSIONS / COMMITMENT_EXCLUSIONS / ATTRIBUTION_EXCLUSIONS / NOT_NEGATION）、MIN_ALIAS、
-          语境词表 LIKENESS / RECALL / PLACING / LEADS_TO / FIXTURE_WINDOW、
+          语境词表 LIKENESS / RECALL / DISTANCED / PLACING / LEADS_TO / ON_FIXTURE、
           SPEECH_MARKS / POST_MARKS / POST_WINDOW / PRONOUNS，以及台词闸门（quotes.py）与人事闸门（deeds.py）共用的词法积木
           （_mentions / _lexical / _negated / _quotes / _mask / _clauses……，含无引号的“某某道：……”与“某某说……”式转述）
 [POS]: language 的“文字 ≠ 事实”闸门。提示词约束拦不住一次成功调用返回的错误非空文本，这里用确定性的词法检查拦：
        点名清单外的人与物（名或别称）、状态升级（受伤→被制、略有所得→学成，含“吐了一口血”“嘴唇发紫”“悟透”这类武侠说法）、
        瞬移（有台词时引语里说话者讲自己的来路不算）、物品复制、编造承诺、把传闻说成叙述者确认的事实、场景秘密（私奔、投神农帮）、
        门那头没见过却说它通向哪里（清单写着“回廊不知通往何处”）——命中即丢句或回退确定模板。
-       语境（每一条都只豁免点名或件数，状态、瞬移、易手照查）：比喻里的物品（“手中似握着长剑”，句首点了人就不算）、
-       回忆里玩家亲眼见过的地点通道与陈设（收幕段落或同句有“想起/记得/方才”：名字收住小句，不定位、不写动作）、
-       否定的去向（“你没有往回廊那边去”）、紧挨着点到见过的陈设时照它的外观描写说件数（“兵器架上那几柄长剑”；“又一柄”照拦）。
+       语境（每一条都只豁免点名或件数，状态、瞬移、易手照查）：比喻里的物品（“手中似握着长剑”，整句点了人就不算）、
+       回忆里玩家亲眼见过的地点通道与陈设（收幕段落里列举之后紧跟“都远了”，或同一小句由“想起/记得”带出、句子余下只写你：
+       名字收住小句，不定位、不写动作）、否定的去向（“你没有往回廊那边去”）、紧挨着见过的陈设（只隔方位与陈列的字，
+       小句余下不点名人）时照它的外观描写说件数（“兵器架上那几柄长剑”；“又一柄”“兵器架旁，龚光杰腰间挂着两柄”照拦）。
        宁可错杀：误报只让这一句（或这一回合）的文字退回模板，世界结算不受任何影响。状态落在谁身上、谁做成了什么、
        玩家此刻在哪由 deeds.check_deeds() 查，引语归到谁、谁能说什么由 quotes.check_quotes() 查，渲染计划为它们记下
        谁身上有什么状态、谁做成了什么、玩家在哪、谁身上有什么东西、只闻其说的传闻里提到了谁。
@@ -98,14 +99,15 @@ ANOTHER: tuple[str, ...] = ("又一", "另一")
 EXTRA_MARKERS: tuple[str, ...] = ("还有", "另有", "也有", "另外", "又", "再")
 EXTRA_WINDOW = 8
 CLASSIFIERS = "把个只件枚支柄瓶卷本块串颗粒张根份对双"
-# 陈设里本来就有的件数（“兵器架上那几柄长剑”：兵器架的外观描写写着“插着几柄长剑”）：陈设须在数量说法之前这么多字以内点到
-FIXTURE_WINDOW = 12
+# 陈设里本来就有的件数（“兵器架上那几柄长剑”：兵器架的外观描写写着“插着几柄长剑”）：陈设与数量说法之间只许隔这些方位与陈列的字
+ON_FIXTURE = r"(?:上|里|中)?[，,]?的?(?:那|倒?插着|摆着|立着|放着|搁着)?"
 # 比喻与幻象（“手中似握着长剑”“竟像有仙人在壁上舞剑”）：同一小句里物品名之前有这些词，只是个比方，不算点名；
 # “似乎/似的”“好像”“玉像/图像”不算比喻
 LIKENESS = re.compile(r"似(?![乎的])|(?<![玉图画神佛塑石肖影偶雕人好])像|仿佛|宛如|宛若|犹如|恍如|恍若|如同|好似")
 LIKENESS_WINDOW = 12
-# 回忆（收幕段落，或同一句前文有这些词）：玩家亲眼见过的地点、通道与陈设可以点名
-RECALL: tuple[str, ...] = ("记得", "想起", "忆起", "回想", "方才", "先前")
+# 回忆：玩家亲眼见过的地点、通道与陈设可以点名——同一小句里由这些词直接带出，或收幕段落里列举远去的东西（DISTANCED）
+RECALL: tuple[str, ...] = ("记得", "想起", "忆起", "回想")
+DISTANCED = re.compile(r"(?:此刻|此时|如今|而今|眼下)?都(?:已经?)?(?:远了|远去|[隔抛留落]在了?身后)")
 # 回忆里不许给它定位或写动作：名字须收住所在的小句，小句里也不许有别的名字、“在”与抵达动词（“那尊玉像就立在江边”照拦）
 PLACING: tuple[str, ...] = ("在", "来到", "到了", "走进", "进入", "回到", "去了")
 # 否定的去向（“你没有往回廊那边去”）：玩家亲眼见过的地点与通道可以点名
@@ -426,17 +428,20 @@ def _unsourced(text: str, source: str, patterns: Iterable[str], exclusions: Iter
 
 
 def check(text: str, plan: RenderPlan, known_names: Iterable[str] = (),
-          quoted: frozenset[str] | None = None, recall: bool = False) -> tuple[Violation, ...]:
+          quoted: frozenset[str] | None = None, recall: bool = False,
+          unspoken: Container[int] = ()) -> tuple[Violation, ...]:
     """known_names 是“可能被点名”的全集（玩家认识的 + 场景里所有实体），只用于拒绝：不在计划里的名字出现即违规。
     quoted：本回合有 NPC 台词时，交来要说台词的人可以点名的名字全集——引语里的这些名字与状态词交给台词闸门按说话者查
     （他认识的、他那句说法与谈资里有的才许），这里只管叙述者自己的口吻；None 表示没有台词，引语同样由这里把关。
-    recall：这是收幕段落（写远去的回忆）——玩家亲眼见过的地点、通道与陈设可以点名，但不许给它定位或写动作。"""
+    recall：这是收幕段落（写远去的回忆）——玩家亲眼见过的地点、通道与陈设可以点名，但不许给它定位或写动作。
+    unspoken：不是话的引语的起点（quotes.unspoken()：拟声、物件上的字、眼神问话、照着出处写的景）——没人说，照叙述查。"""
     out: list[Violation] = []
     allowed = plan.names | plan.aliases
     universe = set(known_names) | allowed | plan.hidden
     sourced = {n for _, n in _mentions(plan.source, universe)}
-    spans = [(q.start, q.end) for q in _quotes(text)] if quoted is not None else []
-    narration = _mask(text, _quotes(text)) if spans else text     # 叙述者自己的口吻：引语遮住
+    said = [q for q in _quotes(text) if q.start not in unspoken] if quoted is not None else []
+    spans = [(q.start, q.end) for q in said]
+    narration = _mask(text, said) if spans else text              # 叙述者自己的口吻：引语遮住
 
     # ---- 1. 点名：清单外的人与物（名或别称）；比喻里的物品、回忆里与没往那里去的见过的地方不算点名 ----
     for i, n in _mentions(text, universe):
@@ -499,23 +504,40 @@ def _sentence_head(text: str, i: int) -> str:
     return text[max(text.rfind(c, 0, i) for c in SENTENCE_ENDS + "\n") + 1:i]
 
 
+def _sentence_tail(text: str, i: int) -> str:
+    """同一句里 i 之后的文字。"""
+    return text[i:min((k for c in SENTENCE_ENDS + "\n" if (k := text.find(c, i)) >= 0), default=len(text))]
+
+
+def _persons(plan: RenderPlan) -> set[str]:
+    return {f for f, _ in plan.people} | {"你", *PRONOUNS}
+
+
 def _likened(text: str, i: int, n: str, plan: RenderPlan) -> bool:
-    """“手中似握着长剑”：物品名前、同一小句里有比喻词，且句首到这里没点名任何人（“钟灵手中似握着长剑”照拦）。"""
-    persons = {f for f, _ in plan.people} | {"你", *PRONOUNS}
+    """“手中似握着长剑”：物品名前、同一小句里有比喻词，且整句没点名任何人（“钟灵手中似握着长剑”
+    “仿佛有一柄长剑凭空落下，落进钟灵手中”照拦：东西落到谁身上，就不是比方）。"""
     return (n in dict(plan.goods) and bool(LIKENESS.search(_clause_before(text, i, LIKENESS_WINDOW)))
-            and not _mentions(_sentence_head(text, i), persons))
+            and not _mentions(_sentence_head(text, i) + _sentence_tail(text, i), _persons(plan)))
 
 
 def _recalled(text: str, i: int, n: str, plan: RenderPlan, universe: Iterable[str], recall: bool) -> bool:
-    """回忆里见过的地方（“石室里那尊玉像，此刻都隔在了身后”）：收幕段落或同句前文有回忆词；名字收住小句、下一小句
-    也不拿代词接着写它（“……玉像，它朝你一笑”），小句里没有“在”与抵达、也没有见过的地方以外的名字（人、物、没见过的地方）
-    ——只点名，不定位、不写动作。"""
-    if n not in plan.seen or not (recall or any(w in _sentence_head(text, i) for w in RECALL)):
+    """回忆里见过的地方，只点名，不定位、不写动作。名字须收住小句，小句里名字之前没有“在”与抵达、也没有见过的地方以外的
+    名字（人、物、没见过的地方），句子余下的部分不拿代词接着写它（“……玉像，它朝你一笑”），并且是这两种说法之一：
+    收幕段落里列举远去的东西，名字所在的列举之后紧跟远去的说法（“崖下的月色与玉像，此刻都远了”）；
+    或同一小句里由“想起/记得”直接带出，句子余下的部分只写你、不定位（“你想起那座兵器架，心头一紧”；
+    “……，竟朝你眨了眨眼”“……，已随你们到了江边”照拦）。"""
+    if n not in plan.seen:
         return False
     end = i + len(n)
-    head = _clause_before(text, i, ARRIVAL_WINDOW * 2)
-    return (not _clause_after(text, end, ARRIVAL_WINDOW) and text[end + 1:end + 2] not in ("它", "他", "她")
-            and not any(w in head for w in PLACING) and all(m in plan.seen for _, m in _mentions(head, universe)))
+    head, rest = _clause_before(text, i, ARRIVAL_WINDOW * 2), _sentence_tail(text, end)
+    if (_clause_after(text, end, ARRIVAL_WINDOW) or any(w in head for w in PLACING) or any(p in rest for p in "它他她")
+            or not all(m in plan.seen for _, m in _mentions(head, universe))):
+        return False
+    after = re.split("[，,；;]", rest, maxsplit=1)
+    if recall and len(after) == 2 and DISTANCED.match(after[1]):
+        return True
+    return (any(w in head for w in RECALL) and not any(w in rest for w in PLACING)
+            and not re.search(f"[^{re.escape(_PUNCT)}]你", rest))           # “你”只作小句的主语
 
 
 def _avoided(text: str, i: int, n: str, plan: RenderPlan) -> bool:
@@ -524,13 +546,14 @@ def _avoided(text: str, i: int, n: str, plan: RenderPlan) -> bool:
 
 
 def _displayed(text: str, at: int, phrase: str, item: str, count: int, plan: RenderPlan) -> int:
-    """数量说法紧前头点到了玩家见过的陈设，这件陈设的外观描写里本来就有的件数（“插着几柄长剑”）；
-    只认直接的“数词 + 量词”——“又一柄”“还有一柄”照旧以实体件数为上限。"""
-    if phrase.startswith(("一", *ANOTHER)):
+    """数量说法紧挨着玩家见过的陈设（中间只隔方位与陈列的字：“兵器架上，那几柄”“兵器架上倒插着几柄”）、所在小句余下的
+    部分也不再点名任何人：这件陈设的外观描写里本来就有的件数（“插着几柄长剑”）。只认直接的“数词 + 量词”——
+    “又一柄”“还有一柄”、“兵器架旁，龚光杰腰间挂着两柄”“兵器架上的两柄长剑已到了钟灵手中”照旧以实体件数为上限。"""
+    if phrase.startswith(("一", *ANOTHER)) or _mentions(_clause_after(text, at + len(phrase), len(text)), _persons(plan)):
         return 0
-    near = _sentence_head(text, at)[-FIXTURE_WINDOW:]
-    named = {n for _, n in _mentions(near, (n for n, _ in plan.scenery))}
-    return max((k for n, lore in plan.scenery if n in named for k, _, _ in _quantified(lore, item, count)), default=0)
+    head = _sentence_head(text, at)
+    return max((k for n, lore in plan.scenery if re.search(f"{re.escape(n)}{ON_FIXTURE}$", head)
+                for k, _, _ in _quantified(lore, item, count)), default=0)
 
 
 def _forms_of(plan: RenderPlan, who: str) -> tuple[str, ...]:

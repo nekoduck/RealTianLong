@@ -329,7 +329,7 @@ CI（`.github/workflows/ci.yml`）跑两份：只装 dev 的核心零依赖套�
 | 重试不二次结算 | 意图 ID 由 (世界, 分支, 角色, 版本) 派生 | `test_acceptance_warehouse.py`、`test_agents.py` |
 | 表示不丢机制、角色不见真相 | Schema v2 类型化特征（已知/未知/不适用三态）、环境与角色两入口 | `test_schema_v2.py`、`test_observation.py` |
 | 指标不从奖励推算、样本不当独立 | 事件口径计数、以世界为单位的自助法与配对比较、永远等待基线 | `test_evaluation.py`、`test_rl.py` |
-| 文字 ≠ 事实 | `language/render.py` RenderPlan + 确定性词法闸门：清单外实体（名或别称）、状态升级、瞬移、物品复制、编造承诺、传闻去归属一律回退模板；世界结算与文字结果分开记录 | `test_render_gate.py`（L01–L02：合法修辞放行，每类错误各被拦下，另有松散否定、常见说法与误报的词法回归）；`test_gate_precision.py`（误杀语料 49 句：误杀放行、真拦照拦；植入错误召回 ≥95%，阴性对照放行） |
+| 文字 ≠ 事实 | `language/render.py` RenderPlan + 确定性词法闸门：清单外实体（名或别称）、状态升级、瞬移、物品复制、编造承诺、传闻去归属一律回退模板；世界结算与文字结果分开记录 | `test_render_gate.py`（L01–L02：合法修辞放行，每类错误各被拦下，另有松散否定、常见说法与误报的词法回归）；`test_gate_precision.py`（误杀语料 49 句：误杀放行、真拦照拦；植入错误按类别被拦对 ≥95%，阴性对照放行） |
 | 快照不可变 | `core/frozen.py` FrozenMap：世界与认知快照里的映射封死就地修改，仍可 pickle / JSON | `test_resume.py`（R01） |
 | 读档等价 | 调度标记与已描写实体随世界提交落库、读档恢复；存档记下规则/属性/目标版本，不符即拒绝，迁移须显式 | `test_resume.py`（R02：内存与 Neo4j，连续运行 vs 中途读档，事件/调度/认知/叙述逐项一致） |
 | 模型兼容不止词表 | `learning/bundle.py` 部署包：训练时的全部语义版本（取自检查点 manifest）+ 文件哈希 + 策略配套的预测器 | `test_deploy.py`（C02：逐项语义版本、改动的文件、缺配套预测器、跨版本混搭、旧检查点一律拒绝） |
