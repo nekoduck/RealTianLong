@@ -4,7 +4,8 @@
 [OUTPUT]: 在线代理协议（plan §8.4）的验收：会话键（本引擎带不进盲评的整局，对照组加 B: 前缀、没有额外整局）、运行目录按世界与种子分开
           而旧版种子 7 仍是 run1–6 的布局、--world 与探针文件的 variant 不符即报错；对照组逐次作答——rival_key 停在第一个没答的调用上交出
           圣经与“完整对话 + 新输入”，答全了就回放出同样的对话，step 在命令行上写下 DONE；assemble 按新探针拼出报告（本引擎的 extras、
-          对照组取 B:* 的回复、面板与新指标）
+          对照组取 B:* 的回复、面板与新指标）；对照组的回复绝不借别的运行的录制（普通人版或 B:* 跑了一半即报出没跑完的键，
+          只有旧版种子 7 一个 B:* 都没跑时才取 rival_answers.json）
 [POS]: tests 的在线代理评测工具验收；只跑离线、快速的路径（真代理作答由外部编排）。起会话的用例缺 LangGraph / Qdrant 时跳过
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -97,3 +98,28 @@ def test_assemble_with_rival_sessions(tmp_path):
     assert (rd / "panel.json").exists() and (rd / "report" / "report.md").exists()
     ids = {m["id"] for m in result["metrics"]["engine"]} & {m["id"] for m in result["metrics"]["baseline"]}
     assert {"B1", "E1", "NAME", "SEAM", "FPD", "R5", "F3", "TOK", "END"} <= ids
+
+
+def test_rival_answers_never_borrow_another_runs_recording(tmp_path):
+    """共用一个 DIR 时：普通人版的对照组没跑完就报出没跑完的键，绝不拿 DIR/rival_answers.json（run6 旧版的录制）顶替；
+    旧版种子 7 也只在一个 B:* 都没跑时才取录制；B:* 全部 DONE 就用它们。"""
+    probes = online.load_probes(1, _tiny(tmp_path))
+    (tmp_path / "rival_answers.json").write_text(json.dumps({"playthrough": ["（run6 旧版：段誉的回复）"]}), "utf-8")
+    rd = online.run_dir(tmp_path, "wuliang", 11)
+    od = rd / "online"
+    od.mkdir(parents=True)
+    keys = online.session_keys(probes, rival=True)
+    online._file(od, keys[0], "done.json").write_text(json.dumps({"replies": ["甲", "乙"]}), "utf-8")
+    with pytest.raises(SystemExit, match="没跑完"):
+        online._rival_answers(rd, od, probes, legacy=False)
+    with pytest.raises(SystemExit, match="没跑完"):                    # 旧版也一样：跑了一半不混用
+        online._rival_answers(tmp_path, od, probes, legacy=True)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(SystemExit):                                     # 普通人版一个都没跑：同样不借录制
+        online._rival_answers(tmp_path, empty, probes, legacy=False)
+    assert online._rival_answers(tmp_path, empty, probes, legacy=True) == {"playthrough": ["（run6 旧版：段誉的回复）"]}
+    for k in keys[1:]:
+        online._file(od, k, "done.json").write_text(json.dumps({"replies": [k]}), "utf-8")
+    got = online._rival_answers(rd, od, probes, legacy=False)
+    assert got["playthrough"] == ["甲", "乙"] and set(got) == {k.removeprefix(online.RIVAL) for k in keys}

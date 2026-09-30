@@ -1,5 +1,6 @@
 """
-[INPUT]: 依赖同目录 bench_gm（会话装配、整局与探针的逐回合计分、对照组回放、评审、报告、探针文件与 variant）与 bench_rival 的 PureLLMGM，
+[INPUT]: 依赖同目录 bench_gm（会话装配、整局与探针的逐回合计分、对照组回放、评审、报告、探针文件与 variant）与 bench_rival 的
+         PureLLMGM / epilogue_story / panel_name，
          tianlong.language.llm 的 ScriptedLLM；DIR 下的代理答案（<运行目录>/online/*.answers.json、interp_answers.json、rival_answers.json、
          judge_answers.json）
 [OUTPUT]: 命令行 python scripts/bench_online.py {keys|step|answer|assemble|dump} DIR [KEY] [--world W] [--seed N] [--probes FILE]
@@ -11,7 +12,8 @@
        answer 把 stdin 追加为它的答案。本引擎的键是 playthrough / playthrough_hall / playthrough_flee / “组:探针 ID”，
        对照组（纯模型主持人，圣经 + 完整对话 + 新输入）的键加前缀 “B:”，同一套 step / answer；每个种子一个运行目录，
        两个种子（7 与 11）即对照组独立跑两次。全部 DONE 之后 assemble 拼出本引擎的记录（不进盲评的整局记在 extras），
-       按对照组的代理回复（B:* 的 DONE，没有就取 DIR/rival_answers.json）回放纯模型主持人，写出盲评面板、评审提示词与报告；
+       按对照组的代理回复（B:* 全部 DONE；一个都没跑且是旧版种子 7 才取录制的 DIR/rival_answers.json，否则报出没跑完的键）
+       回放纯模型主持人，写出盲评面板（A/B 先后按面板 bench_rival.panel_name 轮流、终章只取收束）、评审提示词与报告；
        dump 把一个会话的每次叙述调用连同答案写下来。
        --world 选场景（wuliang 普通人版 / wuliang-duanyu 旧版，缺省看探针文件的 variant），--probes 选探针文件（缺省按世界取）；
        运行目录：旧版种子 7 就是 DIR 本身（run1–6 的布局原样可读），其余是 DIR/<world>-s<seed>。
@@ -35,7 +37,7 @@ from tianlong.language.llm import ScriptedLLM
 if str(Path(__file__).resolve().parent) not in sys.path:     # 按文件路径当库加载时（测试），也找得到同目录的 bench_gm
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench_gm  # noqa: E402
-from bench_rival import PureLLMGM  # noqa: E402
+from bench_rival import PureLLMGM, epilogue_story, panel_name  # noqa: E402
 
 GROUPS = ("gaslight", "sycophancy", "open_actions")     # 会话键与对照组回放的顺序（与录制时一致，不可改）
 PROBE_FILES = {"wuliang": bench_gm.PROBES, bench_gm.LEGACY: bench_gm.PROBES.with_name("bench_probes_duanyu.json")}
@@ -198,15 +200,17 @@ def _interp(d: Path, rd: Path) -> dict[str, str]:
     return load_interp(rd / "interp_answers.json" if (rd / "interp_answers.json").exists() else d / "interp_answers.json")
 
 
-def _rival_answers(d: Path, od: Path, probes: Mapping[str, Any]) -> dict[str, list[str]]:
-    """对照组的代理回复 {会话键: [回复]}：B:* 全部 DONE 就用它们（在线逐次作答），否则取 DIR/rival_answers.json（run1–6 的录制）。"""
-    done = [_file(od, k, "done.json") for k in session_keys(probes, rival=True)]
-    if all(p.exists() for p in done):
-        return {k.removeprefix(RIVAL): json.loads(p.read_text("utf-8"))["replies"]
-                for k, p in zip(session_keys(probes, rival=True), done, strict=True)}
-    if (d / "rival_answers.json").exists():
-        return json.loads((d / "rival_answers.json").read_text("utf-8"))
-    raise SystemExit(f"对照组还有会话没跑完: {[p.name for p in done if not p.exists()]}")
+def _rival_answers(rd: Path, od: Path, probes: Mapping[str, Any], legacy: bool) -> dict[str, list[str]]:
+    """对照组的代理回复 {会话键: [回复]}：B:* 全部 DONE 就用它们（在线逐次作答）；一个都没跑、且是旧版种子 7 的运行目录
+    （run1–6 的布局）才取录制的 rival_answers.json；其余一律报出没跑完的 B:* 键——绝不拿别的世界、别的种子的录制顶替。"""
+    keys = session_keys(probes, rival=True)
+    done = {k: _file(od, k, "done.json") for k in keys}
+    left = [k for k, p in done.items() if not p.exists()]
+    if not left:
+        return {k.removeprefix(RIVAL): json.loads(p.read_text("utf-8"))["replies"] for k, p in done.items()}
+    if legacy and len(left) == len(keys) and (rd / "rival_answers.json").exists():
+        return json.loads((rd / "rival_answers.json").read_text("utf-8"))
+    raise SystemExit(f"对照组还有会话没跑完: {left}")
 
 
 def assemble(d: Path, probes: Mapping[str, Any], seed: int = 7) -> dict[str, Any]:
@@ -229,7 +233,7 @@ def assemble(d: Path, probes: Mapping[str, Any], seed: int = 7) -> dict[str, Any
     if extras:
         engine["extras"] = {k: done(k) for k in extras}
     # ---- 对照组：按 run_baseline 的调用顺序回放已有的代理回复（对照组的对话本就是在线作答的） ----
-    rival = _rival_answers(d, od, probes)
+    rival = _rival_answers(rd, od, probes, legacy=rd == d)
     order = [("playthrough", i) for i in range(len(probes["playthrough"]))]
     for g in GROUPS:
         for p in probes[g]:
@@ -246,11 +250,11 @@ def assemble(d: Path, probes: Mapping[str, Any], seed: int = 7) -> dict[str, Any
     eng_rows = [["（开场）", engine["intro"]]] + [[t["text"], t["narration"]] for t in engine["playthrough"]]
     base_rows = [["（开场）", PureLLMGM(None, scenario).opening]] + [[t["text"], t["narration"]] for t in base["playthrough"]]
     n = min(len(eng_rows), len(base_rows))
-    # 终章的故事部分是主持人的最后一段；“真相揭晓”是落幕后另起的一张卡片（网页上单独展示），不算主持人的叙述
-    story = (engine.get("epilogue") or "").split("—— 真相揭晓")[0].strip()
+    # 终章的故事部分是主持人的最后一段；真相揭晓 / 纪事是落幕后另起的一张卡片（网页上单独展示），不算主持人的叙述
+    story = epilogue_story(engine.get("epilogue"))
     eng_rows = eng_rows[:n] + ([["（落幕）", story]] if story else [])
     base_rows = base_rows[:n]
-    engine_is_a = bench_gm.pairwise_order(seed)
+    engine_is_a = bench_gm.pairwise_order(seed, panel_name(world, seed))
     a, b = (eng_rows, base_rows) if engine_is_a else (base_rows, eng_rows)
     (rd / "panel.json").write_text(json.dumps({"bible": base["system"], "A": a, "B": b}, ensure_ascii=False, indent=1), "utf-8")
     (rd / "panel_key.json").write_text(json.dumps({"A": "engine" if engine_is_a else "baseline",

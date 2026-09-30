@@ -1,6 +1,6 @@
 """
 [INPUT]: 依赖同目录 bench_gm（会话装配 _session、逐回合计分 engine_turn、world_of / SCENARIOS、盲评顺序 pairwise_order）与
-         bench_rival 的 PureLLMGM，tianlong.language.llm 的 ScriptedLLM；DIR/player/<A|B>/ 下各角色的代理答案
+         bench_rival 的 PureLLMGM / epilogue_story / panel_name，bench_metrics 的 b1 / e1 / ending_of，tianlong.language.llm 的 ScriptedLLM；DIR/player/<A|B>/ 下各角色的代理答案
 [OUTPUT]: 命令行 python scripts/bench_player.py {step|answer|panel} DIR [SIDE] [--world W] [--seed N] [--turns K]，
           也是可导入的库：PLAYER_SYSTEM / MAX_TURNS / MAX_CHARS / ROLES，player_prompt()，game()（一整局，每次模型调用经 ask 作答），
           recorded()（按已录答案作答、缺了交给 on_missing），record()（追加一条答案），panel()
@@ -9,7 +9,8 @@
        A 是本引擎（叙述 narrator、解释 interp 各由隔离代理作答），B 是纯模型主持人（rival：圣经 + 完整对话 + 新输入），各跑一局。
        step 从头重放一局（同样的答案 → 同样的轨迹），停在第一个没答的调用上：打印待答的角色（player / narrator / interp / rival）
        与它的完整提示词，写下 pending.json 并立刻退出进程（叙述调用在读流线程里，只能 os._exit）；answer 以 stdin 追加这个角色的答案
-       （玩家的一句超过 30 字即拒收）；两局都走完后 panel 写出盲评面板（A/B 先后由种子打乱）与各自的结局、B1、E1。
+       （玩家的一句超过 30 字即拒收）；两局都走完后 panel 写出盲评面板（A/B 先后按面板 wuliang-player-s7 与两个种子的面板轮流换边、终章只取收束）
+       与各自的结局、B1、E1；B 的结局按标题词法判（去掉标点空白再比）。
        它是辅证：面板只做单局打分加总体偏好
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -30,8 +31,8 @@ from tianlong.language.llm import ScriptedLLM
 if str(Path(__file__).resolve().parent) not in sys.path:     # 按文件路径当库加载时（测试），也找得到同目录的 bench_gm
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench_gm  # noqa: E402
-from bench_metrics import b1, e1  # noqa: E402
-from bench_rival import PureLLMGM  # noqa: E402
+from bench_metrics import b1, e1, ending_of  # noqa: E402
+from bench_rival import PureLLMGM, epilogue_story, panel_name  # noqa: E402
 
 PLAYER_SYSTEM = (
     "你是第一次玩这款中文武侠文字游戏的玩家：谨慎而好奇的普通玩家。你只知道主持人讲给你的正文，不知道后面的剧情，也不去猜攻略；"
@@ -69,13 +70,12 @@ def game(side: str, world: str, seed: int, ask: Ask, turns: int = MAX_TURNS) -> 
         gm = PureLLMGM(ScriptedLLM(lambda p, sy, sc: call("rival", sy, p)), scenario)
         shown.append(("", gm.opening))
     out["opening"] = shown[0][1]
-    titles = {e.title: e.key for e in scenario.endings}
     for _ in range(turns):
         text = call("player", PLAYER_SYSTEM, player_prompt(shown)).strip()[:MAX_CHARS]
         if side == "A":
             rec, *_ = bench_gm.engine_turn(s, text, "player")
         else:
-            rec = dict(gm.turn(text), ending=next((k for t, k in titles.items() if t in gm.transcript[-1][1]), None))
+            rec = dict(gm.turn(text), ending=ending_of(gm.transcript[-1][1], scenario))   # 词法：标题去掉标点空白再比
         out["turns"].append(rec)
         shown.append((text, rec["narration"]))
         if rec.get("ending"):
@@ -134,9 +134,9 @@ def panel(d: Path, seed: int) -> dict[str, Any]:
     """两局都走完后：盲评面板（A/B 先后由种子打乱）与各自的结局、B1、E1（B 只有结局）。"""
     games = {side: json.loads((_dir(d, side) / "game.json").read_text("utf-8")) for side in ("A", "B")}
     rows = {side: [["（开场）", g["opening"]]] + [[t["text"], t["narration"]] for t in g["turns"]]
-            + ([["（落幕）", g["epilogue"].split("—— 真相揭晓")[0].strip()]] if g.get("epilogue") else [])
+            + ([["（落幕）", epilogue_story(g.get("epilogue"))]] if epilogue_story(g.get("epilogue")) else [])
             for side, g in games.items()}
-    engine_is_a = bench_gm.pairwise_order(seed)
+    engine_is_a = bench_gm.pairwise_order(seed, panel_name(games["A"]["world"], seed, player=True))
     first, second = ("A", "B") if engine_is_a else ("B", "A")
     (d / "player" / "panel.json").write_text(json.dumps({"A": rows[first], "B": rows[second]}, ensure_ascii=False, indent=1),
                                              "utf-8")

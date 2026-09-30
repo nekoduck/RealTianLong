@@ -4,8 +4,9 @@
 [OUTPUT]: M4 新指标（plan §8.3）在手造的回合记录上逐个算得出、算得对：B1（看点并集对 11 个）、E1（只数推进回合）、NAME（账本不可得即“不可得”，
           可得时数越过账本的名字）、SEAM（最后一句不在模型原始回复里；整段模板不算缝）、FPD（标注语料的 FP 条目全部放行）、
           R5（当面搭话同回合有回应）、F3（同一人引语 3-gram 重合 ≥0.6，按“某某道：“……””抽）、TOK（首 → 末 与中位）、END（结局与回合数）；
-          两边一览的编号齐全；Metered 记下提示词字数与原始回复且不改变模型的回答、没有流式接口就不假装有；ledger() 认得几种账本写法；
-          observe() 在假会话上给出 idle / name_hits / seam / addressed / answered / tok；
+          两边一览的编号齐全；Metered 记下提示词字数与原始回复且不改变模型的回答、没有流式接口就不假装有；ledger() 认得几种账本写法（含 Acquaintance.to_state() 的 known 表与带 of() 的 _acq）；
+          R5 只认真的交付（名字出现不算）、本引擎另报同 B 的词法口径；B 的结局标题去掉标点空白再比；
+          observe() 在假会话上给出 idle / name_hits / seam / addressed / answered / tok（叙述 + 解释器）；
           延迟模拟：抽样确定（同一次序同一值）、快模型落在 0.4–0.6 s、叙述模型中位约 2.2 s 且 p95 约 5.3 s、提示词超过 TOK_REF 首 token 变长、
           SimLLM 按缩放睡眠且记下未缩放的秒数
 [POS]: tests 的评测指标单元测试：只依赖核心（不起会话），核心零依赖 CI 同跑
@@ -111,8 +112,9 @@ def test_quotes_and_f3():
 
 
 def test_tok_and_end():
-    m = bm.tok([_t(tok=900), _t(tok=None), _t(tok=950), _t(tok=880)], "本引擎")
+    m = bm.tok([_t(tok=900, tok_parts={"narrator": 400, "interp": 500}), _t(tok=None), _t(tok=950), _t(tok=880)], "本引擎")
     assert m["value"] == {"p50": 900, "first": 900, "last": 880, "max": 950} and m["pass"] is None
+    assert "叙述 中位 400" in m["note"] and "解释器 中位 500" in m["note"]
     assert bm.tok([_t()], "x")["display"].startswith("不适用")
     rec = {"playthrough": [_t()] * 37, "ending": "river"}
     extras = {"playthrough_hall": {"playthrough": [_t()] * 23, "ending": "dawn"},
@@ -136,6 +138,10 @@ def test_both_sides_list_every_new_metric():
     b = {m["id"]: m for m in bm.baseline_extra(base, SC)}
     assert list(b) == ids and b["R5"]["display"] == "1/1 = 100%" and b["END"]["value"] == {"ending": "dawn", "turns": 2}
     assert b["TOK"]["value"]["last"] == 4500 and b["NAME"]["display"] == "未测量"
+    assert "同 B 的词法口径" in e["R5"]["note"]                               # 本引擎另报与 B 同一把尺子的 R5
+    loose = {"playthrough": [{"text": "等待", "narration": "……江水滚滚南流。（第一幕终·澜沧江畔）", "tok": 10}], "probes": []}
+    assert {m["id"]: m for m in bm.baseline_extra(loose, SC)}["END"]["value"] == {"ending": "river", "turns": 1}
+    assert bm.ending_of("第一幕终 - 天亮了！", SC) == "dawn" and bm.ending_of("天快亮了", SC) is None
 
 
 # ============================================================
@@ -163,20 +169,30 @@ def test_ledger_forms():
     assert bm.ledger(s({"names": {"ashun": ["duanyu", "mawude"], "duanyu": ["ashun"]}})) == {"duanyu", "mawude"}
     assert bm.ledger(s({"acquaintance": ["zhongling"]})) == {"zhongling"}
     assert bm.ledger(s({}, {"ashun": {"gongguangjie"}})) == {"gongguangjie"}
+    # 另一条工作线落库的写法：session_state 的 names 是 Acquaintance.to_state()，_acq 是带 of() 的数据类
+    real = {"names": {"known": {"ashun": ["duanyu", "mawude"], "duanyu": ["ashun"]}, "early": ["zhongling"]}}
+    assert bm.ledger(s(real)) == {"duanyu", "mawude"}
+
+    class Acq:
+        def of(self, agent):
+            return frozenset({"zuozimu"}) if agent == "ashun" else frozenset()
+    assert bm.ledger(s({"scheduler": {}}, Acq())) == {"zuozimu"}
 
 
 def test_observe_on_a_fake_session():
     head = SC.state
     ep = SimpleNamespace(tick=head.clock, event=SimpleNamespace(actor="mawude"))
     me = SimpleNamespace(episodes=(ep,), entities={"ashun": 1, "mawude": 1})
-    calls = [{"chars": 999, "raw": "旧的", "structured": False}]
-    session = SimpleNamespace(player="ashun", scenario=SC, llm=SimpleNamespace(calls=calls),
+    voice, fast = bm.Metered(ScriptedLLM(lambda p, s, sc: "", "v")), bm.Metered(ScriptedLLM(lambda p, s, sc: "{}", "f"))
+    voice.calls.append({"chars": 999, "raw": "旧的", "structured": False})
+    session = SimpleNamespace(player="ashun", scenario=SC, llm=voice, interpreter=SimpleNamespace(llm=fast),
                               authority=SimpleNamespace(head=lambda: head), beliefs=lambda a: me,
-                              session_state=lambda: {"names": {"ashun": ["mawude", "duanyu", "gongguangjie"]}})
+                              session_state=lambda: {"names": {"known": {"ashun": ["mawude", "duanyu", "gongguangjie"]}}})
     snap = bm.snapshot(session)
-    assert snap["mark"] == 1 and snap["known"] == frozenset({"ashun", "mawude"})
-    calls += [{"chars": 1600, "raw": "你问马五德。马五德答道：“那是东宗的龚光杰。”", "structured": False},
-              {"chars": 500, "raw": "{}", "structured": True}]
+    assert snap["marks"] == {"voice": 1, "interp": 0} and snap["known"] == frozenset({"ashun", "mawude"})
+    voice.calls += [{"chars": 1600, "raw": "你问马五德。马五德答道：“那是东宗的龚光杰。”", "structured": False},
+                    {"chars": 500, "raw": "{}", "structured": True}]
+    fast.calls.append({"chars": 1100, "raw": "{}", "structured": True})
     ask = SimpleNamespace(actor="ashun", op=Op.ASK, intent=SimpleNamespace(target="mawude"))
     line = SimpleNamespace(speaker="mawude", speaker_name="马五德", answering="这是谁", listener_name="你", template="")
     report = SimpleNamespace(beats=(), advanced=True, events=(ask,), brief=SimpleNamespace(lines=(line,)),
@@ -186,8 +202,19 @@ def test_observe_on_a_fake_session():
     assert got["idle"] is False and got["beats"] == []                      # 马五德这一回合有动作：不算空转
     assert got["name_hits"] == ["钟灵"] and got["names"] == ["duanyu", "gongguangjie", "mawude"]
     assert got["seam"] is True and got["patched"] is True                  # 模型之后追加的“马五德向你解释。”
-    assert got["addressed"] == "mawude" and got["answered"] is True and got["tok"] == 1000
+    assert got["addressed"] == "mawude" and got["answered"] is True
+    assert got["tok_parts"] == {"narrator": 1000, "interp": 1000} and got["tok"] == 2000      # 解释器的提示词也算
     assert head.target("mawude", Rel.AT) == head.target("ashun", Rel.AT)
+    # R5 要真的交付回应：只出现他的名字（玩家自己的称呼就会带出来）不算；照录原话开头、或他的引语才算
+    line = SimpleNamespace(speaker="mawude", speaker_name="马五德", answering="这位龚爷是什么来头", listener_name="你",
+                           template="龚光杰是东宗左子穆门下的得意弟子")
+    mute = SimpleNamespace(narration="你凑近马五德低声相问，他却只顾盯着场中，额上沁出汗来。", brief=SimpleNamespace(lines=(line,)))
+    assert bm._answered(mute, "mawude", bm.speaker_forms(SC)) is False
+    told = SimpleNamespace(narration="马五德压低声音告诉你，龚光杰是东宗左子穆门下的得意弟子。", brief=mute.brief)
+    assert bm._answered(told, "mawude", bm.speaker_forms(SC)) is True
+    blank = SimpleNamespace(speaker="mawude", speaker_name="马五德", answering="嗯", listener_name="你", template="")
+    assert bm._answered(SimpleNamespace(narration="马五德点点头。", brief=SimpleNamespace(lines=(blank,))), "mawude",
+                        bm.speaker_forms(SC)) is False                      # 空模板不算照录
 
 
 # ============================================================

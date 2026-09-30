@@ -1,16 +1,18 @@
 """
 [INPUT]: 依赖 tianlong.scenarios 的 Scenario，tianlong.core 的 Kind / Op / Rel / clock_label / derive_seed / digest，
          core/drives 的 Between / Drive / Pose（普通人版圣经的驱力段），tianlong.language.llm 的 ScriptedLLM，
-         tianlong.runtime.gm 的 PLAYER_GOALS（玩家目标的口吻表）
+         tianlong.runtime.gm 的 PLAYER_GOALS（玩家目标的口吻表），tianlong.runtime.endings 的 CHRONICLE_HEAD（终章纪事的抬头）
 [OUTPUT]: 对外提供 GM_RULES / world_bible() / PureLLMGM（纯模型主持人对照组），JUDGE_SYSTEM / PREMISE_SCHEMA / PAIR_SCHEMA / PAIR_KEYS /
-          premise_prompt() / pair_note() / pairwise_prompt() / parse_verdict() / ask_judge() / pairwise_order()（独立评审），
-          scripted_respond() / scripted_gm() / scripted_judge() / scripted_llms()（--llm scripted 的离线脚本模型）
+          premise_prompt() / pair_note() / pairwise_prompt() / parse_verdict() / ask_judge() / PANELS / panel_name() / pairwise_order() /
+          epilogue_story()（独立评审），scripted_respond() / scripted_gm() / scripted_judge() / scripted_llms()（--llm scripted 的离线脚本模型）
 [POS]: scripts/bench_gm 的模型侧，单独成文件只为各自不超过 800 行；不依赖 bench_gm。
        对照组复刻 Jenova 式纯模型主持人：系统提示是由场景生成的全知世界圣经（路线与单向/夜现规则、人物的为人、秘密、目标与所在、
        物品在哪、玩家目标（玩家自己的口吻：与主持层场外问答同一张 gm.PLAYER_GOALS，不借 NPC 的行事语义）、结局）加上它公开的主持规矩，每回合发出完整对话记录与新输入、流式取回复、挂钟计时——它没有内核，
        成败与台账全凭模型自己。场景带驱力（普通人版，plan §8.2）时圣经另写：玩家扮演谁（普通人、不会武功）、每个 NPC 的性情与行事
        （Drive.gloss）、可在合适时机使用的台词（驱力台词）、时间表（场景时刻与驱力时间窗推出）、外貌称呼规则、结局的时钟与变体——
-       B 拿到的内容与我们相同；旧版圣经逐字不变。盲评须知 pair_note 只在普通人版写明“玩家不是段誉”不算错。评审是独立调用、要求严格 JSON；解析容忍代码块、多余文字与缺引号的键，拿不准就判无效、绝不瞎猜。
+       B 拿到的内容与我们相同；旧版圣经逐字不变。盲评须知 pair_note 只在普通人版写明“玩家不是段誉”不算错；
+       盲评的 A/B 先后：run7 起的 3 个面板（PANELS）轮流换边，旧版照旧按种子；终章只把主持人的收束交给盲评（epilogue_story）。
+       评审是独立调用、要求严格 JSON；解析容忍代码块、多余文字与缺引号的键，拿不准就判无效、绝不瞎猜。
        脚本模型按提示词写出像样的回复（解释器 JSON 兼容新旧两种 schema、照事实清单写成的叙述、原样的对白、顺着玩家的主持人）并模拟延迟，
        只为整条评测管道离线跑通，它的数字不作验收依据
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -28,6 +30,7 @@ from typing import Any
 from tianlong.core import Kind, Op, Rel, clock_label, derive_seed, digest
 from tianlong.core.drives import Between, Drive, Pose
 from tianlong.language.llm import ScriptedLLM
+from tianlong.runtime.endings import CHRONICLE_HEAD
 from tianlong.runtime.gm import PLAYER_GOALS
 from tianlong.scenarios import Scenario
 
@@ -341,9 +344,28 @@ def ask_judge(llm: Any, prompt: str, schema: dict[str, Any], fields: Mapping[str
     return parse_verdict(text, fields)
 
 
-def pairwise_order(seed: int) -> bool:
-    """盲评顺序：True = 本引擎是 A。由种子固定打乱，重跑同一轮顺序不变。"""
+# run7 起的 3 个盲评面板（plan §8.4：两个种子 + 一局玩家代理）：先后从派生的起点轮流换边，两种先后都出现，位置偏差得以对冲
+PANELS = ("wuliang-s7", "wuliang-s11", "wuliang-player-s7")
+_REVEAL = re.compile("—— 真相揭晓|" + re.escape(CHRONICLE_HEAD))
+
+
+def panel_name(world: str, seed: int, player: bool = False) -> str:
+    """一个盲评面板的名字：世界 + （玩家代理）+ 种子。"""
+    return f"{world}-{'player-' if player else ''}s{seed}"
+
+
+def pairwise_order(seed: int, panel: str | None = None) -> bool:
+    """盲评顺序：True = 本引擎是 A，重跑同一轮顺序不变。计划内的面板（PANELS）从派生的起点轮流换边；
+    其余（旧版 run1–6、计划外的种子）照旧由种子固定打乱。"""
+    if panel in PANELS:
+        start = random.Random(derive_seed("bench-pairwise", *PANELS)).random() < 0.5
+        return start != (PANELS.index(panel) % 2 == 1)
     return random.Random(derive_seed("bench-pairwise", seed)).random() < 0.5
+
+
+def epilogue_story(epilogue: str | None) -> str:
+    """终章里主持人的收束：真相揭晓（旧版）与“那一夜你没看见的事”纪事（普通人版）是落幕后另起的卡片，对照组没有对应物，不进盲评。"""
+    return _REVEAL.split(epilogue or "", maxsplit=1)[0].strip()
 
 
 # ============================================================

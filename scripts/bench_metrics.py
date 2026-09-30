@@ -2,6 +2,7 @@
 [INPUT]: 依赖 tianlong.core 的 Op / Rel，tianlong.language.gate 的 violations（FPD：与叙述闸门同一条路），
          tests/gate_fixtures.py（按文件加载：误杀语料的解码器）与 tests/data/gate_corpus.json
 [OUTPUT]: metric() / rate()（指标行与比例的写法，bench_gm 同用），TOKEN_CHARS / tokens()，Metered（包一层模型：记下每次调用的提示词字数与原始回复），
+          ending_of()（词法判结局），
           snapshot() / observe()（本引擎一回合的新字段），ledger()，name_forms() / speaker_forms() / quotes() / repeats()，seam_of()，
           b1() / e1() / names() / seam() / fpd() / r5() / f3() / tok() / end()，engine_extra() / baseline_extra()
 [POS]: scripts/bench_gm 的新指标（plan §8.3），单独成文件只为 bench_gm 不超 800 行。
@@ -86,22 +87,33 @@ class Metered:
 
 
 def ledger(session: Any) -> set[str] | None:
-    """玩家此刻的相识账本（认得名字的人）：会话运行态里的 names / acquaintance / acq（{角色: [实体]} 或直接是玩家的列表），
-    或会话的 _acq 属性；都没有即不可得（None）。"""
+    """玩家此刻的相识账本（认得名字的人）：会话运行态里的 names / acquaintance / acq（Acquaintance.to_state() 的
+    {"known": {角色: [实体]}, "early": [...]}、{角色: [实体]} 或直接是玩家的列表），或会话的 _acq 属性（有 of(角色) 就用它）；
+    都没有即不可得（None）。"""
     state = session.session_state() if callable(getattr(session, "session_state", None)) else {}
     for got in (*(state.get(k) for k in ("names", "acquaintance", "acq")), getattr(session, "_acq", None)):
+        if callable(getattr(got, "of", None)):
+            got = got.of(session.player)
         if isinstance(got, Mapping):
+            got = got["known"] if isinstance(got.get("known"), Mapping) else got
             got = got.get(session.player)
         if isinstance(got, (list, tuple, set, frozenset)):
             return {str(x) for x in got}
     return None
 
 
+def _meters(session: Any) -> dict[str, Metered]:
+    """会话里被 Metered 包着的模型：叙述（session.llm）与解释器（session.interpreter.llm，与叙述同一个时不重复）。"""
+    got = {"voice": getattr(session, "llm", None), "interp": getattr(getattr(session, "interpreter", None), "llm", None)}
+    if got["interp"] is got["voice"]:
+        del got["interp"]
+    return {k: m for k, m in got.items() if isinstance(getattr(m, "calls", None), list)}
+
+
 def snapshot(session: Any) -> dict[str, Any]:
-    """回合开始前：世界真相、玩家已认识的实体、叙述调用的水位。"""
-    calls = getattr(session.llm, "calls", None)
+    """回合开始前：世界真相、玩家已认识的实体、各个被记账的模型的调用水位。"""
     return {"head": session.authority.head(), "known": frozenset(session.beliefs(session.player).entities),
-            "mark": len(calls) if isinstance(calls, list) else None}
+            "marks": {k: len(m.calls) for k, m in _meters(session).items()}}
 
 
 def name_forms(scenario: Any) -> dict[str, str]:
@@ -129,26 +141,37 @@ def seam_of(narration: str, raw: str) -> bool | None:
     return _bare(said[-1]) not in got
 
 
-def _answered(report: Any, who: str) -> bool:
+def _answered(report: Any, who: str, forms: Mapping[str, str]) -> bool:
+    """此人的回应真的交付了：内核给了他冲着玩家的台词，且正文里有他的引语（叫法后接引号，同 B 的词法），或照录了原话的开头。
+    只出现他的名字不算——玩家自己的称呼就会带出名字。"""
     narration = report.narration or ""
     lines = getattr(getattr(report, "brief", None), "lines", None)
     if lines is None:
         return any(e.actor == who and e.op in (Op.TELL, Op.ASK) for e in report.events)
-    return any(vl.speaker == who and (vl.answering or getattr(vl, "said", False) or vl.listener_name == "你")
-               and ((vl.speaker_name or "") in narration or _bare(vl.template or "")[:6] in _bare(narration))
-               for vl in lines)
+    for vl in lines:
+        if vl.speaker != who or not (vl.answering or getattr(vl, "said", False) or vl.listener_name == "你"):
+            continue
+        head = _bare(vl.template or "")[:6]
+        spoke = quotes(narration, {**forms, **({vl.speaker_name: who} if vl.speaker_name else {})})
+        if any(w == who for w, _ in spoke) or (len(head) >= 4 and head in _bare(narration)):
+            return True
+    return False
 
 
 def observe(session: Any, report: Any, snap: Mapping[str, Any], text: str) -> dict[str, Any]:
-    """一回合的新字段：beats、idle（E1）、names 与 name_hits（NAME）、seam / patched（SEAM）、addressed / answered（R5）、tok（TOK）。"""
+    """一回合的新字段：beats、idle（E1）、names 与 name_hits（NAME）、seam / patched（SEAM）、addressed / answered（R5）、
+    tok（TOK：叙述 + 解释器的提示词）与 tok_parts（两者分开）。"""
     player, sc = session.player, session.scenario
     before, me = snap["head"], session.beliefs(session.player)
     beats = list(getattr(report, "beats", ()) or ())
     acted = any(ep.tick >= before.clock and ep.event.actor not in (None, player) for ep in me.episodes)
     known = ledger(session)
     narration = report.narration or ""
-    calls = getattr(session.llm, "calls", None)
-    mine = [c for c in calls[snap["mark"]:] if not c["structured"]] if snap.get("mark") is not None and calls else []
+    new = {k: m.calls[snap["marks"][k]:] for k, m in _meters(session).items() if k in snap.get("marks", {})}
+    mine = [c for c in new.get("voice", ()) if not c["structured"]]                  # 叙述调用（SEAM 只看它）
+    asked = [*new.get("interp", ()), *(c for c in new.get("voice", ()) if c["structured"])]   # 解释器调用
+    parts = {"narrator": tokens(sum(c["chars"] for c in mine)) if mine else 0,
+             "interp": tokens(sum(c["chars"] for c in asked)) if asked else 0}
     here = before.target(player, Rel.AT)
     addressed = next((e.intent.target for e in report.events if e.actor == player and e.op in (Op.TELL, Op.ASK)
                       and e.intent.target in sc.npcs and before.target(e.intent.target, Rel.AT) == here), None)
@@ -160,8 +183,9 @@ def observe(session: Any, report: Any, snap: Mapping[str, Any], text: str) -> di
                                                             if a not in known and f in narration and f not in text}),
             "seam": seam_of(narration, "".join(c["raw"] for c in mine)) if mine else None,
             "patched": any(getattr(v, "kind", "") == "omitted" for v in violations),
-            "addressed": addressed, "answered": None if addressed is None else _answered(report, addressed),
-            "tok": tokens(sum(c["chars"] for c in mine)) if mine else None}
+            "addressed": addressed,
+            "answered": None if addressed is None else _answered(report, addressed, speaker_forms(sc)),
+            "tok": sum(parts.values()) or None, "tok_parts": parts if any(parts.values()) else None}
 
 
 # ============================================================
@@ -281,13 +305,20 @@ def f3(narrations: Sequence[str], forms: Mapping[str, str]) -> dict[str, Any]:
                   hit / n if n else None)
 
 
+def _p50(xs: Sequence[int]) -> int:
+    return sorted(xs)[len(xs) // 2]
+
+
 def tok(turns: Sequence[Mapping], what: str) -> dict[str, Any]:
     xs = [t["tok"] for t in turns if t.get("tok")]
     if not xs:
         return metric("TOK", "每回合提示词 token", "—", "不适用（没有模型调用）", None, 0, what)
-    mid = sorted(xs)[len(xs) // 2]
+    mid = _p50(xs)
+    parts = [t["tok_parts"] for t in turns if t.get("tok") and t.get("tok_parts")]
+    split = "".join(f"；{name} 中位 {_p50([p[k] for p in parts])}" for k, name in (("narrator", "叙述"), ("interp", "解释器"))
+                    if parts)
     return metric("TOK", "每回合提示词 token", "—", f"中位 {mid} / 首 {xs[0]} → 末 {xs[-1]}（最大 {max(xs)}）", None, len(xs),
-                  what + f"；按字数 ÷{TOKEN_CHARS} 估", {"p50": mid, "first": xs[0], "last": xs[-1], "max": max(xs)})
+                  what + split + f"；按字数 ÷{TOKEN_CHARS} 估", {"p50": mid, "first": xs[0], "last": xs[-1], "max": max(xs)})
 
 
 def _ended(rec: Mapping[str, Any]) -> str:
@@ -313,7 +344,10 @@ def engine_extra(engine: Mapping[str, Any], scenario: Any) -> list[dict[str, Any
     keys = tuple(dict.fromkeys(b.key for b in getattr(scenario, "beats", ()) or ()))
     out = [b1(play, keys), e1(play), names(turns), seam(turns), fpd(), r5(turns),
            f3([t.get("narration", "") for t in play], speaker_forms(scenario)),
-           tok(play, "本引擎：叙述调用的 system + prompt"), end(engine, extras)]
+           tok(play, "本引擎：叙述与解释器调用的 system + prompt"), end(engine, extras)]
+    lex = _lexical_r5(turns, speaker_forms(scenario))
+    asked = [t for t in lex if t["addressed"]]
+    out[5]["note"] += f"；同 B 的词法口径：{rate(sum(1 for t in asked if t['answered']), len(asked))}"
     for k, v in extras.items():                       # 留守型、夜遁型：只量分布，不设门槛
         seen = b1(v.get("playthrough") or (), keys)["value"] or []
         hit, n = _e1(v.get("playthrough") or ())
@@ -332,14 +366,19 @@ def _lexical_r5(turns: Sequence[Mapping], forms: Mapping[str, str]) -> list[dict
     return out
 
 
+def ending_of(narration: str, scenario: Any) -> str | None:
+    """词法：回复里出现了哪个结局标题（去掉标点与空白再比，“第一幕终·澜沧江畔”也算）→ 结局键。"""
+    got = _bare(narration)
+    return next((e.key for e in getattr(scenario, "endings", ()) if _bare(e.title) and _bare(e.title) in got), None)
+
+
 def baseline_extra(baseline: Mapping[str, Any], scenario: Any) -> list[dict[str, Any]]:
     play = list(baseline.get("playthrough") or ())
     turns = play + [p["turn"] for p in baseline.get("probes") or ()]
     forms = speaker_forms(scenario)
-    titles = {e.title: e.key for e in getattr(scenario, "endings", ())}
-    hit = next((i for i, t in enumerate(play) if any(x in t.get("narration", "") for x in titles)), None)
+    hit = next((i for i, t in enumerate(play) if ending_of(t.get("narration", ""), scenario)), None)
     rec = {"playthrough": play[:hit + 1] if hit is not None else play,
-           "ending": next((k for x, k in titles.items() if x in play[hit]["narration"]), None) if hit is not None else None}
+           "ending": ending_of(play[hit]["narration"], scenario) if hit is not None else None}
     na = "没有内核与看点识别"
     return [metric("B1", "目击的看点", "—", "不适用", None, 0, na), metric("E1", "空转的推进回合", "—", "不适用", None, 0, na),
             metric("NAME", "越过相识账本的名字", "0", "未测量", None, 0, "没有相识账本，全凭模型自觉"),

@@ -8,7 +8,7 @@
           puppet_hits，claim_met / player_acted，timed_turn / engine_turn / play / run_engine，run_baseline / run_judges，engine_metrics / baseline_metrics，
           write_report，run / main；并再导出 bench_rival 的 world_bible / PureLLMGM / premise_prompt / pairwise_prompt / parse_verdict / pairwise_order / scripted_llms
 [POS]: scripts 的主持层评测（设计 §7 与“评测细则”，M4 起加 plan §8.3 的 B1 / E1 / NAME / SEAM / FPD / R5 / F3 / TOK / END）。不属于引擎本体：
-       只把 GameSession 当黑盒一回合一回合地跑，按 TurnReport 与世界真相计分（走到结局时连同终章一并记下、交给整局盲评）；探针文件的 variant
+       只把 GameSession 当黑盒一回合一回合地跑，按 TurnReport 与世界真相计分（走到结局时连同终章一并记下，只把收束交给整局盲评）；探针文件的 variant
        决定场景（没写的是旧版：--probes scripts/bench_probes_duanyu.json 即 run1–6 的评测），不进盲评的整局（留守型、夜遁型）只量 END / E1 / B1。
        会话新加的字段（on_text、first_text_ms、kind、ending、beats、render.violations / dropped、相识账本）一律 getattr 取、缺了就退化。
        每条探针从全新会话出发、先走 setup，异常逐条记下、绝不中断整轮。对照组没有内核可查，C2/R1 只能交给独立评审（--judge，严格 JSON）或词法启发式。
@@ -49,9 +49,11 @@ from bench_rival import (  # noqa: E402
     PREMISE_SCHEMA,
     PureLLMGM,
     ask_judge,
+    epilogue_story,
     pair_note,
     pairwise_order,
     pairwise_prompt,
+    panel_name,
     parse_verdict,
     premise_prompt,
     scripted_llms,
@@ -279,7 +281,7 @@ def _session(scenario: Scenario, voice: Any, fast: Any) -> Any:
     kw: dict[str, Any] = {"llm": Metered(voice) if voice is not None else None}      # 记下叙述调用：TOK 与 SEAM
     extra = next((n for n in ("fast_llm", "fast") if n in params), None)
     if extra and fast is not None:
-        kw[extra] = fast
+        kw[extra] = Metered(fast)                                    # 解释器调用同样记账：TOK 算两者之和
     s = GameSession(scenario, **kw)
     scale = getattr(voice, "lead_scale", None)                   # 延迟模拟缩放了时间：先声的时限同比缩放
     if scale is not None and getattr(s.narrator, "lead_after", None):
@@ -490,10 +492,10 @@ def run_judges(llm: Any, probes: Mapping[str, Any], engine: dict, baseline: dict
     if baseline is None:
         return None
     ours = [(r["text"], r["narration"]) for r in engine["playthrough"]]
-    if engine.get("epilogue"):
-        ours.append(("（落幕）", engine["epilogue"]))           # 玩家落幕时读到的终章同样交给评审
+    if story := epilogue_story(engine.get("epilogue")):     # 终章的收束交给评审；真相揭晓 / 纪事是另起的卡片，B 没有对应物
+        ours.append(("（落幕）", story))
     theirs = [(r["text"], r["narration"]) for r in baseline["playthrough"]]
-    engine_is_a = pairwise_order(seed)
+    engine_is_a = pairwise_order(seed, panel_name(world_of(probes), seed))
     note = pair_note(scenario_of(probes, seed)) if probes else ""
     verdict = ask_judge(llm, pairwise_prompt(*((ours, theirs) if engine_is_a else (theirs, ours)), note), PAIR_SCHEMA,
                         dict.fromkeys(PAIR_KEYS, "ab"))

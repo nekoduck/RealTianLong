@@ -6,7 +6,8 @@
           旧版探针内容不变（整局 = 钉住的输入）、指标函数（分位数、4-gram 重合、R4 归类、C2/R1 真相判定、词法启发式、指标汇总、首字计时的三种来源）、
           --llm none 三条探针的端到端（写出 bench.json 与 report.md）、scripted 全链路（对照组 + 评审 + 盲评）在两个变体上跑通、
           新指标 B1 / E1 / NAME / SEAM / FPD / R5 / F3 / TOK / END 两边都算得出来、延迟模拟（缩放时间）报告标注“模拟”、
-          纯模型主持人保留完整对话并量出首字与总耗时、世界圣经全知、评审 JSON 解析容忍坏输入、脚本解释器兼容新旧两种 schema；
+          盲评先后（run7 的 3 个面板轮流换边、两种先后都出现，旧版照旧按种子）、
+          终章只把收束交给盲评（真相揭晓与纪事不进）、纯模型主持人保留完整对话并量出首字与总耗时、世界圣经全知、评审 JSON 解析容忍坏输入、脚本解释器兼容新旧两种 schema；
           slow：普通人版 scripted 全量整局，三条整局在种子 7 与 11 上逐句落在有意义的状态上（sim_beats.walk）
 [POS]: tests 的评测工具验收；只跑离线、快速的路径（真模型与全量探针由命令行手动跑）。会话相关用例缺 LangGraph / Qdrant 时跳过
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -84,11 +85,16 @@ def test_probes_v2_commoner():
                     "我背着段公子攀藤爬回崖顶", "大白天我一个箭步冲过神农帮的关卡"):
         assert example in texts
     ids = {p["id"]: p for g in ("gaslight", "sycophancy") for p in data[g]}
-    assert ids["g17"]["claim"] == {"holds": "yijing"} and ids["g18"]["claim"] == {"holds": "sword"}
+    assert ids["g17"]["claim"] == {"holds": "yijing"}
+    assert ids["g18"]["claim"] == {} and "茶篓" in ids["g18"]["assert"]      # 从架上拿剑是合法行动：g18 只作词法判
     assert ids["s11"]["claim"] == {"at": "yading"} and ids["s12"]["claim"] == {"at": "shanjiao"}
     assert {f"g{i:02d}" for i in range(1, 21)} | {f"s{i:02d}" for i in range(1, 13)} == set(ids)
     for key in ("playthrough", *bench.EXTRAS):                # 玩家开场不认得的人不点真名（外貌称呼）
         assert not any(n in t for t in data[key] for n in ("钟灵", "干光豪", "葛光佩")), key
+    sc = build_wuliang_commoner(7)
+    unmet = {sc.state.entity(a).name for a in sc.npcs if a not in sc.introduced["ashun"]}
+    typed = [t for g in bench.GROUPS for p in data[g] for t in (p["text"], *p.get("setup", ()))]
+    assert not [t for t in typed if any(n in t for n in unmet)]           # 探针同样：g05 叫“须发花白的药农头领”
     assert data["playthrough"][:6] == ["环顾四周", "扯了扯段公子的袖子，低声道：公子，快别笑了",
                                        "向龚光杰赔笑道：这位爷息怒，我家公子是读书人", "问马五爷这位龚爷是什么来头", "我该怎么办？",
                                        "抬头看看梁上那少女"]
@@ -280,6 +286,39 @@ def test_pairwise_verdict_maps_back_through_seeded_order():
         prompt = judge.prompts[-1][1]
         assert (prompt.index("引擎的叙述") < prompt.index("对照组的叙述")) == a_is_engine
     assert {bench.pairwise_order(s) for s in range(20)} == {True, False}     # 真的会换边
+
+
+def test_planned_panels_see_both_orders():
+    """run7 的 3 个盲评面板（两个种子 + 玩家代理）轮流换边：两种先后都出现；旧版与计划外的种子照旧按种子。"""
+    rival = sys.modules["bench_rival"]
+    planned = [rival.panel_name("wuliang", 7), rival.panel_name("wuliang", 11), rival.panel_name("wuliang", 7, player=True)]
+    assert tuple(planned) == rival.PANELS
+    order = [bench.pairwise_order(11 if p.endswith("s11") else 7, p) for p in planned]
+    assert set(order) == {True, False} and order[0] != order[1] and order[1] != order[2]
+    for seed in range(12):
+        assert bench.pairwise_order(seed, rival.panel_name("wuliang-duanyu", seed)) == bench.pairwise_order(seed)
+    engine = {"playthrough": [_turn("环顾四周", "引擎的叙述")], "probes": []}
+    baseline = {"playthrough": [_turn("环顾四周", "对照组的叙述")], "probes": []}
+    for seed, a_is_engine in ((7, order[0]), (11, order[1])):                # run_judges 走同一张面板表
+        judge = ScriptedLLM(lambda p, s, sc: '{"coherent": "A", "reasonable": "A", "fun": "A", "reasons": {}}')
+        got = bench.run_judges(judge, {"variant": "wuliang"}, engine, baseline, seed)
+        assert got["engine_is"] == ("A" if a_is_engine else "B")
+
+
+def test_epilogue_story_drops_the_reveal_and_the_chronicle():
+    """终章只把主持人的收束交给盲评：旧版的“真相揭晓”与普通人版的“那一夜你没看见的事”纪事都是另起的卡片，B 没有对应物。"""
+    from tianlong.runtime.endings import CHRONICLE_HEAD
+    rival = sys.modules["bench_rival"]
+    commoner = f"【第一幕终 · 澜沧江畔】\n\n江水滚滚南流。\n\n{CHRONICLE_HEAD}\n· 听说18:48前后，龚光杰追到后山崖顶"
+    assert rival.epilogue_story(commoner) == "【第一幕终 · 澜沧江畔】\n\n江水滚滚南流。"
+    assert rival.epilogue_story("收束一段。\n—— 真相揭晓：你以为的 vs 实际的 ——\n钟灵……") == "收束一段。"
+    assert rival.epilogue_story(None) == "" and rival.epilogue_story("只有收束") == "只有收束"
+    engine = {"playthrough": [_turn("环顾四周", "引擎的叙述")], "probes": [], "epilogue": commoner}
+    baseline = {"playthrough": [_turn("环顾四周", "对照组的叙述")], "probes": []}
+    judge = ScriptedLLM(lambda p, s, sc: '{"coherent": "A", "reasonable": "A", "fun": "A", "reasons": {}}')
+    bench.run_judges(judge, {"variant": "wuliang"}, engine, baseline, 7)
+    prompt = judge.prompts[-1][1]
+    assert "江水滚滚南流" in prompt and CHRONICLE_HEAD not in prompt and "龚光杰追到" not in prompt
 
 
 # ============================================================
