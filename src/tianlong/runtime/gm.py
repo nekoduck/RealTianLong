@@ -7,7 +7,8 @@
          persistence 的 TurnEnvelope，scenarios 的 Scenario，runtime/continuity 的 continuity / lately，runtime/talk 的 fresh
 [OUTPUT]: 对外提供 gm_command()（元指令与“GM：”前缀）、companions()（玩家的同伴 = 自己人 + DEFEND 目标）、salient()（等待该不该被打断）、
           build_brief()（SceneBrief：要替 NPC 说出口的话——谈资只给没说过的、被问到的人附上来历——+ 前后照应 + 没人接的话 + 是否收幕）、
-          self_view() / goal_text() / aside_prompt()（场外问答只用玩家自己的认知）、gated_stream()（场外回答逐句过名字闸门、边生成边交付）、
+          self_view() / goal_text() / aside_prompt()（场外问答只用玩家自己的认知）、PLAYER_GOALS（玩家目标的口吻表：goal_text 与
+          scripts/bench_rival 的世界圣经同一口径）、gated_stream()（场外回答逐句过名字闸门、边生成边交付）、
           closing_prompt()（终章只取玩家亲历）、leaked() / leaks()（名字闸门：玩家不认识的实体不许出现在模型写的文字里，玩家亲口说出的名字除外）、
           reveal()（终章的真相揭晓表）、is_ooc() / asks_direction()（场外还是故事里的自问、问没问方向）、
           META_HELP / ASIDE_SYSTEM（场外）/ ASIDE_INNER（故事里的自问：故事口吻、不标场外）/ ASIDE_TOKENS / CLOSING_SYSTEM
@@ -65,9 +66,10 @@ _NO_SMALLTALK = frozenset({Social.CHALLENGE, Social.TAUNT, Social.INSULT, Social
 META_HELP = "可用的指令：/hint 提示、/recap 前情回顾、/beliefs 你所知道的；场外提问请以“GM：”开头。"
 _META_WORDS = {"hint": ("hint", "提示"), "recap": ("recap", "回顾", "前情"), "beliefs": ("beliefs", "认知", "所知")}
 _GM_PREFIX = re.compile(r"^\s*(?:gm|ooc)\s*[:：]\s*", re.IGNORECASE)
-_GOALS = {GoalKind.PROTECT: "护住{item}", GoalKind.ACQUIRE: "弄到{item}", GoalKind.DELIVER: "把{item}交给{recipient}",
-          GoalKind.GUARD: "守住{home}", GoalKind.HOSTILE: "对付{person}", GoalKind.ESCAPE: "设法去往{home}",
-          GoalKind.DEFEND: "护着{person}"}
+# 玩家目标的口吻（他自己的打算，不借 NPC 的行事语义）：场外问答与评测对照组的世界圣经共用这一张表，两处永不各说各话
+PLAYER_GOALS = {GoalKind.PROTECT: "护住{item}", GoalKind.ACQUIRE: "弄到{item}", GoalKind.DELIVER: "把{item}交给{recipient}",
+                GoalKind.GUARD: "守住{home}", GoalKind.HOSTILE: "对付{person}", GoalKind.ESCAPE: "设法去往{home}",
+                GoalKind.DEFEND: "护着{person}"}
 _STATUS = {"wounded": "受了伤", "poisoned": "中了毒", "subdued": "被点了穴道"}
 MAX_UNSEEN = 20      # 真相揭晓里“你没看见的事”至多列这么多条
 ASIDE_TOKENS = 200   # 场外问答只要两三句：给声音模型的输出上限
@@ -301,7 +303,7 @@ def goal_text(g: Goal, me: BeliefStore) -> str | None:
     refs = {"item": g.item, "home": g.home, "recipient": g.recipient, "person": g.person}
     if any(v is not None and not me.knows(v) for v in refs.values()):
         return None
-    return _GOALS[g.kind].format(**{k: me.sketch(v).name if v else "" for k, v in refs.items()})
+    return PLAYER_GOALS[g.kind].format(**{k: me.sketch(v).name if v else "" for k, v in refs.items()})
 
 
 def aside_prompt(question: str, view: Sequence[str], persona: str, goals: Sequence[str], guide: Sequence[str],

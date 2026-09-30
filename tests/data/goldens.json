@@ -2,72 +2,237 @@
  "warehouse": {
   "world": "43e0327d3b73a4bd600263c90c1e6f04",
   "events": "cf07965d959d27cd8901c3e39f31ee4b",
+  "percepts": "5860ce753724a2147c6e45b032d5200a",
+  "minds": {
+   "captain": "4dfd931a07351ec2d8918521ec5d06b4",
+   "guard": "6d434098f057158b6ffb3b39894b586c",
+   "player": "6a058ae4c77330554ee6478141e1a996"
+  },
+  "memories": {
+   "captain": "02ec10db390338c7f9a141c79da82bc7",
+   "guard": "af107c10a454e3796fed3e8c5580e8d5",
+   "player": "0f63240bdae0e0b2d49f2bf793672421"
+  },
   "version": 50,
-  "clock": 540
+  "clock": 540,
+  "decisions": "017a22e4b5c9249ec9e0933fee0f9ca0"
+ },
+ "warehouse/report": {
+  "world": "a239f8b386bc73ca87755873f4a45a7c",
+  "events": "500a4c5bb69954feb2091b19ec06a4ab",
+  "percepts": "27ced1847b5455de5273bd06c1838fd9",
+  "minds": {
+   "captain": "2bcd53c0f2e876cc27d97bad112e0716",
+   "guard": "9821721bba3b6c5df2505e02e012fa6a",
+   "player": "6d7caa2a4800c46026b4ddc4683858fa"
+  },
+  "memories": {
+   "captain": "0c871440856d0a591c4fdcbdd69659d6",
+   "guard": "f8a227c48384e7d464dc33159d5cbc2a",
+   "player": "ef2613c1cb9051dfd1f59ab73165dc9b"
+  },
+  "version": 30,
+  "clock": 520,
+  "decisions": "720e4cf5c4c57f79a2908213e3373c80"
  },
  "procedural/0": {
   "world": "dc02d490083baa5ee013ae6db0539516",
   "events": "e6003955540931cbd17c9635f10d2c73",
+  "percepts": "8818c9889b9c64d5842e0c91c13d862e",
+  "minds": {
+   "h0": "fdccab698cbc6c533fca751b3abd451b",
+   "h1": "82c3ec2b273b851cc26ccaa21890f2a7"
+  },
+  "memories": {
+   "h0": "61cde76e49b53619a0a85224894dcc9d",
+   "h1": "8de17c385e77823a7769eb1038c10636"
+  },
   "version": 200,
-  "clock": 680
+  "clock": 680,
+  "decisions": "11a8a04ae22a11c181b2b84f6d33b9da"
  },
  "procedural/1": {
   "world": "812baf2f14162d7d84ec853d9a1c9e63",
   "events": "95bb5215be19db0ee66413d7c510a230",
+  "percepts": "5c73bc4edcb0e5a9c89c065ac964d7fc",
+  "minds": {
+   "h0": "250d277695011723029d665d5d90082f",
+   "h1": "73b113dca8a1a3b175d7c224ecf67462"
+  },
+  "memories": {
+   "h0": "9bebc3e38d7ba2f4a87b2ecf338fd860",
+   "h1": "9d2c65c1051186e3f5c2d15d50565e46"
+  },
   "version": 200,
-  "clock": 680
+  "clock": 680,
+  "decisions": "df0a8ec788234c3da148ae19016f7761"
  },
  "procedural/2": {
   "world": "b4ead021ae84ba2371162a24b24f4eaf",
   "events": "4f19608aaa64523a02b38fb63c3af3cc",
+  "percepts": "235b80ee55d1a2853cd9e9551c19ca45",
+  "minds": {
+   "h0": "d5e94bf97daa7b3f30b5a87c723701f7",
+   "h1": "1a98aa38b6f100c79d9ff25882c595a5"
+  },
+  "memories": {
+   "h0": "0d7a6084026dc3afe101c52d1d783353",
+   "h1": "8dfad4c5be550b26b58c19f11eb7fae3"
+  },
   "version": 200,
-  "clock": 680
+  "clock": 680,
+  "decisions": "9aac4be538eb3f6d51e96d94a5eab7d7"
  },
  "procedural/3": {
   "world": "866e24b7e98a504e83a6b21f295fe1d8",
   "events": "de9cf73ad983998e6bacc8d642d9fdc7",
+  "percepts": "f8ae0641863c9f6694aaed514d4fe980",
+  "minds": {
+   "h0": "736c47ef9157a1c803834c5962499dd9",
+   "h1": "abda1af82ea1cbf38f94364666dece58"
+  },
+  "memories": {
+   "h0": "d4c05fbb777d28277c7d6beec202bcde",
+   "h1": "0dc88967ac23686858432bc036381b6a"
+  },
   "version": 200,
-  "clock": 680
+  "clock": 680,
+  "decisions": "885e481f4528df290caa3ab4135a8cd4"
  },
  "procedural/4": {
   "world": "7955fca252d5a2a340d3dd51ecfb0a68",
   "events": "bc9b89375a3affbf5fa23c25a81557f2",
+  "percepts": "16ef1916c38fb3c8deb544eeeed17d6c",
+  "minds": {
+   "h0": "86cc17213ea07e7b153274804f257a43",
+   "h1": "1d10b05edaec719d685b9e772db72a99"
+  },
+  "memories": {
+   "h0": "3a299741d504c81c8c70311358d6d01c",
+   "h1": "7be828745244d68fdb946f59f447dce9"
+  },
   "version": 200,
-  "clock": 680
+  "clock": 680,
+  "decisions": "9756d7e6a71ba038c22ee343c5f9c801"
  },
  "procedural/5": {
   "world": "3366ea154a653e2ab68591db9764b4a8",
   "events": "b2ac5d3964aa9f6c99f88a98ebe20731",
+  "percepts": "c6f2e9d378483d8c7e0396572ad30819",
+  "minds": {
+   "h0": "a585b6b8173c1fafe29772077867f736",
+   "h1": "745b293861eaa72ee8f0f958a24f7267",
+   "h2": "44a7c84efa851ab4aa3ce6400bdc0d5f"
+  },
+  "memories": {
+   "h0": "995bc224e816feb7d0a300a941ed7355",
+   "h1": "e38f2dd991f0860889423f7a0c3ab3d0",
+   "h2": "a8771860dcd6870228ed65ec6dc0fe30"
+  },
   "version": 200,
-  "clock": 680
+  "clock": 680,
+  "decisions": "affe79cde80d0e5ff0a3ea3b417f0a6a"
  },
  "procedural/6": {
   "world": "71cd812ee426ed259c84b3f2d21de660",
   "events": "838c680edc717aabc22e435d5ed9a7d0",
+  "percepts": "79b7e8775b47993a670a8f4583d7922b",
+  "minds": {
+   "h0": "f38a161a3f7e26b503b3969b44daf6fc",
+   "h1": "45e250c4e067a130b85b17027f07ccb5",
+   "h2": "d988a65fcaa0613fa60d85d60d69fdc3"
+  },
+  "memories": {
+   "h0": "f4bc4aec4e04fbbf143b9fc4ee332136",
+   "h1": "5bdb8fe0bcd01a6d33accfce1326ef38",
+   "h2": "a71464ec639f23f9c7a3bd852334dee6"
+  },
   "version": 200,
-  "clock": 680
+  "clock": 680,
+  "decisions": "f0272a3298cc8425cda85bba6f11f8d4"
  },
  "procedural/7": {
   "world": "8fe278157c0129a5ed905aa92c852f1e",
   "events": "3c40ee17a3c94f95ec52297277455b0d",
+  "percepts": "21219182d2d9c967f49f52878744ff08",
+  "minds": {
+   "h0": "224f56e0021867f79cb65b45c51e9b29",
+   "h1": "6043b9eddaa9f6f236e3da9b1e202c33",
+   "h2": "86ed9ce8bfcb17dd50a4ed875f0b3127"
+  },
+  "memories": {
+   "h0": "1c664ea5094f3ddb62143ec1f210cd03",
+   "h1": "08c4f13541f24f858e7310460af8f7a6",
+   "h2": "588db4f531de396a731966410e5608ae"
+  },
   "version": 200,
-  "clock": 680
+  "clock": 680,
+  "decisions": "3e89d9888e74cf065589cd18cf21946e"
  },
  "procedural/8": {
   "world": "690bd4e8dc531a0ced92ea8b331451ee",
   "events": "a234df0f1fb97c21f1779334119ef24b",
+  "percepts": "0e9c9d7ea8cf745fa6d3c5d77c7fc53d",
+  "minds": {
+   "h0": "25be61b2c9898eed79d50beb72c20d89",
+   "h1": "360c6ad3b26f4905f59b5d2763e3f332",
+   "h2": "84d3a5adb45e287e7f84d957a585b93a"
+  },
+  "memories": {
+   "h0": "f31967e6081d358955a5065408d1527e",
+   "h1": "67b8030c6cda01e5f6460183bdada367",
+   "h2": "a6084ecfca546d8e427889a09dc567a0"
+  },
   "version": 200,
-  "clock": 680
+  "clock": 680,
+  "decisions": "91c9554a790896e041460d1078a988df"
  },
  "procedural/9": {
   "world": "e5e246d61d7dcee5cef7568a4279982e",
   "events": "a88d59b4b7823d1d7e4c9e5ef8607789",
+  "percepts": "cf179552dff90c0ebf6ce23a075a65ce",
+  "minds": {
+   "h0": "96ea43ce48ef4ad2a734c8e615ed2f19",
+   "h1": "f2d25af9f19e76e76baa97630dca9c78",
+   "h2": "b88505e3e395597a16afdc5e8ae76ec8"
+  },
+  "memories": {
+   "h0": "204670400fa863d79a1158ec33f05bae",
+   "h1": "54325d0570a6454452790ed37b35eb98",
+   "h2": "df1e7b7fe78bd50a71af3f6c84e01d87"
+  },
   "version": 200,
-  "clock": 680
+  "clock": 680,
+  "decisions": "d262725092ef76304389fee3db7764a4"
  },
  "wuliang": {
   "world": "795ff1085486ea4085c038466f9f8177",
   "events": "fb3584737feac0763239eb02efc0adf5",
+  "percepts": "6f478f2cce29063de66c673cb5bed9cd",
+  "minds": {
+   "duanyu": "b27fbedbc483e69aaabb18c564279b7d",
+   "ganguanghao": "685198d2fb92a51ed9fa6a5d20db0a05",
+   "geguangpei": "6531612575e02adbe71c76f6f95a23d9",
+   "gongguangjie": "bce59aaa8b7d6b5782476a9197a95a25",
+   "mawude": "0cb1e79b870ea049884304c0c1ab0f06",
+   "shennong": "2b29857372011d863a1b847bde01bf98",
+   "sikongxuan": "632a5fb5c890dbbed40b48afc3a32c9a",
+   "xinshuangqing": "faf6269ae7b979b12880225a5c6b1f84",
+   "zhongling": "67cbc80be92f3334c40b40b5571385ac",
+   "zuozimu": "6bb07743219be1cc5543e12c1031baa3"
+  },
+  "memories": {
+   "duanyu": "b8f7d5c54a1a4c64586d448b4ef187c7",
+   "ganguanghao": "f9526c4fed64d2add4def302da608bb0",
+   "geguangpei": "b905c0a5a19b4ca7869ba479d06d2915",
+   "gongguangjie": "ce95b6c38d1d335e8d24d74a1a35f606",
+   "mawude": "e7bff972c2daeea6f75629920eb47c55",
+   "shennong": "6e245319f559cf1242e171a936dc950e",
+   "sikongxuan": "8044ff5006181a3ed9cac36ee9121593",
+   "xinshuangqing": "7a9877c484856eff71038dbfc206708b",
+   "zhongling": "f5924460db20a2aa9d0293e0a54c14ee",
+   "zuozimu": "8aaf5d6447beaf9c58f14090d3931247"
+  },
   "version": 94,
   "clock": 1154,
   "turns": 30,
