@@ -1,20 +1,21 @@
 """
 [INPUT]: 依赖 runtime/gm 的 reveal / closing_prompt / leaks / CLOSING_SYSTEM，language/llm 的 LLMUnavailable，scenarios 的 Scenario / Ending，
          cognition 的 BeliefStore，core 的 Rel / Op / Outcome / Event / WorldState / AddRelation / SetAttr / clock_label / true_value；
-         宿主 GameSession 的 scenario / player / llm / ending / authority / store / ref / beliefs() / _recent
+         宿主 GameSession 的 scenario / player / llm / ending / authority / store / ref / _view() / _veiled() / _acq / _recent
 [OUTPUT]: 对外提供 ended()（据世界真相：玩家身处结局地点，或时钟已到）、title_for()（结局标题加变体后缀）、chronicle()（终章纪事
           “那一夜你没看见的事”）、names_for()（纪事用的称呼）、EndingMixin（GameSession 的落幕：_ended / _reach_ending / epilogue() / _closing）
 [POS]: runtime/session 的落幕：玩家（据世界真相）身处结局地点、或时钟到了结局的时刻即落幕，之后的回合不再推进；读档时落幕与否同样由世界真相推出。
        终章 = 场景给全的结局标题（按落幕那一刻的真相加变体：身负奇功、与段公子同行、怀揣帛卷、身在何处）+ 收束（模型只取玩家亲历与最近正文、
        从不看真相，点了他不认识的名字即不用）+ 场景给了纪事角色（Scenario.chronicle）就是江湖传闻口吻的纪事，否则照旧是明确标作“真相”的揭晓。
        纪事只写真相里发生过、玩家当时不在场的事：单向门的穿越、学成、以药救人（讨价还价）、动手（灭口）与求情（饶命）、
-       撂下狠话的放弃（驱力表里 give_up 的原话）；一律用 names_for 的称呼（开场认得的叫名字，其余用外貌称呼）
+       撂下狠话的放弃（驱力表里 give_up 的原话）；一律用 names_for 的称呼（落幕时玩家叫得出名字的——相识账本——叫名字，
+       其余用外貌称呼）；收束的名字闸门同样把见过却叫不出名字的人算作不认识
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 
 from tianlong.cognition import BeliefStore
 from tianlong.core import AddRelation, Event, Op, Outcome, Pose, Rel, Social, WorldState, clock_label
@@ -53,9 +54,9 @@ def title_for(ending: Ending, head: WorldState, player: str) -> str:
     return ending.title + (" · " + "、".join(labels) if labels else "")
 
 
-def names_for(scenario: Scenario, player: str, head: WorldState) -> dict[str, str]:
-    """纪事用的称呼：开场就认得的人叫名字，其余有外貌称呼的用外貌称呼；地点物件照名字。"""
-    known = scenario.introduced.get(player, frozenset())
+def names_for(scenario: Scenario, player: str, head: WorldState, known: Collection[str] | None = None) -> dict[str, str]:
+    """纪事用的称呼：玩家叫得出名字的人（known：相识账本；缺省是开场就认得的）叫名字，其余有外貌称呼的用外貌称呼；地点物件照名字。"""
+    known = scenario.introduced.get(player, frozenset()) if known is None else known
     return {eid: (scenario.epithets[eid] if eid in scenario.epithets and eid not in known else e.name)
             for eid, e in head.entities.items()}
 
@@ -123,12 +124,12 @@ class EndingMixin:
     def epilogue(self) -> str:
         """终章：先是一段收束（有模型时据 Ending.epilogue 与玩家亲历写成、过名字闸门；否则只有标题），
         再是纪事（场景给了纪事角色）或明确标作“真相”的揭晓——都由世界状态、事件日志与玩家认知确定地生成。"""
-        me = self.beliefs(self.player)
+        me = self._view()
         st = self.authority.head()
         head = f"【{title_for(self.ending, st, self.player)}】" if self.ending else "【尚未落幕】"
         events = self.store.events(self.ref)
         if self.scenario.chronicle:
-            truth = chronicle(self.scenario, st, events, names_for(self.scenario, self.player, st))
+            truth = chronicle(self.scenario, st, events, names_for(self.scenario, self.player, st, self._acq.of(self.player)))
         else:
             truth = gm.reveal(self.scenario, st, me, events)
         return "\n\n".join(x for x in (head, self._closing(me), truth) if x)
@@ -146,4 +147,4 @@ class EndingMixin:
             text = self.llm.generate(prompt, system=system, temperature=0.7).strip()
         except LLMUnavailable:
             return ""
-        return "" if not text or gm.leaks(text, me, self.scenario) else text
+        return "" if not text or gm.leaks(text, me, self.scenario, veiled=self._veiled()) else text

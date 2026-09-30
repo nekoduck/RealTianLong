@@ -7,7 +7,8 @@
           lines()（几行模板按节目单写出）、patches()（漏讲的必讲之事写成人话补句）、prose()（模板行读起来像句子）
 [POS]: language 的节目单：叙述者（narrator）交给模型的事实清单、要说出口的话与模板回退都按它排。
        顺序：玩家这一步 → 冲着玩家的回答（回话的那人冲你说的话合成一节）→ 来到眼前的人（排在他动手之前）→ 按（施动者, 目标）
-       合并的交手（同一对的几下合成一行“钟灵向龚光杰连出两下——龚光杰中了毒，又受了伤”，动手时顺口喝的一声挂在对应的交手上）→
+       合并的交手（同一对的几下合成一行“钟灵向龚光杰连出两下——龚光杰中了毒，又受了伤”，动手时顺口喝的一声挂在对应的交手上；
+       带着录入原话的动作不是吆喝——那句话真说了，与冲着玩家的录入原话一样照台词排、模板照印）→
        离开的人（离开玩家所在地、此后玩家没挪地方、那人也没回来的必讲：人不会凭空消失）→ 景物；玩家换了地方就在“你来到……”处
        分段，原处见到的事排在前面。补句按 (措辞, salt) 派生的种子轮换说法，相同输入永远得到相同文字
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -100,7 +101,7 @@ def scene_rows(plan: RenderPlan, viewer: str, percepts: Sequence[Percept], names
     只看见在耳语、没听见内容的那一行照旧留着。"""
     pending: dict[str, list[int]] = {}
     for k, vl in enumerate(brief.lines):
-        if not vl.act:
+        if not _shout(vl):
             pending.setdefault(vl.speaker, []).append(k)
     spoken: dict[str, tuple[str, str | None]] = {}
     facts: dict[str, Percept] = {}
@@ -127,7 +128,12 @@ def scene_rows(plan: RenderPlan, viewer: str, percepts: Sequence[Percept], names
         else:
             rows.append(Row(text))
     left = {k for ks in pending.values() for k in ks}
-    return rows + [_voiced(vl, salt) for k, vl in enumerate(brief.lines) if k in left and not vl.act]
+    return rows + [_voiced(vl, salt) for k, vl in enumerate(brief.lines) if k in left and not _shout(vl)]
+
+
+def _shout(vl: VoiceLine) -> bool:
+    """动手时顺口喝的一声（可说可不说、没有模板）；带着录入原话的动作不算——那句话真说了，照录、模板照印。"""
+    return bool(vl.act) and not vl.said
 
 
 def _voiced(vl: VoiceLine, salt: str) -> Row:
@@ -205,7 +211,7 @@ def compose(rows: Sequence[Row], brief: SceneBrief) -> tuple[Section, ...]:
     """本回合要讲的事排成节目单：玩家这一步 → 冲着玩家的回答（回话那人冲你说的话合成一节）→ 来到眼前的人 →
     按（施动者, 目标）合并的交手（动手时顺口喝的一声挂在对应的交手上）→ 离开的人 → 景物；同一节里按发生先后。
     玩家换了地方，就在“你来到……”处分段：在原处见到的事排在前面，免得读来像发生在新地方；段与段之间按先后。"""
-    answering = {r.pair for r in rows if r.voice is not None and r.voice.answering and r.pair[1] == "你"}
+    answering = {r.pair for r in rows if r.voice is not None and (r.voice.answering or r.voice.said) and r.pair[1] == "你"}
     groups: dict[tuple[int, str, object], list[Row]] = {}
     seg, seen = 0, set()
     for r in rows:
@@ -215,7 +221,7 @@ def compose(rows: Sequence[Row], brief: SceneBrief) -> tuple[Section, ...]:
         key = (seg, kind, None) if kind in (SELF, SCENE) else (seg, kind, r.pair if r.pair[0] else r.text)
         groups.setdefault(key, []).append(r)
         seen.update(x for x in r.pair if x)
-    shouts = [vl for vl in brief.lines if vl.act]
+    shouts = [vl for vl in brief.lines if _shout(vl)]
     out: list[Section] = []
     for (_, kind, key), group in sorted(groups.items(), key=lambda g: (g[0][0], _ORDER.index(g[0][1]))):
         pair = key if isinstance(key, tuple) else ("", "")

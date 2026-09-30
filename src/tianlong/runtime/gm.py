@@ -4,13 +4,16 @@
          cognition 的 BeliefStore / believed_place，kernel/perception 的 sketches_for，language/parser 的 MoveKind / Parsed，
          language/llm 的 LLMUnavailable，language/render 的 sentence_ends，
          language/scene 的 SceneBrief / VoiceLine，language/templates 的 SOCIAL_VERBS / render_event / render_experience / render_fact，
-         persistence 的 TurnEnvelope，scenarios 的 Scenario，runtime/continuity 的 continuity / lately，runtime/talk 的 fresh
+         language/quotes 的 introduces（自报姓名），persistence 的 TurnEnvelope，scenarios 的 Scenario，
+         runtime/continuity 的 continuity / lately，runtime/talk 的 fresh
 [OUTPUT]: 对外提供 gm_command()（元指令与“GM：”前缀）、companions()（玩家的同伴 = 自己人 + DEFEND 目标）、salient()（等待该不该被打断）、
-          build_brief()（SceneBrief：要替 NPC 说出口的话——谈资只给没说过的、被问到的人附上来历——+ 前后照应 + 没人接的话 + 是否收幕
+          build_brief()（SceneBrief：要替 NPC 说出口的话——谈资只给没说过的、被问到的人附上来历；任何操作上的驱力原话标 said 照录、
+          可点名的名字经会话交来的相识账本过滤、没被引介的人初次冲玩家开口可自报姓名——+ 前后照应 + 没人接的话 + 是否收幕
           + 本回合开口者最近说过的原话 said_before + 本回合动过手脚的人 astir）、
           self_view() / goal_text() / aside_prompt()（场外问答只用玩家自己的认知）、PLAYER_GOALS（玩家目标的口吻表：goal_text 与
           scripts/bench_rival 的世界圣经同一口径）、gated_stream()（场外回答逐句过名字闸门、边生成边交付）、
-          closing_prompt()（终章只取玩家亲历）、leaked() / leaks()（名字闸门：玩家不认识的实体不许出现在模型写的文字里，玩家亲口说出的名字除外）、
+          closing_prompt()（终章只取玩家亲历）、leaked() / leaks()（名字闸门：玩家不认识的实体——含见过却叫不出名字的人 veiled——
+          不许出现在模型写的文字里，玩家亲口说出的名字除外）、
           reveal()（终章的真相揭晓表）、is_ooc() / asks_direction()（场外还是故事里的自问、问没问方向）、
           META_HELP / ASIDE_SYSTEM（场外）/ ASIDE_INNER（故事里的自问：故事口吻、不标场外）/ ASIDE_TOKENS / CLOSING_SYSTEM
 [POS]: runtime 的主持层纯函数：会话（session）的回合循环调用它们，它们只读传进来的认知、已落库的请求进度与事件日志，从不写任何东西
@@ -51,6 +54,7 @@ from tianlong.core.profiles import Goal, GoalKind, Profile
 from tianlong.kernel.perception import sketches_for
 from tianlong.language.llm import LLMUnavailable
 from tianlong.language.parser import MoveKind, Parsed
+from tianlong.language.quotes import introduces
 from tianlong.language.render import sentence_ends
 from tianlong.language.scene import SceneBrief, VoiceLine
 from tianlong.language.templates import SOCIAL_VERBS, render_event, render_experience, render_fact
@@ -167,7 +171,9 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
                 recent: Sequence[str], before: BeliefStore | None = None, closing: bool = False,
                 told: Mapping[str, Collection[int]] | None = None,
                 memories_of: Callable[[str], Sequence[MemoryRecord]] | None = None,
-                hooks: Sequence[str] = (), said: Mapping[str, Sequence[str]] | None = None) -> SceneBrief:
+                hooks: Sequence[str] = (), said: Mapping[str, Sequence[str]] | None = None,
+                nameable: Callable[[str, BeliefStore], frozenset[str]] | None = None,
+                veiled: Mapping[str, Sequence[str]] | None = None) -> SceneBrief:
     """要替 NPC 说出口的话（本回合玩家听见的每一句 NPC 言语；NPC 的带字姿态不算台词——看得见的那一行已带着它的字）、最近几段正文、玩家原话，
     以及前后照应（continuity：玩家自己的身体状况、本回合的意外与变化、身在何处身边有谁；出人意料地出现的人带上他近来的经历）。
     耳语（只看见在交谈、没听见内容）不算：玩家没听见的话，叙述者也不该替它编出来。
@@ -177,6 +183,10 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
     （早先是谁制住了谁、他挨过的那一下，短期经历里早已滚掉）；hooks 是行动建议，只在玩家干等、身边没人说话时交给叙述者；
     said 是台词账本（NPC ID → 最近说过的原话）：本回合开口的人那几句放进 said_before，别让他把同一句话再说一遍；
     astir 记下玩家亲眼看见（或自己）本回合动过手脚的人——成败不论，因被制而落空的不算——审计不拿“被制”管他们的动作。
+    话即事实：任何操作上带着录入原话的 NPC 事件（驱力台词：挂在走动、出手、施用、递物上的，与说话时说出口的驱力台词）都做成
+    said=True 的台词、act 是说这话时的动作（带字的姿态照旧只留看得见的那一行）；模板措辞的说话照旧可以改写。
+    nameable(说话者, 他的认知) 是他台词里可点名的名字（相识账本：他认识的人），veiled 是玩家还不认识的人 → 他们的本名与带名的别称：
+    这些名字不进任何人的可点名（叙述里出现即违规），只有那人初次冲玩家开口时可以自报（intro）；缺省时照旧——认识即可点名。
     玩家问到的人（原话里点了名、说话者认识的），附上说话者所知的公开来历；玩家冲着谁说了话、他本回合却没接话，记在 unanswered；
     普通等待被身边的事打断，前后照应里添一句“你本想再等下去”。"""
     player = me.owner
@@ -203,22 +213,24 @@ def build_brief(env: TurnEnvelope, me: BeliefStore, scenario: Scenario, beliefs_
             if after:
                 posed.add(ev.actor)
             continue
-        if ev.kind in TALK and p.modality == Modality.SPEECH:
+        # 说话听见了；走动、出手、施用、递物上的原话看见了（话即事实：驱力台词随意图落库）
+        if (ev.kind in TALK and p.modality == Modality.SPEECH) or (ev.kind not in TALK and ev.utterance
+                                                                   and p.modality == Modality.SIGHT):
             answer = cue if after else None
             mind = beliefs_of(ev.actor)
             lines.append(_voice(ev, me, scenario, mind, answer,
                                 lately(mind, ev.actor, p.tick, recall(ev.actor)) if ev.actor in ctx.newcomers else "",
-                                (told or {}).get(ev.actor, ())))
+                                (told or {}).get(ev.actor, ()), nameable, veiled or {}))
     # 动手时顺口喝的一声：本回合当面动了手、却没开口的 NPC（左子穆一掌拍向钟灵），给他一副嗓子——可说可不说，只说这一下的事
     talking = {vl.speaker for vl in lines}
     for p in env.percepts:
         ev = p.event
-        if (len([vl for vl in lines if vl.act]) < MAX_BARKS and ev is not None and p.modality == Modality.SIGHT
+        if (len([vl for vl in lines if vl.act and not vl.said]) < MAX_BARKS and ev is not None and p.modality == Modality.SIGHT
                 and ev.kind == Op.ATTACK.value and ev.actor in scenario.profiles and ev.actor != player
                 and ev.actor not in talking and ev.target):
             talking.add(ev.actor)
             base = _voice(replace(ev, kind=Op.TELL.value, social=None, utterance=None, topic=None), me, scenario,
-                          beliefs_of(ev.actor), None)
+                          beliefs_of(ev.actor), None, nameable=nameable, veiled=veiled or {})
             target = "你" if ev.target == player else (me.sketch(ev.target).name if me.sketch(ev.target) else "对手")
             lines.append(replace(base, knows="", act=f"向{target}出手"))
     asked = (acted.event.target if acted is not None and acted.event.kind in TALK
@@ -262,35 +274,74 @@ def _cue(ev: PerceivedEvent, me: BeliefStore) -> str | None:
     return None
 
 
-def _about(answering: str | None, who: str, mind: BeliefStore, scenario: Scenario) -> str:
-    """玩家这句话里问到的人（名或别称；说话者自己除外），说话者认识的，附上他们的公开来历。"""
+def _about(answering: str | None, who: str, mind: BeliefStore, scenario: Scenario,
+           may: Collection[str] | None = None) -> tuple[str, tuple[str, ...]]:
+    """玩家这句话里问到的人（名或别称；说话者自己除外），说话者认识的（may：他叫得出名字的），附上他们的公开来历。
+    返回 (来历, 说到的人)。"""
     if not answering:
-        return ""
-    rows = []
+        return "", ()
+    rows, ids = [], []
     for pid, prof in sorted(scenario.profiles.items()):
         sk = mind.sketch(pid)
         forms = (sk.name, *scenario.aliases.get(pid, ())) if sk is not None else ()
-        if pid != who and prof.intro and any(f and f in answering for f in forms):
+        if (pid != who and prof.intro and any(f and f in answering for f in forms)
+                and (may is None or sk.name in may)):
             rows.append(f"{sk.name}：{prof.intro}")
-    return "；".join(rows)
+            ids.append(pid)
+    return "；".join(rows), tuple(ids)
+
+
+def _lines_of(scenario: Scenario, who: str) -> frozenset[str]:
+    """他的驱力台词（line / lines）：说话时说出口的若是其中一句，就是录入的原话，不是模板措辞。"""
+    return frozenset(x for d in scenario.drives.get(who, ()) for x in (d.line, *d.lines) if x)
+
+
+def _deed(ev: PerceivedEvent, me: BeliefStore) -> str:
+    """说这句原话时的动作（玩家视角的称呼）：“向龚光杰出手”“往后院去”“对龚光杰用了瓷瓶”。"""
+    def n(eid: str | None) -> str:
+        return "你" if eid == me.owner else me.sketch(eid).name if eid and me.sketch(eid) else ""
+    if ev.kind == Op.MOVE.value:
+        return "走了过来" if ev.target == believed_place(me, me.owner) else f"往{n(ev.target)}去" if n(ev.target) else "走开"
+    if ev.kind == Op.ATTACK.value:
+        return f"向{n(ev.target)}出手"
+    if ev.kind == Op.USE.value:
+        return f"对{n(ev.target)}用了{n(ev.obj)}" if n(ev.target) and n(ev.obj) else ""
+    if ev.kind == Op.GIVE.value:
+        return f"把{n(ev.obj)}递给{n(ev.target)}" if n(ev.target) and n(ev.obj) else ""
+    return ""
 
 
 def _voice(ev: PerceivedEvent, me: BeliefStore, scenario: Scenario, mind: BeliefStore,
-           answering: str | None, lately_text: str = "", told: Collection[int] = ()) -> VoiceLine:
-    """一句 NPC 言语：结构取自玩家的感知，说法与可点名的名字取自说话者自己的认知，腔调与谈资取自角色设定
-    （谈资只给还没说过的），被问到的人附上说话者所知的来历。"""
+           answering: str | None, lately_text: str = "", told: Collection[int] = (),
+           nameable: Callable[[str, BeliefStore], frozenset[str]] | None = None,
+           veiled: Mapping[str, Sequence[str]] | None = None) -> VoiceLine:
+    """一句 NPC 言语：结构取自玩家的感知，说法与可点名的名字取自说话者自己的认知（经相识账本过滤），腔调与谈资取自角色设定
+    （谈资只给还没说过的），被问到的人附上说话者所知的来历。录入的原话（驱力台词、非说话操作上的原话）标 said：照录。"""
     who = str(ev.actor)
     prof = scenario.profiles[who]
+    veiled = veiled or {}
     listener = ("你" if ev.target == me.owner
                 else me.sketch(ev.target).name if ev.target and me.sketch(ev.target) else None)
     claim = render_fact(ev.topic, mind.entities, who) if ev.topic is not None else None
-    may = {sk.name for sk in mind.entities.values()}
-    may |= {a for eid in mind.entities for a in scenario.aliases.get(eid, ())}
+    if nameable is not None:
+        may = set(nameable(who, mind))
+    else:
+        may = {sk.name for sk in mind.entities.values()}
+        may |= {a for eid in mind.entities for a in scenario.aliases.get(eid, ())}
+    about, asked = _about(answering, who, mind, scenario, may if nameable is not None else None)
+    may -= {n for eid, forms in veiled.items() if eid not in asked for n in forms}    # 玩家还不认识的人：本名不许出口
+    said = bool(ev.utterance) and (ev.kind not in TALK or ev.utterance in _lines_of(scenario, who))
+    intro = ""
+    if (who in veiled and not said and ev.target == me.owner and (answering or ev.social == Social.GREET)
+            and not introduces(ev.utterance or "", veiled[who])):
+        intro = scenario.state.entity(who).name                  # 初次冲玩家开口：可以自报姓名
+        may |= set(veiled[who])
     sk = me.sketch(who)
     return VoiceLine(who, sk.name if sk else scenario.state.entity(who).name, listener, ev.kind, ev.social, claim,
-                     ev.utterance, prof.voice, "" if ev.social in _NO_SMALLTALK else fresh(prof.knows, told),
-                     frozenset(may), answering, lately_text,
-                     _about(answering, who, mind, scenario))
+                     ev.utterance, prof.voice,
+                     "" if said or ev.social in _NO_SMALLTALK else fresh(prof.knows, told),
+                     frozenset(may), answering, lately_text, about,
+                     act="" if ev.kind in TALK else _deed(ev, me), said=said, intro=intro)
 
 
 # ============================================================
@@ -398,23 +449,28 @@ def closing_prompt(tone: str, lived: Sequence[str], recent: Sequence[str]) -> st
     return "\n\n".join(parts)
 
 
-def leaked(text: str, me: BeliefStore, scenario: Scenario, said: str = "") -> list[str]:
+def leaked(text: str, me: BeliefStore, scenario: Scenario, said: str = "",
+           veiled: Mapping[str, Sequence[str]] | None = None) -> list[str]:
     """名字闸门：模型写出的玩家不认识的实体名（名或两字以上的别称）。先抹掉玩家认识的名字，免得被子串误伤；
-    said 是玩家自己的原话，他亲口说出的名字（只是那几个字，不连带同一实体的别的称呼）照样抹掉——复述它不算泄露。"""
+    said 是玩家自己的原话，他亲口说出的名字（只是那几个字，不连带同一实体的别的称呼）照样抹掉——复述它不算泄露。
+    veiled 是玩家见过、却还叫不出名字的人 → 本名与带名的别称（相识账本）：这几个名字同样算不认识。"""
     state = scenario.state
+    veiled = veiled or {}
 
     def names(eid: str) -> list[str]:
         return [state.entity(eid).name, *(a for a in scenario.aliases.get(eid, ()) if len(a) >= 2)]
 
-    known = {n for eid in me.entities if state.has_entity(eid) for n in names(eid)}
+    hidden = {n for forms in veiled.values() for n in forms}
+    known = {n for eid in me.entities if state.has_entity(eid) for n in names(eid)} - hidden
     known |= {n for eid in state.entities for n in names(eid) if said and n in said}
     for n in sorted(known, key=len, reverse=True):
         text = text.replace(n, "")
-    return [n for eid in state.entities if eid not in me.entities for n in names(eid) if n in text]
+    return [n for eid in state.entities if eid not in me.entities or eid in veiled for n in names(eid) if n in text]
 
 
-def leaks(text: str, me: BeliefStore, scenario: Scenario, said: str = "") -> bool:
-    return bool(leaked(text, me, scenario, said))
+def leaks(text: str, me: BeliefStore, scenario: Scenario, said: str = "",
+          veiled: Mapping[str, Sequence[str]] | None = None) -> bool:
+    return bool(leaked(text, me, scenario, said, veiled))
 
 
 # ============================================================

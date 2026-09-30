@@ -6,10 +6,11 @@
           grams()（去掉标点空白后的 n 字片段：复述、谈资说过没有、台词重复都用它）、SAID_SHOWN / REPEAT
 [POS]: language/narrator 的措辞层：主持人之声交给模型的全部文字——系统提示（第二人称、80~250 字、台词归属、只许点名可点名的、
        不替玩家开口、不写钟点、停在钩子上）与用户提示（最近三段正文每段末尾约 300 字且钟点换成时辰、玩家原话、事实清单、
-       身体状况与身边人的伤、天色、干等时的钩子、意料之外、没人接的话、要说出口的话（按叙述者给的顺序；腔调/谈资/来历/近来经历/回应/可点名）、
+       身体状况与身边人的伤、天色、干等时的钩子、意料之外、没人接的话、照录的原话（VoiceLine.said：逐字照录、可截取连续一段、
+       只添神态动作；没有时提示词逐字不变）、要说出口的话（按叙述者给的顺序；腔调/谈资/来历/近来经历/回应/初次见面可自报姓名/可点名）、
        本回合开口的人最近说过的原话（至多 SAID_SHOWN 句，与这回合要说的三字片段重合 ≥REPEAT 的加注“换个说法”）、
        初见外观、眼下处境、收幕、已写好的开头），以及没有模型时台词的模板措辞。提示词只是请求，闸门在 narrator 里验收；
-       模型只见时辰文字，不见钟点数字（钟点的样子与闸门同一份 CLOCK_ANY）
+       模型只见时辰文字，不见钟点数字（钟点的样子与闸门同一份 CLOCK_ANY）；没有模型时录入原话的模板照印原话（走动、出手上的原话是“某某道：”）
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -81,6 +82,7 @@ SOCIAL_PHRASES: dict[Social, tuple[str, ...]] = {
     Social.SUBMIT: ("向{to}低头服软", "朝{to}连连作揖"),
 }
 _OP_PHRASES: dict[str, tuple[str, ...]] = {Op.TELL.value: ("对{to}说", "对{to}道"), Op.ASK.value: ("问{to}", "向{to}问道")}
+_SAID_PHRASES = ("道", "开口道")      # 走动、出手时说出口的原话（驱力台词）：动作在事实行里，这里只接原话
 
 # 钟点：提示词里换成时辰文字，正文里出现即丢句（“第1日”“19:00”“19点20分”“晚上七点二十分”；“一点半点”不算）
 _CLOCK = re.compile(r"第\s*(\d+)\s*[日天]\s*(\d{1,2})\s*[:：]\s*(\d{2})")
@@ -132,7 +134,8 @@ def render_voice(line: VoiceLine, salt: str = "") -> str:
     """“龚光杰冷笑着向你叫阵：“你笑什么？””；没有原话也没有说法的闲话只写言语行为（“钟灵笑嘻嘻地跟你打招呼。”）。
     salt 让同一句话在不同的上下文里换个说法（会话用上一回合的正文），相同输入永远得到相同文字。"""
     words = line.template or line.claim
-    options = (SOCIAL_PHRASES.get(line.social) if line.social else None) or _OP_PHRASES.get(line.op, _OP_PHRASES["tell"])
+    options = (SOCIAL_PHRASES.get(line.social) if line.social else None) or _OP_PHRASES.get(
+        line.op, _SAID_PHRASES if line.said else _OP_PHRASES["tell"])
     pick = derive_seed("voice", line.speaker, line.social.value if line.social else "", words, salt) % len(options)
     phrase = options[pick].format(to=line.listener_name or "众人")
     return f"{line.speaker_name}{phrase}：“{words}”" if words else f"{line.speaker_name}{phrase}。"
@@ -184,8 +187,14 @@ def scene_prompt(brief: SceneBrief, command: str, when: Sequence[str], facts: Se
         def fits(n: str) -> bool:
             return n in speakable or n in plan.source or n not in universe or n in lines_text
         lines_text = "\n".join(x for vl in brief.lines for x in (vl.knows, vl.lately, vl.about) if x)
-        parts.append("要说出口的话（按这个顺序，逐句写成对白）：\n"
-                     + "\n".join(_describe(i, vl, fits) for i, vl in enumerate(brief.lines, 1)))
+        said = [vl for vl in brief.lines if vl.said]          # 录入的原话：已经说出口了，照录（旧版没有，提示词逐字不变）
+        if said:
+            parts.append("照录的原话（这些话已经说出口、在场的人都听见了：写成对白时逐字照录，可截取连续的一段，"
+                         "只添神态动作，不改字、不添字）：\n" + "\n".join(_verbatim(i, vl) for i, vl in enumerate(said, 1)))
+        told = [vl for vl in brief.lines if not vl.said]
+        if told:
+            parts.append("要说出口的话（按这个顺序，逐句写成对白）：\n"
+                         + "\n".join(_describe(i, vl, fits) for i, vl in enumerate(told, 1)))
     parts += _said_before(brief)
     if looks:
         parts.append("玩家初次看清的人与物（仅作外观描写的依据）：\n" + "\n".join(looks))
@@ -198,6 +207,16 @@ def scene_prompt(brief: SceneBrief, command: str, when: Sequence[str], facts: Se
         parts.append(f"开头一句已经写好，玩家已经看到了：{lead}\n"
                      "从下一句接着写：不要复述这一句，也不要再交代玩家这一步做成没有，直接写旁人的反应、言语与周遭。")
     return "\n\n".join(parts)
+
+
+def _verbatim(i: int, vl: VoiceLine) -> str:
+    """一句录入的原话：谁、边做什么边对谁说、原话本身；腔调只管神态，回应的由头照给。"""
+    rows = [f"{i}. {vl.speaker_name}" + (f"（{vl.act}）" if vl.act else "") + f"对{vl.listener_name or '众人'}：“{vl.template}”"]
+    if vl.voice:
+        rows.append(f"   腔调（只用来写神态动作）：{vl.voice}")
+    if vl.answering:
+        rows.append(f"   回应的是：“{vl.answering}”")
+    return "\n".join(rows)
 
 
 def _describe(i: int, vl: VoiceLine, fits: Callable[[str], bool]) -> str:
@@ -229,6 +248,8 @@ def _describe(i: int, vl: VoiceLine, fits: Callable[[str], bool]) -> str:
         rows.append(f"   回应的是：“{vl.answering}”")
     else:
         rows.append("   （不是在回应玩家的某句话：不要写成是在接玩家的话头）")
+    if vl.intro:
+        rows.append(f"   初次见面：玩家还不知道他叫什么，他可以自报姓名（他叫{vl.intro}）")
     rows.append("   台词里可点名：" + ("、".join(names) if names else "（除说话对象与玩家外，谁也不提）"))
     return "\n".join(rows)
 

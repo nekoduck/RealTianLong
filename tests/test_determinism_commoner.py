@@ -1,7 +1,7 @@
 """
 [INPUT]: 依赖 runtime/session 的 GameSession（模板模式），persistence 的 InMemoryWorldStore，scenarios 的 build_wuliang_commoner，
          core 的 at，tests/test_resume 的 _fail_once（故障注入），tests/test_commoner 的 _session / stage
-[OUTPUT]: 普通人版的确定性验收：同样的种子与输入，两次会话的世界指纹、事件日志、驱力标记与会话运行态逐项相同；
+[OUTPUT]: 普通人版的确定性验收：同样的种子与输入，两次会话的世界指纹、事件日志、驱力标记、相识账本与会话运行态逐项相同；
           后台预算（pipeline）开或关逐项相同；“等到天亮”这种长等待中途崩溃，新进程续跑与连续运行逐项相同（只走剩下的 tick）
 [POS]: tests 的确定性层：驱力、看点账本（staged）都在 annotate 的副本上推进、与世界同一事务提交——相同存档 + 相同意图 → 相同指纹
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
@@ -37,6 +37,8 @@ def test_same_seed_same_inputs_same_world_and_marks():
     first, second = _play(11, True), _play(11, True)
     assert first == second
     assert first[2]["drives"], "这几回合里确有驱力兑现：标记随运行态落库"
+    assert first[2]["names"] == second[2]["names"] and "zhongling" not in first[2]["names"]["known"]["ashun"], \
+        "相识账本随运行态落库、两次相同（没人道出钟灵的名字）"
 
 
 def test_pipeline_on_or_off_is_identical():

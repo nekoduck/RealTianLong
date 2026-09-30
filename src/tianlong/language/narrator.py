@@ -42,6 +42,8 @@
        玩家的姿态不是必讲之事；动手时顺口喝的一声（VoiceLine.act）可写可不写、没有模板；起因句被丢，紧跟着的台词余波
        （“她说完……”，只跟被丢的台词）与反应句（“钟灵的笑声一下子断了”）一并略过（_REACTION）
        先声之后，别的必讲之事讲到没有只看模型自己交付的正文；有台词时引语里的名字与状态词交给台词闸门按说话者查。
+       narrate_scene/narrate_rendered/narrate 可另收这一回合的闸门别称 aliases（会话按相识账本给：玩家还叫不出名字的人，
+       本名与带名的别称只用于拒绝），不给就用场景的那一份；录入原话的动作台词（said）漏写照补、不当吆喝
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -174,7 +176,7 @@ def _missing(rows: Sequence[Row], text: str, plan: RenderPlan, brief: SceneBrief
     for r in rows:
         if r.voice is not None:
             vl = r.voice                    # 没有原话、没有说法、也不是回应玩家的闲话：漏写了就算了，不补一句空洞的“某某打趣你”
-            ok = _spoken(r, text, said) or vl.act or not (vl.template or vl.claim or vl.answering)
+            ok = _spoken(r, text, said) or (vl.act and not vl.said) or not (vl.template or vl.claim or vl.answering)
         elif r.must or (strict and r.keys):
             ok = (_named(text, r.keys) if r.keys else dropped == 0) or _echoes(r.said, text)
         else:
@@ -372,33 +374,37 @@ class Narrator:
         self.secrets = tuple(secrets)
 
     def narrate(self, viewer: str, percepts: Sequence[Percept], names: Names, show_scene: bool = False,
-                fresh: Sequence[str] = (), command: str = "", lapse: str = "", known: Iterable[str] = ()) -> str:
-        return self.narrate_rendered(viewer, percepts, names, show_scene, fresh, command, lapse, known).text
+                fresh: Sequence[str] = (), command: str = "", lapse: str = "", known: Iterable[str] = (),
+                aliases: Mapping[str, Sequence[str]] | None = None) -> str:
+        return self.narrate_rendered(viewer, percepts, names, show_scene, fresh, command, lapse, known, aliases).text
 
     def narrate_rendered(self, viewer: str, percepts: Sequence[Percept], names: Names, show_scene: bool = False,
                          fresh: Sequence[str] = (), command: str = "", lapse: str = "",
-                         known: Iterable[str] = ()) -> Rendered:
+                         known: Iterable[str] = (), aliases: Mapping[str, Sequence[str]] | None = None) -> Rendered:
         """没有要替 NPC 说的话、也没有最近正文时的叙述：以空 SceneBrief 委托 narrate_scene()。"""
         return self.narrate_scene(viewer, percepts, names, brief=SceneBrief(), show_scene=show_scene, fresh=fresh,
-                                  command=command, lapse=lapse, known=known)
+                                  command=command, lapse=lapse, known=known, aliases=aliases)
 
     def narrate_scene(self, viewer: str, percepts: Sequence[Percept], names: Names, *, brief: SceneBrief,
                       show_scene: bool = False, fresh: Sequence[str] = (), command: str = "", lapse: str = "",
                       known: Iterable[str] = (), on_text: TextSink | None = None,
-                      familiar: Iterable[str] = (), since: str = "", deadline: float | None = None) -> Rendered:
+                      familiar: Iterable[str] = (), since: str = "", deadline: float | None = None,
+                      aliases: Mapping[str, Sequence[str]] | None = None) -> Rendered:
         """familiar 是玩家此前已知下落的东西（再翻出来不算“发现”）；command 是玩家原话（让“跳下断崖”读起来像跳，成败仍以清单为准）；lapse 是一段等待之后的时辰，排在事实之前；
         known 是闸门用来拒绝的名字全集（玩家认识的 + 场景全部实体）；on_text 收到每一段交付的文字（通过闸门即交付）；
         since 是这段等待开始时的时辰（还在同一个时辰里就说过了多久，不说“到了某时”）；
         deadline 是迟到先声的时限（time.monotonic() 口径的绝对时刻，会话按回车时刻 + lead_after 算）：
-        给出时先声只等剩下的时间（可能已经是 0），不给就从这里起等 lead_after 秒。"""
+        给出时先声只等剩下的时间（可能已经是 0），不给就从这里起等 lead_after 秒。
+        aliases 是这一回合交给闸门的别称（会话按相识账本给：玩家还叫不出名字的人，名字只用于拒绝）；None 用场景的那一份。"""
         known, familiar = frozenset(known), frozenset(familiar)
+        aliases = self.aliases if aliases is None else aliases
         looks = [self.lore[k] for k in fresh if k in self.lore]
         passed = [f"（不觉已是{lapse}）"] if lapse else []
-        forms = {sk.name: tuple(self.aliases.get(eid, ())) for eid, sk in names.items()}
-        plan = _with_lines(build_plan(viewer, percepts, names, show_scene, looks, "".join(passed), self.aliases,
+        forms = {sk.name: tuple(aliases.get(eid, ())) for eid, sk in names.items()}
+        plan = _with_lines(build_plan(viewer, percepts, names, show_scene, looks, "".join(passed), aliases,
                                       self.secrets, familiar, self.lore), brief, forms)
         salt = brief.recent[-1] if brief.recent else ""
-        sheet = compose(scene_rows(plan, viewer, percepts, names, brief, salt, self.aliases, familiar), brief)
+        sheet = compose(scene_rows(plan, viewer, percepts, names, brief, salt, aliases, familiar), brief)
         rows = [r for s in sheet for r in s.rows]           # 节目单的先后：模板回退、补句与提示词里的事实清单都按它排
         scene = [x for s in sheet for x in s.lines]
         out = _Delivery(on_text)

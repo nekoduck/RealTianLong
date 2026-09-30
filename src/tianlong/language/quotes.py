@@ -4,10 +4,13 @@
          PRONOUNS / POST_WINDOW / QUOTE_OPEN），language/scene 的 SceneBrief / VoiceLine
 [OUTPUT]: 对外提供 check_quotes()（台词闸门：引语归属、替玩家开口、NPC 越界点名、凭空多出的说话者）、voiced()（正文里确有归属引语的说话者，
           供叙述者查台词是否讲到）、said_by()（正文里确凿归到本回合有台词的人名下、且本名就在这段引语引子里的原话，供会话记台词账本）、unspoken()（不是话的引语的起点，交给叙述闸门照叙述查）、
-          台词词表 OBJECT_MARKERS / SUBJECT_LEADS / PERCEPTION / PLAYER_MIND / VOICED / SEQUENCE / PRETEND / DOUBTED / SOUNDS
+          introduces()（一句话里说话者自报了姓名：我叫/在下/本姑娘 + 名或姓，相识账本与主持层共用）、
+          台词词表 OBJECT_MARKERS / SUBJECT_LEADS / PERCEPTION / PLAYER_MIND / VOICED / SEQUENCE / PRETEND / DOUBTED / SOUNDS / SELF_INTRO
 [POS]: language 的台词闸门，与 render.check()、deeds.check_deeds() 并用。每段引语（含无引号的“某某道：……”与“某某说……”式转述）
        归到说话者：引子小句的主语、句首引语之后的“某某喝道”、上一段引语的说话者、上一句的主语（句首引语紧跟在谁的动作之后，
-       读者就听成是谁说的——这也算确凿）；归到“你”名下的只能是玩家本回合的原话，NPC 只许点名自己认识的名字、只许说出计划里有的状态。
+       读者就听成是谁说的——这也算确凿）；归到“你”名下的只能是玩家本回合的原话，NPC 只许点名自己认识的名字、只许说出计划里有的状态；
+       说话者本回合只有录入的原话（VoiceLine.said，话即事实）时，归到他名下的引语须是其中一句的连续一段、或字二元组有六成出自其中一句，
+       否则 fidelity（另编了一套词）。
        刻着、写着、题作、绣着的字（“门楣上刻着四个字：“琅嬛福地””）是物件上的字，不归给任何人。
        不是话的引语不归给任何人，这里不查、交给叙述闸门照叙述查（unspoken）：一两个象声字后跟“地/的一声”（“嗒”的一声）、
        引子以“辨认得出/认出/读出”收尾（中间不点名人）且与玩家见过的外观描写逐字相同的字（蒲团绣字）、
@@ -120,12 +123,32 @@ _READ = re.compile(r"(?:辨认得出|辨认出|认得出|认出|读出|看清|�
 _GAZE = re.compile(r"(?:目光|眼神|眼光|眼色|神色|神情)(?:分明|似乎|像是|仿佛|都|也)?在问[：:]$")
 LEAD_WINDOW = 16
 SCENIC = 0.6
+# 照录：说话者本回合只有录入的原话（VoiceLine.said）时，归到他名下的引语须有这么多字二元组出自其中一句（截取连续一段照放）
+FIDELITY = 0.6
+# 自报姓名：“我叫钟灵”“在下段誉”“本姑娘姓钟”——引子之后紧跟名或姓
+SELF_INTRO = ("我叫", "我是", "我姓", "在下", "本姑娘", "叫我")
 
 
 @dataclass(frozen=True, slots=True)
 class _Voice:
     names: frozenset[str]   # 可点名：may_name ∪ 说话者 ∪ 听者 ∪ 玩家
     source: str             # 说法与模板原话：其中本就有的名字与状态词算有出处
+
+
+def introduces(words: str, forms: Iterable[str]) -> bool:
+    """一句话里说话者自报了姓名：自报的引子（我叫/在下/本姑娘……）之后紧跟他的名、别称或姓（名的头一个字）。"""
+    heads = {f for f in forms if f} | {f[0] for f in forms if len(f) >= 2}
+    return any(words.startswith(h, i + len(lead)) for lead in SELF_INTRO for i in _at(words, lead) for h in heads)
+
+
+def _at(text: str, word: str) -> list[int]:
+    return [m.start() for m in re.finditer(re.escape(word), text)]
+
+
+def _faithful(words: str, said: Sequence[str]) -> bool:
+    """引语照着录入的原话说：是其中一句的连续一段，或字二元组有 FIDELITY 出自其中一句。"""
+    mine = _pairs(words)
+    return any(words in s or (mine and len(mine & _pairs(s)) >= FIDELITY * len(mine)) for s in said)
 
 
 def _norm(s: str) -> str:
@@ -339,6 +362,7 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
     universe = (set(known_names) | plan.names | plan.aliases | plan.hidden | set(people) | set(voices)
                 | {n for v in voices.values() for n in v.names}) - {"你"}
     said = [s for s in (_norm(brief.player_line or ""), _norm(command)) if s]
+    verbatim = {name: [_norm(vl.template or "") for vl in vls] for name, vls in lines.items() if all(vl.said for vl in vls)}
     source = _norm(plan.source)
     quotes, masked, whos, inert = _speakers(text, plan, voices)
     spans = _spans(text)
@@ -363,6 +387,8 @@ def check_quotes(text: str, brief: SceneBrief, plan: RenderPlan, known_names: It
             continue
         if name in voices:
             out += _judge(q.words, [voices[name]], name, universe, plan.statuses)
+            if name in verbatim and not _faithful(words, verbatim[name]):
+                out.append(Violation("fidelity", f"{name}:{q.words.strip()}"))   # 录入的原话另编一套词
         elif voices:
             out += _judge(q.words, list(voices.values()), "?", universe, plan.statuses)
 

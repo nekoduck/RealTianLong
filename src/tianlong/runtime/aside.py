@@ -2,12 +2,13 @@
 [INPUT]: 依赖 runtime/gm 的主持层纯函数（is_ooc / leaked / META_HELP / self_view / goal_text / asks_direction / aside_prompt / gated_stream /
          ASIDE_SYSTEM / ASIDE_INNER / ASIDE_TOKENS），language/command 的 clarify，language/parser 的 MoveKind / Parsed，
          language/render 的 Rendered / RenderStatus / Violation，persistence 的 RequestConflict，cognition 的 BeliefStore，core 的 WorldState / clock_label / digest；
-         宿主 GameSession 的 scenario / player / llm / ending / beliefs() / belief_lines() / _hint / _recent / _asides 与 runtime/session 的 TurnReport（调用时取，免得成环）
+         宿主 GameSession 的 scenario / player / llm / ending / beliefs() / belief_lines() / _veiled() / _hint / _recent / _asides 与 runtime/session 的 TurnReport（调用时取，免得成环）
 [OUTPUT]: 对外提供 AsideMixin（GameSession 的不推进回合：_aside 分派、_replay_aside 重试原样返回、_clarify 追问、_meta 元指令、
           _next_hint / _floor 逐级提示、_gm_aside 场外问答、_aside_pieces 读流）、ENDED / PARDON / ASIDE_KEEP
 [POS]: runtime/session 的不推进时间的回合：场外问答、元指令、追问、落幕之后。只读玩家自己的认知、目标、逐级提示与最近正文，
        不落库；带 request_id 的只记在本进程里（最近 ASIDE_KEEP 个），重试原样返回——提示不多翻、模型不再问，异内容抛 RequestConflict。
-       场外回答边生成边逐句过名字闸门，模型写的追问同样过闸门（玩家自己说出的名字不算），拦下即换成不带名字的追问
+       场外回答边生成边逐句过名字闸门，模型写的追问同样过闸门（玩家自己说出的名字不算），拦下即换成不带名字的追问；
+       认知是会话给的展示用副本（还叫不出名字的人是外貌称呼），见过却叫不出名字的人（宿主的 _veiled()）名字同样算不认识
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -72,7 +73,7 @@ class AsideMixin:
         """追问与场内说法。模型写的（未必是模板：它熟读原著，可能点出玩家不该知道的名字）过名字闸门——玩家自己说出的名字不算；
         拦下即换成不带名字的追问。"""
         reply = parsed.clarification or "……"
-        found = gm.leaked(reply, me, self.scenario, said=text) if parsed.source == "llm" else []
+        found = gm.leaked(reply, me, self.scenario, said=text, veiled=self._veiled()) if parsed.source == "llm" else []
         if not found:
             return Rendered(reply, RenderStatus.TEMPLATE)
         cmd = parsed.command
@@ -124,8 +125,9 @@ class AsideMixin:
         prompt = gm.aside_prompt(question, view, prof.persona, goals if ooc else (),       # 元目标只在场外说
                                  guide[floor:level + 1] if guided else (), self._recent)
         system = gm.ASIDE_SYSTEM if ooc else gm.ASIDE_INNER
-        text, found, failed = gm.gated_stream(self._aside_pieces(prompt, system), lambda t: gm.leaked(t, me, self.scenario),
-                                              sink, lead=lead)
+        veiled = self._veiled()                  # 见过却还叫不出名字的人：名字同样算不认识
+        text, found, failed = gm.gated_stream(self._aside_pieces(prompt, system),
+                                              lambda t: gm.leaked(t, me, self.scenario, veiled=veiled), sink, lead=lead)
         violations = tuple(Violation("entity", n) for n in found)
         if failed:
             status = RenderStatus.LLM_UNAVAILABLE

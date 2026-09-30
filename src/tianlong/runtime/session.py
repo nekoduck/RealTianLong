@@ -3,6 +3,7 @@
          runtime/gm 的主持层纯函数（gm_command / companions / salient / build_brief），runtime/aside 的 AsideMixin / ENDED（不推进的回合），
          runtime/endings 的 EndingMixin（落幕与终章），runtime/cast 的 policy_for / wakes / advance_marks（驱力），
          runtime/staging 的 recognize / stops_wait / lore_at（看点：只读玩家自己的感知；月出后的外观描写），runtime/suggest 的 suggestions，
+         runtime/names 的相识账本（Acquaintance / masked / gate_aliases / may_name / learn_heard / learn_delivered / early_line），
          agents 的 Orchestrator / NpcContext / AgentPort / Scheduler / Policy / OutcomePredictor，
          memory 的 QdrantMemoryIndex / Recall / MemoryIndexer / MemoryScope，language 的 IntentParser / MoveKind / Parsed / Narrator /
          TemplateSpeaker / LLMClient，language/scene 的 SceneBrief / TextSink，
@@ -31,7 +32,10 @@
        对方尚未走完时只给出目前为止的文字、不落库。建档后尚无提交就读档，开场已描写的实体按开场规则补回。
        NPC 决策图里从不调模型（台词由主持人之声一并写出，驱力的原话除外——它随意图落库），向量回忆只为声明 reads_memories 的策略而跑。
        场景给了驱力的 NPC 经 cast.policy_for 套上 Driven，时间窗打开即唤醒（cast.wakes，不改调度器）；
-       驱力标记与看点账本（staged：已让等待停过的一次性看点）在 annotate 的副本上推进（驱力只记兑现成功的），与调度标记同一事务落库。
+       驱力标记与看点账本（staged：已让等待停过的一次性看点）在 annotate 的副本上推进（驱力只记兑现成功的），与调度标记同一事务落库；
+       相识账本同样：听见的原话在 annotate 里推进（names.learn_heard），交付的正文在叙述之后推进、随下一次提交落库。
+       给玩家看的一切（解释、叙述、行动建议、场外问答、终章）都用 _view()——还叫不出名字的人换成外貌称呼的展示用副本；
+       叙述闸门的别称按账本给（没引介的人的名字只用于拒绝），NPC 台词可点名的经 names.may_name；NPC 的决策从不经过它。
        CLI、测试、未来的 Web 前端都只和它打交道
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
@@ -87,7 +91,7 @@ from tianlong.persistence import (
     WorldRef,
     WorldStore,
 )
-from tianlong.runtime import cast, gm, staging, talk
+from tianlong.runtime import cast, gm, names, staging, talk
 from tianlong.runtime.aside import ENDED, AsideMixin
 from tianlong.runtime.authority import Settlement, WorldAuthority
 from tianlong.runtime.endings import EndingMixin
@@ -264,11 +268,12 @@ class GameSession(AsideMixin, EndingMixin):
         self._said: dict[str, list[str]] = {}  # 台词账本：每个 NPC 最近说过的原话（同上）
         self._marks: dict[str, dict[str, list[int]]] = {}   # 驱力标记：角色 → 驱力 → 兑现成功的时刻（随世界同一事务落库）
         self._staged: set[str] = set()      # 已让等待停过的一次性看点（随世界同一事务落库）
+        self._acq = names.initial(scenario)   # 相识账本：谁叫得出谁的名字（听见的原话随世界落库，交付的正文随下一次提交）
         self._asides: dict[str, tuple[str, TurnReport]] = {}   # 带 request_id 的不推进回合：ID → (原文摘要, 报告)
         self._restore(session_state)
         self.llm = llm
-        self.parser = IntentParser(fast_llm or llm, aliases=scenario.aliases)
-        self.interpreter = interpreter or Interpreter(fast_llm or llm, aliases=scenario.aliases, fallback=self.parser,
+        self.parser = IntentParser(fast_llm or llm, aliases=names.lookup(scenario))     # 外貌称呼与真名都认得
+        self.interpreter = interpreter or Interpreter(fast_llm or llm, aliases=names.lookup(scenario), fallback=self.parser,
                                                       universe=(e.name for e in scenario.state.entities.values()),
                                                       kowtow_ticks=scenario.kowtow_ticks)
         self.pipeline = pipeline
@@ -306,14 +311,15 @@ class GameSession(AsideMixin, EndingMixin):
         return self._state(self.scheduler, self._described)
 
     def _state(self, sched: Scheduler, described: set[str], marks: cast.Cast | None = None,
-               staged: set[str] | None = None) -> dict:
+               staged: set[str] | None = None, acq: names.Acquaintance | None = None) -> dict:
         marks = self._marks if marks is None else marks
         staged = self._staged if staged is None else staged
+        acq = self._acq if acq is None else acq
         return {"scheduler": sched.to_state(), "described": sorted(described), "recent": list(self._recent),
                 "hint": self._hint, "told": {k: sorted(v) for k, v in sorted(self._told.items()) if v},
                 "drives": {a: {k: list(v) for k, v in sorted(m.items())} for a, m in sorted(marks.items()) if m},
                 **({"said": dict(sorted(self._said.items()))} if self._said else {}),
-                **({"staged": sorted(staged)} if staged else {})}
+                **({"staged": sorted(staged)} if staged else {}), **({"names": acq.to_state()} if acq.known else {})}
 
     def _restore(self, state: Mapping | None) -> None:
         """会话运行态以落库的那一份为准：读档时，以及一次请求被同一请求的另一次投递越过之后。"""
@@ -327,6 +333,7 @@ class GameSession(AsideMixin, EndingMixin):
         self._marks = {str(a): {str(k): [int(t) for t in v] for k, v in m.items()}
                        for a, m in (state.get("drives") or {}).items()}
         self._staged = {str(k) for k in state.get("staged", ())}
+        self._acq = names.Acquaintance.from_state(state["names"]) if "names" in state else names.initial(self.scenario)
 
     def _opening_keys(self) -> list[str]:
         """开场讲的初始认知里应当描写外观的实体：新游戏的 intro() 描写它们，建档后尚无提交就读档时据此补回“已描写”。"""
@@ -337,15 +344,23 @@ class GameSession(AsideMixin, EndingMixin):
     def _known(self, me: BeliefStore) -> frozenset[str]:
         return self._universe | {sk.name for sk in me.entities.values()}
 
+    def _view(self) -> BeliefStore:
+        """玩家的认知给他看的样子：还叫不出名字的人换成外貌称呼（names.masked；展示用副本，永不落库）。"""
+        return names.masked(self.beliefs(self.player), self._acq, self.scenario)
+
+    def _veiled(self) -> dict[str, tuple[str, ...]]:
+        return names.veiled(self._acq, self.player, self.scenario)
+
     def intro(self) -> str:
         """开场：新游戏讲初始认知；读档讲玩家此刻以为的周遭（不是世界真相）。"""
-        me = self.beliefs(self.player)
+        me = self._view()
         if not self.resumed:
             prior = self.scenario.priors.get(self.player, ())
             fresh = self._opening_keys()
             self._described.update(fresh)
             return self.narrator.narrate(self.player, prior, me.entities, show_scene=True, fresh=fresh,
-                                         known=self._known(me))
+                                         known=self._known(me), aliases=names.gate_aliases(self._acq, self.player,
+                                                                                           self.scenario))
         here = believed_place(me, self.player)
         around = [
             render_fact(Fact(b.prop, True), me.entities, self.player, me="你")
@@ -358,7 +373,7 @@ class GameSession(AsideMixin, EndingMixin):
 
     def belief_lines(self) -> list[str]:
         """玩家自己的认知（/beliefs）：亲见与传闻分开标注——是他以为的，不是世界真相。"""
-        me = self.beliefs(self.player)
+        me = self._view()
         return [f"  [{'传闻' if b.hearsay else '亲见'} {b.confidence:.1f}] "
                 f"{render_fact(Fact(b.prop, b.holds), me.entities, self.player)}"
                 for b in me.sorted_beliefs() if not b.prop.is_attr or b.holds]
@@ -381,7 +396,7 @@ class GameSession(AsideMixin, EndingMixin):
             if request_id in self._asides:
                 return self._replay_aside(request_id, payload, clock, sink)
         head = self.authority.head()
-        me = self.beliefs(self.player)
+        me = self._view()
         quick = gm.gm_command(text)          # 元指令与“GM：”前缀一眼认得、从不推进：不必预算 NPC 决策
         ahead = self._look_ahead(head) if self.ending is None and quick is None else None
         parsed = quick or self._parse(text, me)
@@ -406,7 +421,7 @@ class GameSession(AsideMixin, EndingMixin):
         render, brief = self._render(env, text, clock, sink, before=me,
                                      closing=self.ending is None and self._ended() is not None)
         narration = render.text if request_id is None else self._record(request_id, render.text)
-        self._remember(narration, brief)
+        self._remember(narration, brief, text)
         return TurnReport(clock_label(head.clock), parsed, narration, True, tuple(events), tuple(deliberations),
                           settlement, clock.laps, render, request_id, kind=parsed.kind, ending=self._reach_ending(),
                           first_text_ms=sink.first_ms, brief=brief, beats=self._beats(env))
@@ -480,7 +495,7 @@ class GameSession(AsideMixin, EndingMixin):
             narration = render.text
             if env.done or stuck:
                 narration = self._record(env.request_id, render.text)
-                self._remember(narration, brief)
+                self._remember(narration, brief, text)
         else:
             sink(narration)
         wanted = {v - 1 for v in env.versions}       # 本请求各 tick 的意图都基于提交前的那个版本
@@ -549,11 +564,12 @@ class GameSession(AsideMixin, EndingMixin):
         """只依据已持久化的请求进度（加此刻各人的认知）渲染：提交后崩溃的重试写出的是同一回合的文字。
         叙述者有 narrate_scene（主持人之声）就交给它流式写，否则一次写完再交付。
         before 是本回合之前玩家的认知（前后照应的比对基准；重试补写时没有）；closing：这一回合抵达了结局，叙述收在余韵上。"""
-        me = self.beliefs(self.player)
+        me, acq, sc = self._view(), self._acq, self.scenario      # 名字经相识账本：玩家叫不出的人用外貌称呼
         lapse = clock_label(env.ticks[-1]) if _interruptible(env) and env.planned_ticks > 1 and env.ticks else ""
-        brief = gm.build_brief(env, me, self.scenario, self.beliefs, self._recent, before, closing, self._told,
+        brief = gm.build_brief(env, me, sc, self.beliefs, self._recent, before, closing, self._told,
                                lambda a: self.store.recent_memories(self.ref, a, 0), suggestions(me, friends=self._friends),
-                               self._said)
+                               self._said, lambda a, mind: names.may_name(a, mind, acq, sc), self._veiled())
+        aliases = names.gate_aliases(acq, self.player, sc, text)
         # 此前已知下落的东西：再翻出来不算“发现”（重试补写时没有 before，照旧）
         familiar = frozenset(e for e in before.entities if before.location_of(e) is not None) if before else frozenset()
         scene = getattr(self.narrator, "narrate_scene", None)
@@ -562,18 +578,23 @@ class GameSession(AsideMixin, EndingMixin):
             render = scene(self.player, env.percepts, me.entities, brief=brief, fresh=env.fresh, command=text,
                            familiar=familiar, since=clock_label(env.start_clock) if lapse else "",
                            lapse=lapse, known=self._known(me), on_text=sink,
-                           deadline=clock.entered + after if after else None)
+                           deadline=clock.entered + after if after else None, aliases=aliases)
         else:
             render = self.narrator.narrate_rendered(self.player, env.percepts, me.entities, fresh=env.fresh,
-                                                    command=text, lapse=lapse, known=self._known(me))
+                                                    command=text, lapse=lapse, known=self._known(me), aliases=aliases)
             sink(render.text)
+        early = names.early_line(names.named_early(acq, self.player, text, brief, sc), text, sc)   # 抢先叫出真名：只一次
+        if early:
+            sink(early)
+            render = replace(render, text=render.text + early)
         clock.lap("narrate")
         return render, brief
 
-    def _remember(self, narration: str, brief: SceneBrief | None = None) -> None:
-        """最近几段正文、谈资账本与台词账本：叙述写成之后更新（派生数据），随下一次提交落库。
+    def _remember(self, narration: str, brief: SceneBrief | None = None, command: str = "") -> None:
+        """最近几段正文、谈资账本、台词账本与玩家的相识账本：叙述写成之后更新（派生数据），随下一次提交落库。
         交给叙述者的谈资（brief 里的台词）换了说法也认得出来：说话者开了口、这条谈资的字眼大半出现了，就算说过。"""
         self._recent = [*self._recent, narration][-RECENT_KEEP:]
+        self._acq, _ = names.learn_delivered(self._acq, self.player, narration, brief, command, self.scenario)
         self._said = talk.said(self._said, narration, brief)
         offered = {vl.speaker: vl.knows for vl in (brief.lines if brief else ()) if vl.speaker_name in narration}
         for npc in self.scenario.npcs:
@@ -626,8 +647,9 @@ class GameSession(AsideMixin, EndingMixin):
                                  percepts=_compact(env.percepts + mine), fresh=env.fresh + fresh, done=done)
             described = self._described | set(fresh)
             marks = cast.advance_marks(self._marks, deliberations, s)     # 驱力标记：只记兑现成功的
-            after.update(env=progressed, described=described, marks=marks, staged=staged)
-            return (progressed if persist else None), self._state(sched, described, marks, staged)
+            acq = names.learn_heard(self._acq, s, sc)                     # 相识账本：听见（看见）的原话里点了谁的名
+            after.update(env=progressed, described=described, marks=marks, staged=staged, acq=acq)
+            return (progressed if persist else None), self._state(sched, described, marks, staged, acq)
 
         settlement = self.authority.settle(intents, annotate)
         if "env" not in after:
@@ -635,7 +657,7 @@ class GameSession(AsideMixin, EndingMixin):
                 raise VersionConflict(f"版本 {head.version} 的意图早已由别的写入者结算")
             raise RuntimeError(f"版本 {head.version} 的意图早已结算过：会话与存储不一致")
         self.scheduler, self._described, self._marks = sched, after["described"], after["marks"]
-        self._staged = after["staged"]
+        self._staged, self._acq = after["staged"], after["acq"]
         clock.lap("settle")
         self.indexer.drain()
         clock.lap("index")

@@ -11,7 +11,8 @@
        关卡：栅门上锁、钥匙在帮众身上——夜饭换班前先开锁（unbar），收了碎银的放行（bribed_open）并不再对他动手（wink），
        换班回来再锁上（relock）。一次性台词写在 line 上；姿态本身就是看得见的字（带引语的姿态把话写在字里）。
        马五德差阿顺去后院用 EXPLAIN 不用 COMMAND（§8 第 1 条：喝令会让阿顺对好心的东家 −1）；段誉回头等人要阿顺刚才还在身边（Near）；
-       龚光杰堵住段誉时不出手（给跳崖留窗口），闲着就举火把逼近（loom），不与旁人寒暄
+       龚光杰堵住段誉时不出手（给跳崖留窗口），闲着就举火把逼近（loom），不与旁人寒暄。
+       姿态是叙述看得见的那一行，引号外只用中性称呼（段公子），NPC 口吻里的昵称（书呆子、酸秀才）只留在引号里的原话
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -136,7 +137,7 @@ DUANYU = (
 
 ZHONGLING = (
     Drive("hold_bite", VETO, (Status(TARGET, "poisoned"), Not(Saw(Op.ATTACK, actor=TARGET, within=1))),
-          Pose("护在书呆子身前，冷眼瞧着"), veto=Op.ATTACK, gloss="钟灵不再打已经中了毒的人，除非他又动手"),
+          Pose("护在段公子身前，冷眼瞧着"), veto=Op.ATTACK, gloss="钟灵不再打已经中了毒的人，除非他又动手"),
     Drive("hold_truce", VETO, (Fired("bargain"), Not(Saw(Op.ATTACK, actor=TARGET, within=1))),
           Pose("拍了拍腰间的貂儿，没再动手"), veto=Op.ATTACK, gloss="钟灵换了人之后说话算话，除非对方又动手"),
     Drive("bargain", URGENT, (Status(_GG, "poisoned"), Holds("antidote"), Here(_ZZ), Here(_GG),
@@ -163,7 +164,7 @@ ZHONGLING = (
                               Here(PLAYER), Not(Fired("tease"))),
           Say(PLAYER, Social.JOKE), line="你真要磕一千个？磕傻了我可不管你！", once=True, gloss="钟灵会取笑磕头的人"),
     Drive("grab", IDLE, (Saw(Op.STUDY, actor=_DY, within=10), Saw(Op.WAIT, actor=_DY, within=1), Here(_DY)),
-          Pose("扑过去要抓书呆子的袖子，却扑了个空：“不玩了不玩了！书呆子，你这是什么古怪步法？”"), once=True,
+          Pose("扑过去要抓段公子的袖子，却扑了个空：“不玩了不玩了！书呆子，你这是什么古怪步法？”"), once=True,
           gloss="段公子学成步法后，钟灵扑过去抓他却扑了个空"),
 )
 
@@ -212,7 +213,7 @@ GONGGUANGJIE = (
           gloss="找遍了也找不到，龚光杰骂一句作罢"),
     Drive("go_back", URGENT, (_QUIT, Not(At("hall"))), Go("hall"), gloss="作罢之后，龚光杰回大殿去"),
     Drive("torch", URGENT, (Between(HUNT), Not(Status(SELF, "poisoned")), Not(Here(_DY)), Not(_QUIT)),
-          Pose("从廊下摘了一支火把，要去搜那酸秀才"), once=True, gloss="天黑前，龚光杰会举着火把去搜段公子"),
+          Pose("从廊下摘了一支火把，要去搜人"), once=True, gloss="天黑前，龚光杰会举着火把去搜段公子"),
     Drive("corner", URGENT, (*_HUNTING, Here(_DY), Not(At("hall"))), Say(_DY, Social.TAUNT),
           line="酸秀才，师父只答应在殿上不为难你——这回看你还往哪里逃！", once=True,
           gloss="龚光杰在殿外堵住段公子，先叫骂一番"),
