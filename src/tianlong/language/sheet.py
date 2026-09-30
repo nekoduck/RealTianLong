@@ -1,13 +1,15 @@
 """
 [INPUT]: 依赖 core 的 Percept / Modality / Op / Outcome / derive_seed，language/render 的 RenderPlan / SENTENCE_ENDS / QUOTE_CLOSE，
          language/scene 的 SceneBrief / VoiceLine，language/templates 的 Names / render_percept，language/voice_prompt 的 render_voice
-[OUTPUT]: 对外提供 Row（模板的一行：事实行或台词）、scene_rows()（事实清单换成模板各行：听见的言语换成台词，必讲与否、参与者一并记下）、
-          Section（节目单的一节）、compose()（本回合要讲的事排成节目单）、voices()（要说出口的话按节目单排）、
+[OUTPUT]: 对外提供 Row（模板的一行：事实行或台词）、ARRIVE（Row.op：来到眼前的走动）、节的名字 SELF / ANSWER / COME / CLASH / MOVE / SCENE、
+          scene_rows()（事实清单换成模板各行：听见的言语换成台词，必讲与否、参与者一并记下）、Section（节目单的一节）、
+          compose()（本回合要讲的事排成节目单）、voices()（要说出口的话按节目单排）、
           lines()（几行模板按节目单写出）、patches()（漏讲的必讲之事写成人话补句）、prose()（模板行读起来像句子）
 [POS]: language 的节目单：叙述者（narrator）交给模型的事实清单、要说出口的话与模板回退都按它排。
-       顺序：玩家这一步 → 冲着玩家的回答（回话的那人冲你说的话合成一节）→ 按（施动者, 目标）合并的交手（同一对的几下合成一行
-       “钟灵向龚光杰连出两下——龚光杰中了毒，又受了伤”，动手时顺口喝的一声挂在对应的交手上）→ 进出（离开玩家所在地的人必讲：
-       人不会凭空消失）→ 景物。补句按 (措辞, salt) 派生的种子轮换说法，相同输入永远得到相同文字
+       顺序：玩家这一步 → 冲着玩家的回答（回话的那人冲你说的话合成一节）→ 来到眼前的人（排在他动手之前）→ 按（施动者, 目标）
+       合并的交手（同一对的几下合成一行“钟灵向龚光杰连出两下——龚光杰中了毒，又受了伤”，动手时顺口喝的一声挂在对应的交手上）→
+       离开的人（离开玩家所在地、此后玩家没挪地方、那人也没回来的必讲：人不会凭空消失）→ 景物；玩家换了地方就在“你来到……”处
+       分段，原处见到的事排在前面。补句按 (措辞, salt) 派生的种子轮换说法，相同输入永远得到相同文字
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -22,8 +24,9 @@ from tianlong.language.scene import SceneBrief, VoiceLine
 from tianlong.language.templates import Names, render_percept
 from tianlong.language.voice_prompt import render_voice
 
-SELF, ANSWER, CLASH, MOVE, SCENE = "self", "answer", "clash", "move", "scene"     # 节目单的节，按此先后
-_ORDER = (SELF, ANSWER, CLASH, MOVE, SCENE)
+SELF, ANSWER, COME, CLASH, MOVE, SCENE = "self", "answer", "come", "clash", "move", "scene"     # 节目单的节，按此先后
+_ORDER = (SELF, ANSWER, COME, CLASH, MOVE, SCENE)
+ARRIVE = "arrive"      # Row.op：来到观察者眼前的走动（玩家自己到了新地方也是）
 _TALK = (Op.TELL.value, Op.ASK.value)
 
 
@@ -42,7 +45,7 @@ class Row:
     mine: bool = False             # 玩家自己的行动：先声已经讲过，收尾补模板时不再重复
     said: str = ""                 # 玩家自己的原话或姿态：正文照着写了出来（三字片段重合过半）也算讲到了
     pair: tuple[str, str] = ("", "")   # (施动者, 目标) 的称呼（观察者是“你”）：节目单据此合并交手、挂上吆喝
-    op: str = ""                   # 事件的操作（attack / move / ……）；所见清单是 "scene"
+    op: str = ""                   # 事件的操作（attack / move / ……）；所见清单是 "scene"，来到眼前的走动是 "arrive"
 
 
 def _must(p: Percept, viewer: str, line: str = "") -> bool:
@@ -56,15 +59,24 @@ def _must(p: Percept, viewer: str, line: str = "") -> bool:
     return p.modality == Modality.SPEECH or (p.modality == Modality.SIGHT and ev.target == viewer)
 
 
-def _leaves(p: Percept, viewer: str, moved: Sequence[int]) -> bool:
-    """有人离开玩家所在之处（玩家自己此后没挪地方）：必讲——漏写了，那人就在正文里凭空消失了。"""
+def _arrives(p: Percept, viewer: str) -> bool:
+    """来到观察者眼前：玩家自己走到了新地方，或旁人走进玩家所在之处。"""
+    ev = p.event
+    return (ev is not None and ev.kind == Op.MOVE.value and ev.outcome == Outcome.SUCCESS
+            and (ev.actor == viewer or ev.place == ev.target))
+
+
+def _leaves(p: Percept, viewer: str, came: Sequence[tuple[str, int]]) -> bool:
+    """有人离开玩家所在之处（此后玩家自己没挪地方、那人也没回来）：必讲——漏写了，那人就在正文里凭空消失了；
+    先走后回的不算，免得补句替还在眼前的人说“转身走了”。"""
     ev = p.event
     return (p.modality == Modality.SIGHT and ev is not None and ev.kind == Op.MOVE.value and ev.actor != viewer
-            and ev.outcome == Outcome.SUCCESS and ev.place != ev.target and not any(t >= p.tick for t in moved))
+            and ev.outcome == Outcome.SUCCESS and ev.place != ev.target
+            and not any(a in (viewer, ev.actor) and t >= p.tick for a, t in came))
 
 
 def _row(p: Percept, viewer: str, names: Names, aliases: Mapping[str, Sequence[str]], line: str,
-         moved: Sequence[int]) -> Row:
+         came: Sequence[tuple[str, int]]) -> Row:
     """事实行：参与者之外，这一行写出来的后果与所见里的东西（“发现蒲团上藏着北冥神功帛卷……”）也算——正文写到帛卷就是讲到了。"""
     ev = p.event
     table = {sk.id: sk.name for sk in p.sketches} | {eid: sk.name for eid, sk in names.items()}
@@ -77,8 +89,9 @@ def _row(p: Percept, viewer: str, names: Names, aliases: Mapping[str, Sequence[s
     def call(x: str | None) -> str:
         return "你" if x == viewer else table.get(x, "") if x else ""
     mine = p.modality == Modality.SELF and ev.actor == viewer
-    return Row(line, keys=keys, must=_must(p, viewer, line) or _leaves(p, viewer, moved), mine=mine,
-               said=(ev.utterance or "") if mine else "", pair=(call(ev.actor), call(ev.target or ev.obj)), op=ev.kind)
+    return Row(line, keys=keys, must=_must(p, viewer, line) or _leaves(p, viewer, came), mine=mine,
+               said=(ev.utterance or "") if mine else "", pair=(call(ev.actor), call(ev.target or ev.obj)),
+               op=ARRIVE if _arrives(p, viewer) else ev.kind)
 
 
 def scene_rows(plan: RenderPlan, viewer: str, percepts: Sequence[Percept], names: Names, brief: SceneBrief,
@@ -100,8 +113,7 @@ def scene_rows(plan: RenderPlan, viewer: str, percepts: Sequence[Percept], names
         ev = p.event
         if ev is not None and p.modality == Modality.SPEECH and ev.kind in _TALK and ev.actor in pending:
             spoken.setdefault(line, (ev.actor, ev.utterance))
-    moved = [p.tick for p in percepts if p.modality == Modality.SELF and p.event is not None and p.event.actor == viewer
-             and p.event.kind == Op.MOVE.value and p.event.outcome == Outcome.SUCCESS]
+    came = [(p.event.actor, p.tick) for p in percepts if p.event is not None and _arrives(p, viewer)]
     rows: list[Row] = []
     for text in plan.lines:
         who, said = spoken.get(text, (None, None))
@@ -111,7 +123,7 @@ def scene_rows(plan: RenderPlan, viewer: str, percepts: Sequence[Percept], names
             queue.remove(k)
             rows.append(_voiced(brief.lines[k], salt))
         elif (p := facts.get(text)) is not None:
-            rows.append(_row(p, viewer, names, aliases, text, moved))
+            rows.append(_row(p, viewer, names, aliases, text, came))
         else:
             rows.append(Row(text))
     left = {k for ks in pending.values() for k in ks}
@@ -123,7 +135,7 @@ def _voiced(vl: VoiceLine, salt: str) -> Row:
 
 
 # ============================================================
-#  节目单：玩家这一步 → 冲着玩家的回答 → 按对合并的交手 → 进出 → 景物
+#  节目单：玩家这一步 → 冲着玩家的回答 → 来到眼前的人 → 按对合并的交手 → 离开的人 → 景物
 # ============================================================
 
 _TIMES = "两三四五六七八九"
@@ -179,30 +191,38 @@ def _volley(hits: Sequence[Row]) -> str:
     return f"{head}{a}向{t}连出{n}下" + ("——" + "，".join(tails) if tails else "")
 
 
-def _kind(r: Row, answering: set[tuple[str, str]]) -> str:
+def _kind(r: Row, answering: set[tuple[str, str]], seen: set[str]) -> str:
     if r.mine:
         return SELF
+    if r.op == ARRIVE:
+        return MOVE if r.pair[0] in seen else COME      # 来到眼前的人排在他动手之前；先走后回的，回来仍排在走之后
     if r.op in (SCENE, MOVE):
         return r.op
     return ANSWER if r.pair in answering else CLASH
 
 
 def compose(rows: Sequence[Row], brief: SceneBrief) -> tuple[Section, ...]:
-    """本回合要讲的事排成节目单：玩家这一步 → 冲着玩家的回答（回话那人冲你说的话合成一节）→ 按（施动者, 目标）合并的交手
-    （动手时顺口喝的一声挂在对应的交手上）→ 进出 → 景物；同一节里按发生先后。"""
+    """本回合要讲的事排成节目单：玩家这一步 → 冲着玩家的回答（回话那人冲你说的话合成一节）→ 来到眼前的人 →
+    按（施动者, 目标）合并的交手（动手时顺口喝的一声挂在对应的交手上）→ 离开的人 → 景物；同一节里按发生先后。
+    玩家换了地方，就在“你来到……”处分段：在原处见到的事排在前面，免得读来像发生在新地方；段与段之间按先后。"""
     answering = {r.pair for r in rows if r.voice is not None and r.voice.answering and r.pair[1] == "你"}
-    groups: dict[tuple[str, object], list[Row]] = {}
+    groups: dict[tuple[int, str, object], list[Row]] = {}
+    seg, seen = 0, set()
     for r in rows:
-        kind = _kind(r, answering)
-        key = (kind, None) if kind in (SELF, SCENE) else (kind, r.pair if r.pair[0] else r.text)
+        if r.mine and r.op == ARRIVE and groups:
+            seg, seen = seg + 1, set()
+        kind = _kind(r, answering, seen)
+        key = (seg, kind, None) if kind in (SELF, SCENE) else (seg, kind, r.pair if r.pair[0] else r.text)
         groups.setdefault(key, []).append(r)
+        seen.update(x for x in r.pair if x)
     shouts = [vl for vl in brief.lines if vl.act]
     out: list[Section] = []
-    for (kind, key), group in groups.items():
+    for (_, kind, key), group in sorted(groups.items(), key=lambda g: (g[0][0], _ORDER.index(g[0][1]))):
         pair = key if isinstance(key, tuple) else ("", "")
         hung = tuple(vl for vl in shouts if kind == CLASH and (vl.speaker_name, vl.listener_name) == pair)
+        shouts = [vl for vl in shouts if vl not in hung]       # 同一对在两段里都交了手：吆喝只挂在头一节
         out.append(Section(kind, tuple(group), pair, hung))
-    return tuple(sorted(out, key=lambda s: _ORDER.index(s.kind)))
+    return tuple(out)
 
 
 def voices(sheet: Sequence[Section], brief: SceneBrief) -> tuple[VoiceLine, ...]:
@@ -222,7 +242,7 @@ def lines(rows: Sequence[Row], brief: SceneBrief) -> list[str]:
 
 _SEEN = ("看见", "听见", "听到")
 _LINK = ("这当口，", "与此同时，", "其间，", "")
-_LEAVE = ("{a}转身往{t}去了。", "{a}没再多留，朝{t}走了。", "{a}已经起身，往{t}去了。")
+_LEAVE = ("{a}转身往{t}去了。", "{a}没再多留，朝{t}走了。", "{a}径自往{t}去了。")
 _GONE = ("{a}转身走了。", "{a}没再多留，走开了。")
 
 

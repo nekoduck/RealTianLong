@@ -12,7 +12,8 @@
 [POS]: language 的输出层（主持人之声）。输入只有玩家自己的感知与会话交来的 SceneBrief（要替 NPC 说出口的话、最近几回合正文、
        玩家原话、眼下的钩子），不是世界真相；台词本身算出处（说话者与听者可点名，原话与说法照搬不算违规）。
        模板先写成事实清单，清单里听见的言语换成带言语行为的台词（“龚光杰冷笑着向你叫阵：……”；只看见的耳语照旧），措辞按语义输入确定地轮换；
-       各行按节目单（sheet.compose）排：玩家这一步 → 冲着玩家的回答 → 按对合并的交手 → 进出 → 景物，提示词的事实清单与
+       各行按节目单（sheet.compose）排：玩家这一步 → 冲着玩家的回答 → 来到眼前的人 → 按对合并的交手 → 离开的人 → 景物
+       （玩家换了地方就分段，原处见到的事在前），提示词的事实清单与
        要说出口的话、模板回退、补句都按它。
        先声（lead_line：玩家自己这一步的结果，确定的句子，照样过闸门）两种用法：lead_after>0（默认回车后 LEAD_AFTER 秒：
        会话传 deadline = 回车时刻 + lead_after，这里只等剩下的时间）只在模型
@@ -24,7 +25,7 @@
        交付满 MAX_CHARS 字即停止读流。收尾：传闻有没有归属整段查；台词没说出口、玩家自己的行动与后果、冲着玩家来的事、
        听见的话、离开玩家所在地的人一个参与者都没提的，补成人话（sheet.patches）、状态记为 gated_fallback（违规 omitted）；
        压句：交付满 HOLD_AFTER 字仍有必讲之事没讲到时交付滞后一句，收尾先交补句、再交压住的那句——模型的钩子永远是最后一句
-       （没压住就换行补在最后）——一行写出的后果里的东西（翻出的帛卷）
+       （没压住就换行补在最后；丢满或中途失败时压住了钩子，也把没讲到的补成人话插在它前面、所见清单不补）——一行写出的后果里的东西（翻出的帛卷）
        也算参与者，玩家的原话或姿态照着写了出来也算讲到；一句都没通过、丢满 MAX_DROPS 句或传闻没有归属，补上模板
        （已交付过正文的，换行后只补正文没讲到的：必讲之事照上，别人之间的事与所见一个参与者都没提的才补，空空的所见不补；
        正文交代过时辰就不再补）。
@@ -71,7 +72,7 @@ from tianlong.language.render import (
     sentence_ends,
 )
 from tianlong.language.scene import SceneBrief, TextSink
-from tianlong.language.sheet import Row, compose, lines, patches, prose, scene_rows, voices
+from tianlong.language.sheet import SCENE, Row, compose, lines, patches, prose, scene_rows, voices
 from tianlong.language.templates import Names
 from tianlong.language.voice_prompt import (
     CLOCK_ANY,
@@ -481,8 +482,11 @@ class Narrator:
                 status = RenderStatus.GATED_FALLBACK
                 log.info("叙述漏掉了必讲之事，补上: %s", said)
             out.emit(hook)
-        elif out.text:                                # 已交付过正文：只补正文没讲到的（一句正文都没有就整张清单）
+        elif hook:                                    # 丢满或中途失败时压住了钩子：没讲到的补成人话插在它前面，所见清单不补
+            untold = _missing(rows, body, plan, brief, gate.dropped, strict=True)
+            out.emit("".join(patches([r for r in untold if r.op != SCENE], salt)))
             out.emit(hook)
+        elif out.text:                                # 已交付过正文：只补正文没讲到的（一句正文都没有就整张清单）
             untold = _missing(rows, body, plan, brief, gate.dropped, strict=True) if body.strip() else rows
             tail = ([] if TIMED.search(out.text) else when) + lines(untold, brief)
             tail = tail if rows or gate.lead else [f"（{x}）" for x in looks]

@@ -4,8 +4,10 @@
          tests/data/playthrough_duanyu.json（run6 前三回合的重放）
 [OUTPUT]: 节目单验收：run6 第 3 回合的感知排成 [玩家问话, 马五德回答, 钟灵→龚光杰（合并）, 左子穆→钟灵, 格挡]，
           每对（施动者, 目标）只有一节交手、同一对的两下合成一行、吆喝挂在对应的交手上，交给模型的事实清单按节目单排；
-          离开玩家所在地的人必讲，模型漏写就补一句“某某转身往某处去了”，讲到了不补，玩家跟着一起走开的不算
+          离开玩家所在地的人必讲，模型漏写就补一句“某某转身往某处去了”，讲到了不补，玩家跟着一起走开的不算；
+          玩家换了地方，原处见到的事排在“你来到……”之前；来到眼前的人排在他动手之前，先走后回的回来排在走之后、走不再必讲
 [POS]: tests 的节目单（language/sheet）；证伪“交手按发生先后一行一行堆给模型、回答被挤到后面”“人在正文里凭空消失”
+       “原处的交手读来像发生在新地方”“先写他动手、再写他来到”“补句替还在眼前的人说转身走了”
 [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 """
 
@@ -25,7 +27,7 @@ from tianlong.language.llm import ScriptedLLM
 from tianlong.language.narrator import Narrator
 from tianlong.language.render import RenderStatus, build_plan
 from tianlong.language.scene import SceneBrief
-from tianlong.language.sheet import _LEAVE, ANSWER, CLASH, MOVE, SELF, compose, scene_rows
+from tianlong.language.sheet import _LEAVE, ANSWER, CLASH, COME, MOVE, SELF, compose, scene_rows
 from tianlong.persistence import InMemoryWorldStore
 from tianlong.runtime.authority import WorldAuthority
 from tianlong.scenarios import build_wuliang
@@ -90,11 +92,19 @@ def test_answer_first(monkeypatch):
 # ============================================================
 
 
-def _settle(*intents):
+def _seq(*ticks):
+    """依次结算几刻（每刻一组意图）：玩家这几刻的全部感知，与他此刻认得的名字。"""
     auth = WorldAuthority.found(InMemoryWorldStore(), SC)
-    v = auth.head().version
-    s = auth.settle([Intent(f"sh{next(_ids)}", *x, None, v) for x in intents])
-    return [o.percept for o in s.observations_of("duanyu")], auth.store.beliefs(auth.ref, "duanyu").entities
+    percepts = []
+    for intents in ticks:
+        v = auth.head().version
+        s = auth.settle([Intent(f"sh{next(_ids)}", *x, None, v) for x in intents])
+        percepts += [o.percept for o in s.observations_of("duanyu")]
+    return percepts, auth.store.beliefs(auth.ref, "duanyu").entities
+
+
+def _settle(*intents):
+    return _seq(intents)
 
 
 def _script(text: str) -> ScriptedLLM:
@@ -125,3 +135,37 @@ def test_departure_must():
     rows = scene_rows(build_plan("duanyu", percepts, names), "duanyu", percepts, names, SceneBrief(), "", SC.gate_aliases)
     together = [r for r in rows if r.text.startswith("看见干光豪走向")]
     assert together and not together[0].must, "一起走开的：不是离开玩家所在之处"
+
+
+# ============================================================
+#  先后：换了地方分段、来到在动手之前、先走后回不算离开
+# ============================================================
+
+WAIT = ("duanyu", Op.WAIT, None, None, Manner.NORMAL)
+OUT = ("duanyu", Op.MOVE, "shandao", "d_gate", Manner.NORMAL)
+
+
+def _sheet(*ticks):
+    percepts, names = _seq(*ticks)
+    rows = scene_rows(build_plan("duanyu", percepts, names), "duanyu", percepts, names, SceneBrief(), "", SC.gate_aliases)
+    return rows, [x for s in compose(rows, SceneBrief()) for x in s.lines]
+
+
+def test_left_behind_first():
+    """玩家换了地方：在原处见到的事（大殿里的交手、大殿的所见）排在“你来到无量山山道”之前——
+    节目单要是把玩家这一步整个提到最前，模型读来就像钟灵在山道上出手。"""
+    _, told = _sheet([OUT, ("zhongling", Op.ATTACK, "gongguangjie", None, Manner.NORMAL)], [WAIT])
+    assert told.index(next(x for x in told if "钟灵" in x)) < told.index("你来到无量山山道"), told
+    _, told = _sheet([("duanyu", Op.TAKE, "sword", None, Manner.NORMAL)], [OUT])
+    assert told[0] == "你拿起长剑" and told.index(next(x for x in told if "干光豪" in x)) < told.index("你来到无量山山道"), told
+
+
+def test_arrive_before_act():
+    """来到眼前的人排在他动手之前；先走后回的人，回来排在走之后，走的那一行也不再必讲（补句不替还在眼前的人说“转身走了”）。"""
+    rows, told = _sheet([WAIT, ("shennong", Op.MOVE, "hall", "d_gate", Manner.NORMAL)],
+                        [WAIT, ("shennong", Op.ATTACK, "duanyu", None, Manner.NORMAL)])
+    assert [s.kind for s in compose(rows, SceneBrief())] == [COME, CLASH] and "来到" in told[0], told
+    rows, told = _sheet([WAIT, ("ganguanghao", Op.MOVE, "shandao", "d_gate", Manner.NORMAL)],
+                        [WAIT, ("ganguanghao", Op.MOVE, "hall", "d_gate", Manner.NORMAL)])
+    assert told[0].startswith("看见干光豪走向") and "来到" in told[1], told
+    assert not any(r.must for r in rows), "先走后回：人还在眼前，不必补“某某转身走了”"
